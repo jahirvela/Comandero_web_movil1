@@ -1,0 +1,10 @@
+Archivos obsoletos eliminados:
+- /components/Logo/ProjectSmall.tsx (reemplazado por Comandix)
+- /components/LogoComandix.tsx (obsoleto)
+- /components/LogoSmall.tsx (obsoleto)
+- /components/RoleAvatar.tsx (obsoleto)
+- /components/RoleAvatars.tsx (obsoleto)
+
+Mantenidos:
+- /components/Logo/Comandix.tsx (componente maestro)
+- /components/RoleIcons.tsx (iconos por rol sin logos)

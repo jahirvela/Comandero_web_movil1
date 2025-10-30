@@ -1,0 +1,1 @@
+Archivo en progreso - necesito primero encontrar dónde están los botones de acción para cada producto.

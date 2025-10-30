@@ -1,0 +1,165 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+
+// Tipos de notificaciones
+export interface Notification {
+  id: string;
+  type: 'order_ready' | 'payment_completed' | 'ticket_ready' | 'new_order' | 'table_request' | 'cash_close_verification' | 'cash_close_clarification' | 'kitchen_alert' | 'bill_request';
+  title: string;
+  message: string;
+  targetRole: 'mesero' | 'cocina' | 'cajero' | 'capitan' | 'admin' | 'all';
+  targetUser?: string;
+  fromUser: string;
+  fromRole: string;
+  timestamp: Date;
+  tableNumber?: number;
+  orderId?: string;
+  closureId?: string;
+  clarificationReason?: string;
+  alertMessage?: string;
+  billNotes?: string;
+  accountData?: any;
+  accountId?: string;
+  total?: number;
+  isTakeaway?: boolean;
+  customerName?: string;
+  customerPhone?: string;
+  pickupTime?: string;
+  read: boolean;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+}
+
+interface NotificationContextType {
+  notifications: Notification[];
+  addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => void;
+  markAsRead: (notificationId: string) => void;
+  clearNotifications: () => void;
+  getUnreadCount: (role?: string, user?: string) => number;
+  getNotificationsForUser: (role: string, user?: string) => Notification[];
+}
+
+const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
+
+export const useNotifications = () => {
+  const context = useContext(NotificationContext);
+  if (!context) {
+    throw new Error('useNotifications must be used within a NotificationProvider');
+  }
+  return context;
+};
+
+export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [notifications, setNotifications] = useState<Notification[]>([
+    // Notificaciones de ejemplo para demostrar el sistema
+    {
+      id: 'notif-001',
+      type: 'order_ready',
+      title: 'Pedido Listo',
+      message: 'El pedido de la Mesa 5 está listo para servir',
+      targetRole: 'mesero',
+      targetUser: 'Juan Martínez',
+      fromUser: 'Carlos López',
+      fromRole: 'cocina',
+      timestamp: new Date(Date.now() - 300000), // 5 minutos atrás
+      tableNumber: 5,
+      orderId: 'ORD-001',
+      read: false,
+      priority: 'high'
+    },
+    {
+      id: 'notif-002',
+      type: 'new_order',
+      title: 'Nuevo Pedido',
+      message: 'Nueva orden recibida de Mesa 8 - 2 Tacos de Barbacoa',
+      targetRole: 'cocina',
+      fromUser: 'Juan Martínez',
+      fromRole: 'mesero',
+      timestamp: new Date(Date.now() - 180000), // 3 minutos atrás
+      tableNumber: 8,
+      orderId: 'ORD-003',
+      read: false,
+      priority: 'normal'
+    }
+  ]);
+
+  const addNotification = (notificationData: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
+    const newNotification: Notification = {
+      ...notificationData,
+      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: new Date(),
+      read: false
+    };
+
+    setNotifications(prev => [newNotification, ...prev]);
+
+    // Opcional: Reproducir sonido de notificación
+    if (notificationData.priority === 'urgent' || notificationData.priority === 'high') {
+      // Aquí podrías agregar un sonido de notificación
+      console.log('🔔 Nueva notificación importante:', newNotification.title);
+    }
+  };
+
+  const markAsRead = (notificationId: string) => {
+    setNotifications(prev => 
+      prev.map(notification => 
+        notification.id === notificationId 
+          ? { ...notification, read: true }
+          : notification
+      )
+    );
+  };
+
+  const clearNotifications = () => {
+    setNotifications([]);
+  };
+
+  const getUnreadCount = (role?: string, user?: string) => {
+    return notifications.filter(notification => {
+      if (notification.read) return false;
+      
+      if (role) {
+        return notification.targetRole === role || notification.targetRole === 'all';
+      }
+      
+      if (user) {
+        return notification.targetUser === user || notification.targetRole === 'all';
+      }
+      
+      return true;
+    }).length;
+  };
+
+  const getNotificationsForUser = (role: string, user?: string) => {
+    return notifications.filter(notification => {
+      const roleMatch = notification.targetRole === role || notification.targetRole === 'all';
+      const userMatch = !notification.targetUser || notification.targetUser === user;
+      return roleMatch && userMatch;
+    }).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  };
+
+  // Limpiar notificaciones antiguas (más de 24 horas) cada hora
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      setNotifications(prev => 
+        prev.filter(notification => notification.timestamp.getTime() > oneDayAgo)
+      );
+    }, 60 * 60 * 1000); // 1 hora
+
+    return () => clearInterval(cleanupInterval);
+  }, []);
+
+  const value: NotificationContextType = {
+    notifications,
+    addNotification,
+    markAsRead,
+    clearNotifications,
+    getUnreadCount,
+    getNotificationsForUser
+  };
+
+  return (
+    <NotificationContext.Provider value={value}>
+      {children}
+    </NotificationContext.Provider>
+  );
+};

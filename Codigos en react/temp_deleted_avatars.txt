@@ -1,0 +1,8 @@
+Archivos eliminados:
+- /components/RoleAvatar.tsx
+- /components/RoleAvatars.tsx
+- /components/LogoComandix.tsx
+- /components/LogoSmall.tsx
+
+Motivo: Eliminación de avatares por rol según instrucciones del usuario.
+Reemplazados por: /components/Logo/ProjectSmall.tsx

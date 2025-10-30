@@ -1,0 +1,900 @@
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Textarea } from './ui/textarea';
+import { Separator } from './ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { NotificationPanel } from './NotificationPanel';
+import { CashCountModal } from './CashCountModal';
+import { NewCardPaymentModal, CardPaymentData } from './NewCardPaymentModal';
+import { CardComprobantRegistrationModal, PaymentRegistrationData } from './CardComprobantRegistrationModal';
+import { CardPaymentSuccessModal } from './CardPaymentSuccessModal';
+import { TipCaptureModal } from './TipCaptureModal';
+import { CashPaymentWithTipsModal } from './CashPaymentWithTipsModal';
+import { ReportsModal } from './ReportsModal';
+import { CashCloseForm } from './CashCloseForm';
+import { CashierCashClose } from './CashierCashClose';
+import { CashierSendClosureModal } from './CashierSendClosureModal';
+import { 
+  DollarSign, 
+  Receipt, 
+  Clock, 
+  Users, 
+  CheckCircle,
+  CreditCard,
+  Printer,
+  LogOut,
+  AlertCircle,
+  TrendingUp,
+  Calculator,
+  Bell,
+  ShieldCheck,
+  FileDown,
+  Save,
+  ExternalLink,
+  RefreshCw
+} from 'lucide-react';
+import { useNotifications } from './NotificationContext';
+import { CalculatorIcon } from './RoleSpecificIcons';
+
+// Datos de ejemplo de cuentas por cobrar
+const mockPendingBills = [
+  {
+    id: 'BILL-001',
+    tableNumber: 5,
+    items: [
+      { name: 'Taco de Barbacoa', quantity: 3, price: 66 },
+      { name: 'Consomé Grande', quantity: 1, price: 35 },
+      { name: 'Agua de Horchata', quantity: 2, price: 36 }
+    ],
+    subtotal: 137,
+    discount: 0,
+    total: 137,
+    waiter: 'Juan Martínez',
+    orderTime: new Date(Date.now() - 1800000), // 30 min ago
+    status: 'pendiente_cobro',
+    isTakeaway: false,
+    printedBy: null,
+    requestedByWaiter: false
+  },
+  {
+    id: 'BILL-002',
+    tableNumber: 3,
+    items: [
+      { name: 'Mix Barbacoa', quantity: 1, price: 95 },
+      { name: 'Taco de Carnitas', quantity: 2, price: 44 }
+    ],
+    subtotal: 139,
+    discount: 6.95, // 5% descuento
+    total: 132.05,
+    waiter: 'Juan Martínez',
+    orderTime: new Date(Date.now() - 2400000), // 40 min ago
+    status: 'pendiente_cobro',
+    isTakeaway: false,
+    printedBy: 'Ana Rodríguez',
+    requestedByWaiter: true,
+    waiterNotes: 'Separar cuenta para dos personas'
+  },
+  {
+    id: 'BILL-003',
+    tableNumber: null,
+    customerName: 'Jahir',
+    customerPhone: '55 1234 5678',
+    items: [
+      { name: 'Quesadilla de Barbacoa', quantity: 2, price: 80 },
+      { name: 'Refresco', quantity: 2, price: 24 }
+    ],
+    subtotal: 104,
+    discount: 0,
+    total: 104,
+    waiter: 'Juan Martínez',
+    orderTime: new Date(Date.now() - 900000), // 15 min ago
+    status: 'pendiente_cobro',
+    isTakeaway: true,
+    printedBy: null,
+    requestedByWaiter: false
+  },
+  {
+    id: 'BILL-004',
+    tableNumber: 7,
+    items: [
+      { name: 'Barbacoa por Kilo', quantity: 0.5, price: 180 },
+      { name: 'Tortillas', quantity: 1, price: 12 },
+      { name: 'Consomé Mediano', quantity: 2, price: 50 }
+    ],
+    subtotal: 242,
+    discount: 0,
+    total: 242,
+    waiter: 'María García',
+    orderTime: new Date(Date.now() - 600000), // 10 min ago
+    status: 'pendiente_cobro',
+    isTakeaway: false,
+    printedBy: null,
+    requestedByWaiter: true,
+    waiterNotes: 'Cliente solicita factura'
+  }
+];
+
+export function CashierApp({ user, onLogout }) {
+  const { addNotification, getNotificationsForUser, getUnreadCount, notifications } = useNotifications();
+  const [pendingBills, setPendingBills] = useState(mockPendingBills);
+  const [selectedBill, setSelectedBill] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [filterType, setFilterType] = useState('all'); // 'all', 'takeaway', 'tables'
+  const [showCashCloseForm, setShowCashCloseForm] = useState(false);
+  
+  // Nuevos estados para modales
+  const [showCashCountModal, setShowCashCountModal] = useState(false);
+  const [showCardPaymentModal, setShowCardPaymentModal] = useState(false);
+  const [showCardRegistrationModal, setShowCardRegistrationModal] = useState(false);
+  const [showCardSuccessModal, setShowCardSuccessModal] = useState(false);
+  const [showTipCaptureModal, setShowTipCaptureModal] = useState(false);
+  const [showCashPaymentWithTipsModal, setShowCashPaymentWithTipsModal] = useState(false);
+  const [showReportsModal, setShowReportsModal] = useState(false);
+  const [currentTips, setCurrentTips] = useState(0);
+  const [showCashCloseHistory, setShowCashCloseHistory] = useState(false);
+  const [showSendClosureModal, setShowSendClosureModal] = useState(false);
+  
+  // Estados para el flujo de tarjeta
+  const [currentCardPaymentData, setCurrentCardPaymentData] = useState<CardPaymentData | null>(null);
+  const [currentRegistrationData, setCurrentRegistrationData] = useState<PaymentRegistrationData | null>(null);
+
+  const isCapitan = user.type === 'capitan';
+
+  // Escuchar notificaciones de bill_request para añadir nuevas cuentas automáticamente
+  useEffect(() => {
+    const billRequestNotifications = notifications.filter(
+      notif => notif.type === 'bill_request' && 
+               notif.targetRole === 'cajero' && 
+               !notif.read
+    );
+
+    billRequestNotifications.forEach(notif => {
+      if (notif.accountData) {
+        // Verificar si la cuenta ya existe para evitar duplicados
+        const accountExists = pendingBills.some(bill => bill.id === notif.accountData.id);
+        
+        if (!accountExists) {
+          const newBill = {
+            id: notif.accountData.id,
+            tableNumber: notif.accountData.tableNumber,
+            items: notif.accountData.items.map(item => ({
+              name: item.name,
+              quantity: item.quantity,
+              price: item.price
+            })),
+            subtotal: notif.accountData.subtotal,
+            discount: notif.accountData.descuentos || 0,
+            total: notif.accountData.total,
+            waiter: notif.accountData.waiterName,
+            orderTime: new Date(),
+            status: 'por-cobrar',
+            isTakeaway: false,
+            printedBy: null,
+            requestedByWaiter: true,
+            waiterNotes: `Cuenta enviada por ${notif.accountData.waiterName} — ${notif.accountData.timestamp}`
+          };
+          
+          setPendingBills(prev => [newBill, ...prev]);
+        }
+      }
+    });
+  }, [notifications, pendingBills]);
+
+  const formatElapsedTime = (orderTime) => {
+    const elapsed = Math.floor((Date.now() - orderTime.getTime()) / 60000);
+    return `${elapsed} min`;
+  };
+
+  const handleCashPayment = (billId) => {
+    const bill = pendingBills.find(b => b.id === billId);
+    if (!bill) return;
+    
+    setSelectedBill(bill);
+    setShowCashPaymentWithTipsModal(true);
+  };
+
+  const handleCashPaymentWithTipsConfirm = (paymentData) => {
+    if (!selectedBill) return;
+
+    // Procesar pago en efectivo con propinas
+    setPendingBills(prev => prev.filter(b => b.id !== selectedBill.id));
+    
+    // Actualizar propinas si las hay
+    if (paymentData.tipAmount > 0) {
+      setCurrentTips(prev => prev + paymentData.tipAmount);
+    }
+    
+    // Generar notificación para el mesero usando el contexto
+    const tipMessage = paymentData.tipAmount > 0 ? ` — Propina: ${paymentData.tipAmount.toFixed(2)}` : '';
+    const message = selectedBill.isTakeaway 
+      ? `Cobro registrado — Solo para llevar (${selectedBill.customerName}) — Cambio: ${paymentData.change.toFixed(2)}${tipMessage}`
+      : `Cobro registrado — Mesa ${selectedBill.tableNumber} — Cambio: ${paymentData.change.toFixed(2)}${tipMessage}`;
+    
+    addNotification({
+      type: 'payment_completed',
+      title: 'Cobro Registrado',
+      message,
+      targetRole: 'mesero',
+      targetUser: selectedBill.waiter,
+      fromUser: user.name,
+      fromRole: user.type,
+      tableNumber: selectedBill.tableNumber,
+      orderId: selectedBill.id,
+      priority: 'normal'
+    });
+    
+    // Limpiar selección
+    setSelectedBill(null);
+    setShowCashPaymentWithTipsModal(false);
+    
+    // Toast de confirmación
+    const toastMessage = selectedBill.isTakeaway 
+      ? `Cobro registrado — Para llevar (${selectedBill.customerName})`
+      : `Cobro registrado — Mesa ${selectedBill.tableNumber}`;
+    
+    if (paymentData.tipAmount > 0) {
+      alert(`${toastMessage} — Propina: ${paymentData.tipAmount.toFixed(2)}`);
+    } else {
+      alert(toastMessage);
+    }
+  };
+
+  const handleProcessCardPayment = (billId) => {
+    const bill = pendingBills.find(b => b.id === billId);
+    if (!bill) return;
+    
+    setSelectedBill(bill);
+    setShowCardPaymentModal(true);
+  };
+
+  const handleSendToTerminal = (paymentData: CardPaymentData) => {
+    if (!selectedBill) return;
+
+    // Guardar datos del pago para el siguiente paso
+    setCurrentCardPaymentData(paymentData);
+    
+    // Cerrar modal de pago y abrir modal de registro
+    setShowCardPaymentModal(false);
+    setShowCardRegistrationModal(true);
+  };
+
+  const handleCardRegistrationConfirm = (registrationData: PaymentRegistrationData) => {
+    if (!selectedBill || !currentCardPaymentData) return;
+
+    // Guardar datos de registro
+    setCurrentRegistrationData(registrationData);
+
+    // Procesar pago con tarjeta
+    setPendingBills(prev => prev.filter(b => b.id !== selectedBill.id));
+    
+    // Generar notificación para el mesero usando el contexto
+    const last4Display = registrationData.last4Digits ? `****${registrationData.last4Digits}` : 'Tarjeta';
+    const message = selectedBill.isTakeaway 
+      ? `Pago con tarjeta registrado — Solo para llevar (${selectedBill.customerName}) — ${last4Display}`
+      : `Pago con tarjeta registrado — Mesa ${selectedBill.tableNumber} — ${last4Display}`;
+    
+    addNotification({
+      type: 'payment_completed',
+      title: 'Pago con Tarjeta Registrado',
+      message,
+      targetRole: 'mesero',
+      targetUser: selectedBill.waiter,
+      fromUser: user.name,
+      fromRole: user.type,
+      tableNumber: selectedBill.tableNumber,
+      orderId: selectedBill.id,
+      priority: 'normal'
+    });
+    
+    // Actualizar propinas si las hay
+    if (registrationData.tipAmount > 0) {
+      setCurrentTips(prev => prev + registrationData.tipAmount);
+    }
+    
+    // Cerrar modal de registro y abrir modal de éxito
+    setShowCardRegistrationModal(false);
+    setShowCardSuccessModal(true);
+  };
+
+  const handleCashPaymentWithTip = (billId) => {
+    const bill = pendingBills.find(b => b.id === billId);
+    if (!bill) return;
+    
+    setSelectedBill(bill);
+    setShowTipCaptureModal(true);
+  };
+
+  const handleTipConfirm = (tipData) => {
+    if (!selectedBill) return;
+
+    const total = selectedBill.total + tipData.amount;
+    const payment = parseFloat(paymentAmount) || total;
+    const change = payment - total;
+
+    if (payment < total) {
+      alert('El monto recibido es menor al total con propina');
+      return;
+    }
+
+    // Procesar pago con propina
+    setPendingBills(prev => prev.filter(b => b.id !== selectedBill.id));
+    
+    // Actualizar propinas
+    if (tipData.amount > 0) {
+      setCurrentTips(prev => prev + tipData.amount);
+    }
+    
+    // Generar notificación para el mesero
+    const notification = {
+      id: Date.now(),
+      type: 'payment_completed',
+      message: selectedBill.isTakeaway 
+        ? `Cobro registrado — Solo para llevar (${selectedBill.customerName}) — Total: $${total.toFixed(2)} — Cambio: $${change.toFixed(2)}`
+        : `Cobro registrado — Mesa ${selectedBill.tableNumber} — Total: $${total.toFixed(2)} — Cambio: $${change.toFixed(2)}`,
+      waiter: selectedBill.waiter,
+      timestamp: new Date()
+    };
+    
+    setNotifications(prev => [...prev, notification]);
+    
+    // Limpiar formulario
+    setSelectedBill(null);
+    setPaymentAmount('');
+    setPaymentNotes('');
+    
+    alert(`Cobro registrado — Total con propina: $${total.toFixed(2)} — Cambio: $${change.toFixed(2)}`);
+  };
+
+  const handleCashCountSubmit = (countData) => {
+    alert(`Conteo enviado al Admin:\nTotal contado: $${countData.totalCounted.toFixed(2)}\nDiferencia: $${countData.difference.toFixed(2)}`);
+  };
+
+  const handleCloseCash = () => {
+    setShowSendClosureModal(true);
+  };
+
+  const handleCashCloseSubmit = (closeData) => {
+    setShowCashCloseForm(false);
+    alert(`Cierre de caja enviado al Administrador:\nEfectivo: $${closeData.cashTotal.toFixed(2)}\nTarjeta: $${closeData.cardTotal.toFixed(2)}\nOtros: $${closeData.otherIncome.toFixed(2)}`);
+  };
+
+  const handleCashCloseCancel = () => {
+    setShowCashCloseForm(false);
+  };
+
+  const handleRequestReopen = (billId) => {
+    alert('Solicitando autorización del administrador para reabrir cuenta...');
+  };
+
+  const handleExportReport = (format) => {
+    alert(`Exportando reporte en formato ${format.toUpperCase()}...`);
+  };
+
+  // Funciones faltantes
+  const handlePrintTicket = (billId) => {
+    const bill = pendingBills.find(b => b.id === billId);
+    if (!bill) return;
+    
+    // Marcar como impreso por el usuario actual
+    setPendingBills(prev => 
+      prev.map(b => 
+        b.id === billId 
+          ? { ...b, printedBy: user.name }
+          : b
+      )
+    );
+    
+    alert(`Ticket impreso para ${bill.isTakeaway ? `Para llevar (${bill.customerName})` : `Mesa ${bill.tableNumber}`}`);
+  };
+
+  const handleReprint = (billId) => {
+    const bill = pendingBills.find(b => b.id === billId);
+    if (!bill) return;
+    
+    alert(`Reimprimiendo ticket para ${bill.isTakeaway ? `Para llevar (${bill.customerName})` : `Mesa ${bill.tableNumber}`}`);
+  };
+
+  // Estadísticas del día desglosadas
+  const todayStats = {
+    ventasLocal: 2150,
+    ventasParaLlevar: 1100,
+    ventasEfectivo: 2100,
+    ventasDebito: 650,
+    ventasCredito: 500,
+    totalOrders: 24,
+    avgTicket: 135.42,
+    pendingAmount: pendingBills.reduce((sum, bill) => sum + bill.total, 0),
+    pendingCount: pendingBills.length
+  };
+
+  const filteredBills = pendingBills.filter(bill => {
+    switch (filterType) {
+      case 'takeaway':
+        return bill.isTakeaway;
+      case 'tables':
+        return !bill.isTakeaway;
+      default:
+        return true;
+    }
+  });
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50">
+      {/* Header - Responsivo mejorado */}
+      <header className="bg-white border-b border-blue-200 shadow-sm sticky top-0 z-50">
+        <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 max-w-7xl mx-auto">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 lg:gap-4">
+              <CalculatorIcon size={48} className="sm:h-12 sm:w-12 lg:h-16 lg:w-16" />
+              <div>
+                <h1 className="text-sm sm:text-base lg:text-lg font-medium text-blue-900">
+                  Caja - Comandix
+                </h1>
+                <p className="text-xs sm:text-sm lg:text-base text-blue-700">{user.name} • Cajero</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 sm:gap-3 lg:gap-4">
+              <Badge className="bg-blue-100 text-blue-800 border-blue-300 text-xs sm:text-sm lg:text-base px-2 py-1">
+                {filteredBills.length} cuentas
+              </Badge>
+              {getUnreadCount(user.type) > 0 && (
+                <Badge className="bg-orange-100 text-orange-800 border-orange-300 text-xs sm:text-sm px-2 py-1">
+                  <Bell className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                  {getUnreadCount(user.type)}
+                </Badge>
+              )}
+              <Button variant="outline" size="sm" onClick={onLogout} className="border-blue-300 p-2 sm:p-3">
+                <LogOut className="h-3 w-3 sm:h-4 sm:w-4 lg:h-5 lg:w-5" />
+                <span className="hidden lg:inline ml-2">Salir</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="p-3 sm:p-4 lg:p-6 max-w-7xl mx-auto">
+        {/* Estadísticas del día desglosadas - Responsivo mejorado */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 lg:gap-5 mb-4 sm:mb-6 lg:mb-8">
+          <Card className="border-green-200 bg-green-50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs sm:text-sm text-green-700">Ventas en Local</p>
+                  <p className="text-lg sm:text-2xl font-medium text-green-800">${todayStats.ventasLocal}</p>
+                </div>
+                <TrendingUp className="h-6 w-6 sm:h-8 sm:w-8 text-green-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-blue-200 bg-blue-50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs sm:text-sm text-blue-700">Ventas Para llevar</p>
+                  <p className="text-lg sm:text-2xl font-medium text-blue-800">${todayStats.ventasParaLlevar}</p>
+                </div>
+                <Receipt className="h-6 w-6 sm:h-8 sm:w-8 text-blue-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-amber-200 bg-amber-50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs sm:text-sm text-amber-700">Ventas Efectivo</p>
+                  <p className="text-lg sm:text-2xl font-medium text-amber-800">${todayStats.ventasEfectivo}</p>
+                </div>
+                <Calculator className="h-6 w-6 sm:h-8 sm:w-8 text-amber-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-indigo-200 bg-indigo-50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs sm:text-sm text-indigo-700">Tarjeta Débito</p>
+                  <p className="text-lg sm:text-2xl font-medium text-indigo-800">${todayStats.ventasDebito}</p>
+                </div>
+                <CreditCard className="h-6 w-6 sm:h-8 sm:w-8 text-indigo-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-violet-200 bg-violet-50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs sm:text-sm text-violet-700">Tarjeta Crédito</p>
+                  <p className="text-lg sm:text-2xl font-medium text-violet-800">${todayStats.ventasCredito}</p>
+                </div>
+                <CreditCard className="h-6 w-6 sm:h-8 sm:w-8 text-violet-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-red-200 bg-red-50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs sm:text-sm text-red-700">Por Cobrar</p>
+                  <p className="text-lg sm:text-2xl font-medium text-red-800">${todayStats.pendingAmount.toFixed(2)}</p>
+                  <p className="text-xs text-red-600">{todayStats.pendingCount} cuentas</p>
+                </div>
+                <AlertCircle className="h-6 w-6 sm:h-8 sm:w-8 text-red-500" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Acciones principales */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+          <Button 
+            onClick={handleCloseCash}
+            className="bg-green-600 hover:bg-green-700"
+          >
+            <Calculator className="h-4 w-4 mr-2" />
+            Cerrar Caja
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            onClick={() => handleExportReport('csv')}
+            className="border-blue-300 text-blue-700"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Descargar CSV
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            onClick={() => handleExportReport('pdf')}
+            className="border-blue-300 text-blue-700"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Descargar PDF
+          </Button>
+        </div>
+
+        {/* Resumen de consumo del día */}
+        <Card className="border-blue-200 mb-6">
+          <CardHeader>
+            <CardTitle className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-blue-900">
+              <span>Resumen de Consumo del Día</span>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setShowCashCloseHistory(true)}
+                className="border-blue-300 text-blue-700 w-full sm:w-auto"
+              >
+                <ExternalLink className="h-3 w-3 mr-1" />
+                Ver en Cierre de Caja
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+              <div className="text-center p-3 bg-green-50 rounded border border-green-200">
+                <p className="text-sm text-green-700">Ventas en Local</p>
+                <p className="text-xl font-medium text-green-800">${todayStats.ventasLocal}</p>
+              </div>
+              <div className="text-center p-3 bg-blue-50 rounded border border-blue-200">
+                <p className="text-sm text-blue-700">Ventas Para llevar</p>
+                <p className="text-xl font-medium text-blue-800">${todayStats.ventasParaLlevar}</p>
+              </div>
+              <div className="text-center p-3 bg-amber-50 rounded border border-amber-200">
+                <p className="text-sm text-amber-700">Efectivo</p>
+                <p className="text-xl font-medium text-amber-800">${todayStats.ventasEfectivo}</p>
+              </div>
+              <div className="text-center p-3 bg-indigo-50 rounded border border-indigo-200">
+                <p className="text-sm text-indigo-700">Tarjeta Débito</p>
+                <p className="text-xl font-medium text-indigo-800">${todayStats.ventasDebito}</p>
+              </div>
+              <div className="text-center p-3 bg-violet-50 rounded border border-violet-200">
+                <p className="text-sm text-violet-700">Tarjeta Crédito</p>
+                <p className="text-xl font-medium text-violet-800">${todayStats.ventasCredito}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
+          {/* Cuentas Pendientes */}
+          <Card className="border-blue-200">
+            <CardHeader>
+              <CardTitle className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-blue-900">
+                <span>Cuentas por Cobrar</span>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-blue-700">Mostrar:</label>
+                  <Select value={filterType} onValueChange={setFilterType}>
+                    <SelectTrigger className="w-full sm:w-40 text-xs border-blue-200">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="takeaway">Solo para llevar</SelectItem>
+                      <SelectItem value="tables">Mesas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {filteredBills.map(bill => (
+                <div key={bill.id} className="p-4 border border-blue-200 rounded-lg bg-blue-50">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {bill.isTakeaway ? (
+                        <Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">
+                          Solo para llevar — {bill.customerName}
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-red-100 text-red-800 border-red-300">
+                          Mesa {bill.tableNumber}
+                        </Badge>
+                      )}
+                      <span className="text-sm text-blue-700">{bill.id}</span>
+                      {bill.printedBy && (
+                        <Badge className="bg-green-100 text-green-800 border-green-300 text-xs">
+                          Impreso por {bill.printedBy}
+                        </Badge>
+                      )}
+                      {bill.status === 'por-cobrar' && (
+                        <Badge className="bg-blue-100 text-blue-800 border-blue-300 text-xs">
+                          Por Cobrar
+                        </Badge>
+                      )}
+                      {bill.requestedByWaiter && bill.status !== 'por-cobrar' && (
+                        <Badge className="bg-purple-100 text-purple-800 border-purple-300 text-xs">
+                          💵 Solicitado por Mesero
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <div className="font-medium text-blue-900">${bill.total.toFixed(2)}</div>
+                      <div className="text-xs text-blue-600">
+                        Hace {formatElapsedTime(bill.orderTime)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 text-sm text-blue-700 mb-3">
+                    {bill.items.map((item, index) => (
+                      <div key={index} className="flex justify-between">
+                        <span>{item.quantity}x {item.name}</span>
+                        <span>${item.price}</span>
+                      </div>
+                    ))}
+                    
+                    <Separator className="my-2 border-blue-300" />
+                    
+                    <div className="flex justify-between">
+                      <span>Subtotal:</span>
+                      <span>${bill.subtotal}</span>
+                    </div>
+                    {bill.discount > 0 && (
+                      <div className="flex justify-between text-green-600">
+                        <span>Descuento:</span>
+                        <span>-${bill.discount}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-medium text-blue-900">
+                      <span>Total:</span>
+                      <span>${bill.total.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {bill.isTakeaway && (
+                    <div className="mb-3 text-sm text-blue-700">
+                      <div>Cliente: <span className="font-medium">{bill.customerName}</span></div>
+                      {bill.customerPhone && (
+                        <div>Teléfono: {bill.customerPhone}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {bill.requestedByWaiter && bill.waiterNotes && (
+                    <div className="mb-3 p-2 bg-purple-50 rounded border border-purple-200">
+                      <div className="text-xs text-purple-600 mb-1">Notas del mesero:</div>
+                      <div className="text-sm text-purple-800">{bill.waiterNotes}</div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handlePrintTicket(bill.id)}
+                      className="flex-1 border-blue-300 text-blue-700"
+                      disabled={bill.printedBy && bill.printedBy === user.name}
+                    >
+                      <Printer className="h-3 w-3 mr-1" />
+                      {bill.printedBy ? 'Impreso' : 'Imprimir ticket'}
+                    </Button>
+                    {bill.printedBy && (
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleReprint(bill.id)}
+                        className="border-gray-300 text-gray-700"
+                      >
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                        Reimprimir
+                      </Button>
+                    )}
+                    <Button 
+                      size="sm" 
+                      onClick={() => handleCashPayment(bill.id)}
+                      className="flex-1 bg-green-600 hover:bg-green-700"
+                    >
+                      <DollarSign className="h-3 w-3 mr-1" />
+                      Cobrar
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      onClick={() => handleProcessCardPayment(bill.id)}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700"
+                    >
+                      <CreditCard className="h-3 w-3 mr-1" />
+                      Pagar con tarjeta
+                    </Button>
+
+                  </div>
+                </div>
+              ))}
+
+              {filteredBills.length === 0 && (
+                <div className="text-center py-8 text-blue-600">
+                  <CheckCircle className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                  <p>No hay cuentas pendientes por cobrar</p>
+                  <p className="text-sm">en el filtro seleccionado</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+
+
+          {/* Notificaciones */}
+          {getNotificationsForUser(user.type, user.name).length > 0 && (
+            <Card className="border-orange-200">
+              <CardHeader>
+                <CardTitle className="text-orange-900">Notificaciones</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <NotificationPanel 
+                  notifications={getNotificationsForUser(user.type, user.name)} 
+                  onDismiss={() => {}}
+                />
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {/* Información del rol Capitán */}
+        {isCapitan && (
+          <Card className="border-purple-200 bg-purple-50 mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-purple-900">
+                <ShieldCheck className="h-5 w-5" />
+                Panel de Supervisión - Capitán
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="p-3 bg-purple-100 rounded border border-purple-200">
+                <p className="text-sm text-purple-800">
+                  <strong>Nota:</strong> Como Capitán, tienes acceso de supervisión a este panel.
+                  Puedes ver todos los totales y exportar reportes, pero no puedes editar inventario ni menú.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Formulario de Cierre de Caja */}
+      <CashCloseForm 
+        isOpen={showCashCloseForm}
+        onClose={handleCashCloseCancel}
+        onSubmit={handleCashCloseSubmit}
+      />
+
+      {/* Modales */}
+      <CashCountModal 
+        isOpen={showCashCountModal}
+        onClose={() => setShowCashCountModal(false)}
+        onSubmit={handleCashCountSubmit}
+        expectedTotal={todayStats.ventasEfectivo}
+      />
+
+      <NewCardPaymentModal 
+        isOpen={showCardPaymentModal}
+        onClose={() => setShowCardPaymentModal(false)}
+        onSendToTerminal={handleSendToTerminal}
+        amount={selectedBill?.total || 0}
+        orderNumber={selectedBill?.id || ''}
+        cashier="1"
+      />
+
+      <CardComprobantRegistrationModal 
+        isOpen={showCardRegistrationModal}
+        onClose={() => {
+          setShowCardRegistrationModal(false);
+          setCurrentCardPaymentData(null);
+        }}
+        onConfirmPayment={handleCardRegistrationConfirm}
+        paymentData={currentCardPaymentData || {
+          method: 'debito',
+          terminal: 'Terminal 1',
+          subtotal: 0,
+          tip: 0,
+          total: 0
+        }}
+        orderNumber={selectedBill?.id || ''}
+      />
+
+      <CardPaymentSuccessModal 
+        isOpen={showCardSuccessModal}
+        onClose={() => {
+          setShowCardSuccessModal(false);
+          setCurrentCardPaymentData(null);
+          setCurrentRegistrationData(null);
+          setSelectedBill(null);
+        }}
+        onPrintReceipt={() => {
+          // Implementar lógica de impresión si es necesario
+          console.log('Imprimir comprobante');
+        }}
+        registrationData={currentRegistrationData || {
+          method: 'debito',
+          terminal: 'Terminal 1',
+          transactionId: '',
+          totalAmount: 0,
+          tipAmount: 0,
+          voucherPrinted: false,
+          datetime: new Date()
+        }}
+        orderNumber={selectedBill?.id || ''}
+      />
+
+      <TipCaptureModal 
+        isOpen={showTipCaptureModal}
+        onClose={() => setShowTipCaptureModal(false)}
+        onConfirm={handleTipConfirm}
+        orderTotal={selectedBill?.total || 0}
+        paymentMethod="cash"
+      />
+
+      <CashPaymentWithTipsModal 
+        isOpen={showCashPaymentWithTipsModal}
+        onClose={() => setShowCashPaymentWithTipsModal(false)}
+        onConfirm={handleCashPaymentWithTipsConfirm}
+        totalAmount={selectedBill?.total || 0}
+        tableNumber={selectedBill?.tableNumber}
+        billId={selectedBill?.id || ''}
+      />
+
+      <ReportsModal 
+        isOpen={showReportsModal}
+        onClose={() => setShowReportsModal(false)}
+      />
+
+      <CashierSendClosureModal 
+        isOpen={showSendClosureModal}
+        onClose={() => setShowSendClosureModal(false)}
+        cashier={{
+          id: user.id,
+          name: user.name
+        }}
+      />
+    </div>
+  );
+}

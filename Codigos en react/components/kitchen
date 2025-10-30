@@ -1,0 +1,605 @@
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Separator } from './ui/separator';
+import { NotificationPanel } from './NotificationPanel';
+import { CriticalNotes } from './CriticalNotes';
+import { DelayAlertCard } from './DelayAlertCard';
+import { EtaSelector } from './EtaSelector';
+import { 
+  Clock, 
+  ChefHat, 
+  CheckCircle, 
+  Timer, 
+  Users,
+  Filter,
+  LogOut,
+  Utensils,
+  Coffee,
+  Soup,
+  Bell,
+  AlertTriangle,
+  Package,
+  Minus
+} from 'lucide-react';
+import { useNotifications } from './NotificationContext';
+import { LogoC } from './RoleSpecificIcons';
+import { toast } from 'sonner@2.0.3';
+import { Toaster } from './ui/sonner';
+
+// Mock de recetas de productos
+const mockProductRecipes = {
+  'Taco de Barbacoa': [
+    { id: 'beef', name: 'Carne de res', quantity: 40, unit: 'g', autoConsume: true },
+    { id: 'onion', name: 'Cebolla', quantity: 10, unit: 'g', autoConsume: true },
+    { id: 'tortilla', name: 'Tortillas', quantity: 2, unit: 'pzs', autoConsume: true },
+    { id: 'salsa-roja', name: 'Salsa roja', quantity: 15, unit: 'ml', autoConsume: true }
+  ],
+  'Consomé Grande': [
+    { id: 'consomme', name: 'Consomé base', quantity: 250, unit: 'ml', autoConsume: true },
+    { id: 'beef', name: 'Carne de res', quantity: 30, unit: 'g', autoConsume: true },
+    { id: 'onion', name: 'Cebolla', quantity: 15, unit: 'g', autoConsume: true }
+  ],
+  'Mix Barbacoa': [
+    { id: 'beef', name: 'Carne de res', quantity: 80, unit: 'g', autoConsume: true },
+    { id: 'consomme', name: 'Consomé base', quantity: 200, unit: 'ml', autoConsume: true },
+    { id: 'tortilla', name: 'Tortillas', quantity: 4, unit: 'pzs', autoConsume: true },
+    { id: 'cheese', name: 'Queso', quantity: 20, unit: 'g', autoConsume: true }
+  ],
+  'Taco de Carnitas': [
+    { id: 'beef', name: 'Carne de carnitas', quantity: 35, unit: 'g', autoConsume: true },
+    { id: 'onion', name: 'Cebolla', quantity: 8, unit: 'g', autoConsume: true },
+    { id: 'tortilla', name: 'Tortillas', quantity: 2, unit: 'pzs', autoConsume: true }
+  ],
+  'Quesadilla de Barbacoa': [
+    { id: 'beef', name: 'Carne de res', quantity: 50, unit: 'g', autoConsume: true },
+    { id: 'cheese', name: 'Queso Oaxaca', quantity: 30, unit: 'g', autoConsume: true },
+    { id: 'tortilla', name: 'Tortillas', quantity: 2, unit: 'pzs', autoConsume: true }
+  ]
+};
+
+// Datos de ejemplo de pedidos en cocina - con notas críticas
+const mockOrders = [
+  {
+    id: 'ORD-001',
+    tableNumber: 5,
+    items: [
+      { id: 1, name: 'Taco de Barbacoa', quantity: 3, station: 'tacos', notes: 'Sin cebolla, cliente alérgico' },
+      { id: 2, name: 'Consomé Grande', quantity: 1, station: 'consomes', notes: '' },
+      { id: 3, name: 'Agua de Horchata', quantity: 2, station: 'bebidas', notes: '' }
+    ],
+    status: 'pendiente',
+    orderTime: new Date(Date.now() - 300000), // 5 min ago
+    estimatedTime: 15,
+    waiter: 'Juan Martínez',
+    priority: 'normal',
+    isTakeaway: false
+  },
+  {
+    id: 'ORD-002',
+    tableNumber: 3,
+    items: [
+      { id: 4, name: 'Mix Barbacoa', quantity: 1, station: 'consomes', notes: 'Sin sal - diabético' },
+      { id: 5, name: 'Taco de Carnitas', quantity: 2, station: 'tacos', notes: '' }
+    ],
+    status: 'en_preparacion',
+    orderTime: new Date(Date.now() - 600000), // 10 min ago
+    estimatedTime: 20,
+    waiter: 'Juan Martínez',
+    priority: 'alta',
+    isTakeaway: false
+  },
+  {
+    id: 'ORD-003',
+    tableNumber: null,
+    items: [
+      { id: 6, name: 'Quesadilla de Barbacoa', quantity: 2, station: 'tacos', notes: 'Extra queso pero sin gluten - importante' },
+      { id: 7, name: 'Refresco', quantity: 3, station: 'bebidas', notes: 'Con hielo' }
+    ],
+    status: 'listo_para_recoger',
+    orderTime: new Date(Date.now() - 1200000), // 20 min ago
+    estimatedTime: 10,
+    waiter: 'Juan Martínez',
+    priority: 'normal',
+    isTakeaway: true,
+    customerName: 'Jahir',
+    customerPhone: '55 1234 5678',
+    pickupTime: 'Ahora'
+  }
+];
+
+export function KitchenApp({ user, onLogout }) {
+  const [orders, setOrders] = useState(mockOrders);
+  const [selectedStation, setSelectedStation] = useState('todas');
+  const [selectedStatus, setSelectedStatus] = useState('todas');
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showTakeawayOnly, setShowTakeawayOnly] = useState(false);
+  const [alertFilter, setAlertFilter] = useState('todas');
+  const [delayAlerts, setDelayAlerts] = useState([]);
+  
+  const { addNotification, getUnreadCount } = useNotifications();
+
+  const stations = [
+    { id: 'todas', name: 'Todas las Estaciones', icon: ChefHat },
+    { id: 'tacos', name: 'Tacos', icon: Utensils },
+    { id: 'consomes', name: 'Consomes', icon: Soup },
+    { id: 'bebidas', name: 'Bebidas', icon: Coffee }
+  ];
+
+  const statusOptions = [
+    { id: 'todas', name: 'Todos los Estados', color: 'default' },
+    { id: 'pendiente', name: 'Pendientes', color: 'destructive' },
+    { id: 'en_preparacion', name: 'En Preparación', color: 'secondary' },
+    { id: 'listo', name: 'Listos', color: 'default' },
+    { id: 'listo_para_recoger', name: 'Listos para Recoger', color: 'default' }
+  ];
+
+  const alertFilterOptions = [
+    { id: 'todas', name: 'Todas' },
+    { id: 'demoras', name: 'Demoras' },
+    { id: 'canceladas', name: 'Canceladas' },
+    { id: 'cambios', name: 'Cambios' }
+  ];
+
+  const filteredOrders = orders.filter(order => {
+    const stationMatch = selectedStation === 'todas' || 
+      order.items.some(item => item.station === selectedStation);
+    const statusMatch = selectedStatus === 'todas' || order.status === selectedStatus;
+    const takeawayMatch = !showTakeawayOnly || order.isTakeaway;
+    return stationMatch && statusMatch && takeawayMatch;
+  });
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'pendiente': return 'bg-red-100 text-red-800 border-red-300';
+      case 'en_preparacion': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 'listo': return 'bg-green-100 text-green-800 border-green-300';
+      case 'listo_para_recoger': return 'bg-green-100 text-green-800 border-green-300';
+      default: return 'bg-gray-100 text-gray-800 border-gray-300';
+    }
+  };
+
+  const getPriorityColor = (priority) => {
+    switch (priority) {
+      case 'alta': return 'bg-red-100 text-red-800 border-red-300';
+      case 'normal': return 'bg-blue-100 text-blue-800 border-blue-300';
+      default: return 'bg-gray-100 text-gray-800 border-gray-300';
+    }
+  };
+
+  const formatElapsedTime = (orderTime) => {
+    const elapsed = Math.floor((Date.now() - orderTime.getTime()) / 60000);
+    return `${elapsed} min`;
+  };
+
+  const calculateInventoryConsumption = (order) => {
+    const consumption = {};
+    
+    order.items.forEach(item => {
+      const recipe = mockProductRecipes[item.name];
+      if (recipe) {
+        recipe.forEach(ingredient => {
+          if (ingredient.autoConsume) {
+            const ingredientId = ingredient.id;
+            const totalQuantity = ingredient.quantity * item.quantity;
+            
+            if (consumption[ingredientId]) {
+              consumption[ingredientId].quantity += totalQuantity;
+            } else {
+              consumption[ingredientId] = {
+                name: ingredient.name,
+                quantity: totalQuantity,
+                unit: ingredient.unit
+              };
+            }
+          }
+        });
+      }
+    });
+    
+    return consumption;
+  };
+
+  const updateOrderStatus = (orderId, newStatus) => {
+    const order = orders.find(o => o.id === orderId);
+    
+    setOrders(prev => prev.map(order => 
+      order.id === orderId ? { ...order, status: newStatus } : order
+    ));
+
+    // Procesar descuento automático de inventario al marcar como "Listo"
+    if ((newStatus === 'listo' || newStatus === 'listo_para_recoger') && order) {
+      const consumption = calculateInventoryConsumption(order);
+      
+      if (Object.keys(consumption).length > 0) {
+        // Mostrar toast con los ingredientes descontados
+        const consumptionText = Object.values(consumption)
+          .map(item => `${item.name}: -${item.quantity} ${item.unit}`)
+          .join(', ');
+        
+        toast.success("Inventario actualizado automáticamente", {
+          description: `Ingredientes descontados: ${consumptionText}`,
+          duration: 4000,
+        });
+      }
+    }
+
+    // Enviar notificación al mesero cuando el pedido esté listo
+    if ((newStatus === 'listo' || newStatus === 'listo_para_recoger') && order) {
+      const isReady = newStatus === 'listo_para_recoger';
+      const message = order.isTakeaway 
+        ? `Pedido listo para recoger — ${order.customerName}`
+        : `Mesa ${order.tableNumber} - Pedido completado y listo para servir`;
+      
+      addNotification({
+        type: 'order_ready',
+        title: order.isTakeaway ? 'Pedido Para Llevar Listo' : 'Pedido Listo',
+        message: message,
+        targetRole: 'mesero',
+        targetUser: order.waiter,
+        fromUser: user.name,
+        fromRole: user.type,
+        tableNumber: order.tableNumber,
+        orderId: order.id,
+        priority: 'high',
+        isTakeaway: order.isTakeaway,
+        customerName: order.customerName
+      });
+      
+      if (order.isTakeaway && newStatus === 'listo_para_recoger') {
+        alert(`Pedido listo para recoger — ${order.customerName}`);
+      }
+    }
+  };
+
+  const updateEstimatedTime = (orderId, newTime) => {
+    setOrders(prev => prev.map(order => 
+      order.id === orderId ? { ...order, estimatedTime: parseInt(newTime) } : order
+    ));
+    
+    // Enviar notificación al mesero sobre el cambio de ETA
+    const order = orders.find(o => o.id === orderId);
+    if (order) {
+      addNotification({
+        type: 'eta_updated',
+        title: 'ETA Actualizado',
+        message: `ETA actualizado — Orden ${orderId} — ${newTime} min`,
+        targetRole: 'mesero',
+        targetUser: order.waiter,
+        fromUser: user.name,
+        fromRole: user.type,
+        tableNumber: order.tableNumber,
+        orderId: order.id,
+        priority: 'medium'
+      });
+    }
+  };
+
+  const handleViewAlertDetails = (alert) => {
+    alert(`Detalles de ${alert.type}: ${alert.reason}`);
+  };
+
+  const handleMarkAlertAsRead = (alertId) => {
+    setDelayAlerts(prev => 
+      prev.map(alert => 
+        alert.id === alertId ? { ...alert, isRead: true } : alert
+      )
+    );
+  };
+
+  const getOrderWithAlert = (orderId) => {
+    return delayAlerts.find(alert => alert.orderId === orderId);
+  };
+
+  const getBadgeForAlert = (alertType) => {
+    switch (alertType) {
+      case 'demora':
+        return <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs">Demora</Badge>;
+      case 'cancelacion':
+        return <Badge className="bg-red-100 text-red-800 border-red-300 text-xs">Cancelado</Badge>;
+      case 'cambio':
+        return <Badge className="bg-blue-100 text-blue-800 border-blue-300 text-xs">Cambio</Badge>;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <>
+      <Toaster richColors />
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-50">
+      {/* Header - Responsivo mejorado */}
+      <header className="bg-white border-b border-orange-200 shadow-sm sticky top-0 z-50">
+        <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 max-w-7xl mx-auto">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 lg:gap-4">
+              <LogoC size={48} className="sm:h-12 sm:w-12 lg:h-16 lg:w-16" />
+              <div>
+                <h1 className="text-sm sm:text-base lg:text-lg font-medium text-orange-900">Filtros de Cocina - Comandix</h1>
+                <p className="text-xs sm:text-sm lg:text-base text-orange-700">{user.name} • Cocina</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 sm:gap-3 lg:gap-4">
+              <Badge className="bg-orange-100 text-orange-800 border-orange-300 text-xs sm:text-sm lg:text-base px-2 py-1">
+                {filteredOrders.length} pedidos
+              </Badge>
+              <Button variant="outline" size="sm" onClick={onLogout} className="border-orange-300 p-2 sm:p-3">
+                <LogOut className="h-3 w-3 sm:h-4 sm:w-4 lg:h-5 lg:w-5" />
+                <span className="hidden lg:inline ml-2">Salir</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="p-3 sm:p-4 lg:p-6 max-w-7xl mx-auto">
+        {/* Filtros - Mejorado para todas las pantallas */}
+        <Card className="mb-4 sm:mb-6 lg:mb-8 border-orange-200">
+          <CardHeader className="pb-3 lg:pb-4">
+            <CardTitle className="flex items-center gap-2 text-orange-900 text-base lg:text-lg">
+              <Filter className="h-4 w-4 lg:h-5 lg:w-5" />
+              Filtros de Cocina
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 lg:gap-5">
+              <div className="flex flex-col">
+                <label className="text-sm lg:text-base font-medium text-orange-900 mb-2 block">Estación</label>
+                <Select value={selectedStation} onValueChange={setSelectedStation}>
+                  <SelectTrigger className="border-orange-200 w-full h-10 lg:h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stations.map(station => (
+                      <SelectItem key={station.id} value={station.id}>
+                        <div className="flex items-center gap-2">
+                          <station.icon className="h-4 w-4" />
+                          <span className="text-sm lg:text-base">{station.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="flex flex-col">
+                <label className="text-sm lg:text-base font-medium text-orange-900 mb-2 block">Estado</label>
+                <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                  <SelectTrigger className="border-orange-200 w-full h-10 lg:h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions.map(status => (
+                      <SelectItem key={status.id} value={status.id}>
+                        <span className="truncate text-sm lg:text-base">{status.name}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="flex flex-col">
+                <label className="text-sm lg:text-base font-medium text-orange-900 mb-2 block">Mostrar</label>
+                <Select value={showTakeawayOnly ? 'takeaway' : 'all'} onValueChange={(value) => {
+                  if (value === 'all') setShowTakeawayOnly(false);
+                  else if (value === 'takeaway') setShowTakeawayOnly(true);
+                  else if (value === 'tables') {
+                    setShowTakeawayOnly(false);
+                    // Aquí se podría agregar lógica adicional para filtrar solo mesas
+                  }
+                }}>
+                  <SelectTrigger className="border-orange-200 w-full h-10 lg:h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="takeaway">Solo para llevar</SelectItem>
+                    <SelectItem value="tables">Mesas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="flex flex-col">
+                <label className="text-sm lg:text-base font-medium text-orange-900 mb-2 block">Alertas</label>
+                <Select value={alertFilter} onValueChange={setAlertFilter}>
+                  <SelectTrigger className="border-orange-200 w-full h-10 lg:h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {alertFilterOptions.map(option => (
+                      <SelectItem key={option.id} value={option.id}>
+                        <span className="text-sm lg:text-base">{option.name}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Lista de Pedidos - Mejorado para todas las pantallas */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-5">
+          {filteredOrders.map(order => {
+            const orderAlert = getOrderWithAlert(order.id);
+            return (
+            <Card key={order.id} className={`border-2 ${
+              order.priority === 'alta' ? 'border-red-300 bg-red-50' : 
+              orderAlert ? 'border-amber-300 bg-amber-50' : 'border-orange-200'
+            }`} >
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className={getPriorityColor(order.priority)}>
+                      {order.priority === 'alta' ? 'URGENTE' : 'Normal'}
+                    </Badge>
+                    <Badge className={getStatusColor(order.status)}>
+                      {order.status.replace('_', ' ').toUpperCase()}
+                    </Badge>
+                    {orderAlert && getBadgeForAlert(orderAlert.type)}
+                    {order.isTakeaway && (
+                      <Badge className="bg-blue-100 text-blue-800 border-blue-300">
+                        📦 Solo para llevar — {order.customerName}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="font-medium text-orange-900">
+                      {order.isTakeaway ? `Para llevar` : `Mesa ${order.tableNumber}`}
+                    </div>
+                    <div className="text-xs text-orange-700">{order.id}</div>
+                  </div>
+                </div>
+                
+                {orderAlert && (
+                  <div className="mt-2 p-2 bg-amber-100 border border-amber-300 rounded text-sm">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-3 w-3 text-amber-600" />
+                      <span className="text-amber-800">
+                        {orderAlert.type.charAt(0).toUpperCase() + orderAlert.type.slice(1)}: {orderAlert.reason}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
+                {order.isTakeaway && order.customerPhone && (
+                  <div className="text-sm text-orange-700 mt-2">
+                    📞 {order.customerPhone}
+                  </div>
+                )}
+                
+                <div className="flex items-center justify-between text-sm text-orange-700">
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    Hace {formatElapsedTime(order.orderTime)}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    {order.waiter}
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-sm text-orange-700">ETA:</span>
+                  <EtaSelector 
+                    currentEta={order.estimatedTime}
+                    orderId={order.id}
+                    onUpdateEta={updateEstimatedTime}
+                  />
+                </div>
+              </CardHeader>
+              
+              <CardContent className="space-y-4">
+                {/* Items del pedido */}
+                <div className="space-y-2">
+                  {order.items.map(item => (
+                    <div key={item.id} className="p-2 bg-white rounded border border-orange-100">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex-1">
+                          <div className="font-medium text-orange-900">{item.name}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="border-orange-300 text-orange-700">
+                            x{item.quantity}
+                          </Badge>
+                          <Badge variant="outline" className="border-blue-300 text-blue-700 text-xs">
+                            {item.station}
+                          </Badge>
+                        </div>
+                      </div>
+                      {item.notes && (
+                        <CriticalNotes notes={item.notes} className="mt-2" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Panel de Consumo Estimado - Solo mostrar si hay recetas configuradas */}
+                {(() => {
+                  const consumption = calculateInventoryConsumption(order);
+                  const hasConsumption = Object.keys(consumption).length > 0;
+                  
+                  if (hasConsumption && (order.status === 'pendiente' || order.status === 'en_preparacion')) {
+                    return (
+                      <div className="p-3 bg-blue-50 rounded border border-blue-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Package className="h-4 w-4 text-blue-600" />
+                          <span className="text-sm font-medium text-blue-900">
+                            Consumo estimado en esta orden
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {Object.entries(consumption).map(([ingredientId, item]) => (
+                            <div key={ingredientId} className="flex items-center justify-between text-xs">
+                              <span className="text-blue-700">{item.name}</span>
+                              <div className="flex items-center gap-1 text-blue-800">
+                                <Minus className="h-3 w-3" />
+                                <span className="font-medium">{item.quantity} {item.unit}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-2 text-xs text-blue-600">
+                          Se descontará automáticamente al marcar como "Listo"
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                <Separator className="border-orange-200" />
+
+                {/* Acciones */}
+                <div className="flex gap-2">
+                  {order.status === 'pendiente' && (
+                    <Button 
+                      onClick={() => updateOrderStatus(order.id, 'en_preparacion')}
+                      className="flex-1 bg-yellow-600 hover:bg-yellow-700"
+                      size="sm"
+                    >
+                      <Timer className="h-3 w-3 mr-1" />
+                      Iniciar
+                    </Button>
+                  )}
+                  
+                  {order.status === 'en_preparacion' && (
+                    <Button 
+                      onClick={() => updateOrderStatus(order.id, order.isTakeaway ? 'listo_para_recoger' : 'listo')}
+                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      size="sm"
+                    >
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      {order.isTakeaway ? 'Listo para Recoger' : 'Listo'}
+                    </Button>
+                  )}
+                  
+                  {(order.status === 'listo' || order.status === 'listo_para_recoger') && (
+                    <div className="flex-1 p-2 text-center text-sm text-green-700 bg-green-100 rounded border border-green-300">
+                      ✅ {order.isTakeaway ? 'Listo para recoger' : 'Pedido completado'}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+          })}
+        </div>
+
+        {filteredOrders.length === 0 && (
+          <Card className="border-orange-200">
+            <CardContent className="p-8 text-center">
+              <ChefHat className="h-12 w-12 mx-auto mb-4 text-orange-400" />
+              <p className="text-orange-700">No hay pedidos que coincidan con los filtros actuales</p>
+              <p className="text-sm text-orange-600">Ajusta los filtros para ver otros pedidos</p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+      </div>
+    </>
+  );
+}
