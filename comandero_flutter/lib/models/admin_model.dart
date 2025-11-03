@@ -4,7 +4,6 @@ class AdminUser {
   final String id;
   final String name;
   final String username;
-  final String email;
   final String? phone;
   final List<String> roles;
   final bool isActive;
@@ -16,7 +15,6 @@ class AdminUser {
     required this.id,
     required this.name,
     required this.username,
-    required this.email,
     this.phone,
     required this.roles,
     required this.isActive,
@@ -30,7 +28,6 @@ class AdminUser {
       id: json['id'],
       name: json['name'],
       username: json['username'],
-      email: json['email'],
       phone: json['phone'],
       roles: List<String>.from(json['roles']),
       isActive: json['isActive'],
@@ -47,7 +44,6 @@ class AdminUser {
       'id': id,
       'name': name,
       'username': username,
-      'email': email,
       'phone': phone,
       'roles': roles,
       'isActive': isActive,
@@ -61,7 +57,6 @@ class AdminUser {
     String? id,
     String? name,
     String? username,
-    String? email,
     String? phone,
     List<String>? roles,
     bool? isActive,
@@ -73,7 +68,6 @@ class AdminUser {
       id: id ?? this.id,
       name: name ?? this.name,
       username: username ?? this.username,
-      email: email ?? this.email,
       phone: phone ?? this.phone,
       roles: roles ?? this.roles,
       isActive: isActive ?? this.isActive,
@@ -378,7 +372,7 @@ class MenuItem {
   final String name;
   final String category;
   final String description;
-  final double price;
+  final double? price; // Nullable si usa tamaños
   final bool isAvailable;
   final String? image;
   final List<String> ingredients;
@@ -387,13 +381,21 @@ class MenuItem {
   final String? notes;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  // Nuevos campos para tamaños y configuraciones
+  final bool hasSizes;
+  final List<MenuSize>? sizes; // Lista de tamaños (chico, mediano, grande) con precios
+  final bool serveHot;
+  final bool isSpicy;
+  final bool allowSauces;
+  final bool allowExtraIngredients;
+  final List<RecipeIngredient>? recipeIngredients; // Ingredientes para receta/descuento automático
 
   MenuItem({
     required this.id,
     required this.name,
     required this.category,
     required this.description,
-    required this.price,
+    this.price,
     required this.isAvailable,
     this.image,
     required this.ingredients,
@@ -402,6 +404,13 @@ class MenuItem {
     this.notes,
     required this.createdAt,
     this.updatedAt,
+    this.hasSizes = false,
+    this.sizes,
+    this.serveHot = false,
+    this.isSpicy = false,
+    this.allowSauces = false,
+    this.allowExtraIngredients = false,
+    this.recipeIngredients,
   });
 
   factory MenuItem.fromJson(Map<String, dynamic> json) {
@@ -410,16 +419,27 @@ class MenuItem {
       name: json['name'],
       category: json['category'],
       description: json['description'],
-      price: json['price'].toDouble(),
-      isAvailable: json['isAvailable'],
+      price: json['price']?.toDouble(),
+      isAvailable: json['isAvailable'] ?? true,
       image: json['image'],
-      ingredients: List<String>.from(json['ingredients']),
-      allergens: List<String>.from(json['allergens']),
-      preparationTime: json['preparationTime'],
+      ingredients: json['ingredients'] != null ? List<String>.from(json['ingredients']) : [],
+      allergens: json['allergens'] != null ? List<String>.from(json['allergens']) : [],
+      preparationTime: json['preparationTime'] ?? 0,
       notes: json['notes'],
-      createdAt: DateTime.parse(json['createdAt']),
+      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
       updatedAt: json['updatedAt'] != null
           ? DateTime.parse(json['updatedAt'])
+          : null,
+      hasSizes: json['hasSizes'] ?? false,
+      sizes: json['sizes'] != null
+          ? (json['sizes'] as List).map((s) => MenuSize.fromJson(s)).toList()
+          : null,
+      serveHot: json['serveHot'] ?? false,
+      isSpicy: json['isSpicy'] ?? false,
+      allowSauces: json['allowSauces'] ?? false,
+      allowExtraIngredients: json['allowExtraIngredients'] ?? false,
+      recipeIngredients: json['recipeIngredients'] != null
+          ? (json['recipeIngredients'] as List).map((r) => RecipeIngredient.fromJson(r)).toList()
           : null,
     );
   }
@@ -439,6 +459,13 @@ class MenuItem {
       'notes': notes,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
+      'hasSizes': hasSizes,
+      'sizes': sizes?.map((s) => s.toJson()).toList(),
+      'serveHot': serveHot,
+      'isSpicy': isSpicy,
+      'allowSauces': allowSauces,
+      'allowExtraIngredients': allowExtraIngredients,
+      'recipeIngredients': recipeIngredients?.map((r) => r.toJson()).toList(),
     };
   }
 
@@ -456,6 +483,13 @@ class MenuItem {
     String? notes,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool? hasSizes,
+    List<MenuSize>? sizes,
+    bool? serveHot,
+    bool? isSpicy,
+    bool? allowSauces,
+    bool? allowExtraIngredients,
+    List<RecipeIngredient>? recipeIngredients,
   }) {
     return MenuItem(
       id: id ?? this.id,
@@ -471,7 +505,80 @@ class MenuItem {
       notes: notes ?? this.notes,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      hasSizes: hasSizes ?? this.hasSizes,
+      sizes: sizes ?? this.sizes,
+      serveHot: serveHot ?? this.serveHot,
+      isSpicy: isSpicy ?? this.isSpicy,
+      allowSauces: allowSauces ?? this.allowSauces,
+      allowExtraIngredients: allowExtraIngredients ?? this.allowExtraIngredients,
+      recipeIngredients: recipeIngredients ?? this.recipeIngredients,
     );
+  }
+}
+
+// Modelo para tamaños de menú
+class MenuSize {
+  final String name;
+  final double price;
+
+  MenuSize({
+    required this.name,
+    required this.price,
+  });
+
+  factory MenuSize.fromJson(Map<String, dynamic> json) {
+    return MenuSize(
+      name: json['name'],
+      price: json['price'].toDouble(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'price': price,
+    };
+  }
+}
+
+// Modelo para ingredientes de receta
+class RecipeIngredient {
+  final String id;
+  final String name;
+  final String unit; // ml, g, unidades, etc.
+  final double quantityPerPortion;
+  final bool autoDeduct; // Descontar automáticamente del inventario
+  final bool isCustom; // Si es ingrediente personalizado o sugerido
+
+  RecipeIngredient({
+    required this.id,
+    required this.name,
+    required this.unit,
+    required this.quantityPerPortion,
+    this.autoDeduct = true,
+    this.isCustom = false,
+  });
+
+  factory RecipeIngredient.fromJson(Map<String, dynamic> json) {
+    return RecipeIngredient(
+      id: json['id'],
+      name: json['name'],
+      unit: json['unit'],
+      quantityPerPortion: json['quantityPerPortion'].toDouble(),
+      autoDeduct: json['autoDeduct'] ?? true,
+      isCustom: json['isCustom'] ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'unit': unit,
+      'quantityPerPortion': quantityPerPortion,
+      'autoDeduct': autoDeduct,
+      'isCustom': isCustom,
+    };
   }
 }
 
@@ -485,6 +592,7 @@ class TableModel {
   final double? currentTotal;
   final DateTime? lastOrderTime;
   final String? notes;
+  final String? section; // 'area_principal' o 'area_lateral'
 
   TableModel({
     required this.id,
@@ -496,6 +604,7 @@ class TableModel {
     this.currentTotal,
     this.lastOrderTime,
     this.notes,
+    this.section,
   });
 
   factory TableModel.fromJson(Map<String, dynamic> json) {
@@ -511,6 +620,7 @@ class TableModel {
           ? DateTime.parse(json['lastOrderTime'])
           : null,
       notes: json['notes'],
+      section: json['section'],
     );
   }
 
@@ -525,6 +635,7 @@ class TableModel {
       'currentTotal': currentTotal,
       'lastOrderTime': lastOrderTime?.toIso8601String(),
       'notes': notes,
+      'section': section,
     };
   }
 
@@ -538,6 +649,7 @@ class TableModel {
     double? currentTotal,
     DateTime? lastOrderTime,
     String? notes,
+    String? section,
   }) {
     return TableModel(
       id: id ?? this.id,
@@ -549,6 +661,7 @@ class TableModel {
       currentTotal: currentTotal ?? this.currentTotal,
       lastOrderTime: lastOrderTime ?? this.lastOrderTime,
       notes: notes ?? this.notes,
+      section: section ?? this.section,
     );
   }
 }
@@ -591,6 +704,35 @@ class InventoryStatus {
   }
 }
 
+// Enum para fortaleza de contraseña
+enum PasswordStrength {
+  weak,
+  medium,
+  strong;
+
+  Color get color {
+    switch (this) {
+      case PasswordStrength.weak:
+        return Colors.red;
+      case PasswordStrength.medium:
+        return Colors.orange;
+      case PasswordStrength.strong:
+        return Colors.green;
+    }
+  }
+
+  String get text {
+    switch (this) {
+      case PasswordStrength.weak:
+        return 'Débil';
+      case PasswordStrength.medium:
+        return 'Media';
+      case PasswordStrength.strong:
+        return 'Fuerte';
+    }
+  }
+}
+
 // Roles de usuario
 class UserRole {
   static const String mesero = 'mesero';
@@ -598,6 +740,14 @@ class UserRole {
   static const String cajero = 'cajero';
   static const String capitan = 'capitan';
   static const String admin = 'admin';
+
+  static List<String> get allRoles => [
+        mesero,
+        cocinero,
+        capitan,
+        cajero,
+        admin,
+      ];
 
   static String getRoleText(String role) {
     switch (role) {

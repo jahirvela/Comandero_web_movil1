@@ -70,41 +70,32 @@ class CaptainController extends ChangeNotifier {
   }
 
   void _initializeData() {
-    // Inicializar alertas de ejemplo
+    // Inicializar alertas de ejemplo según las imágenes
     _alerts = [
       CaptainAlert(
         id: 'alert_001',
-        type: AlertType.tableDelayed,
-        title: 'Mesa 5 - Tiempo de espera excedido',
-        message: 'La mesa 5 lleva más de 45 minutos esperando su orden',
+        type: AlertType.orderDelayed,
+        title: 'Orden ORD-001',
+        message: 'Mesa 5 • tardó 25 min más de lo esperado',
         tableNumber: 5,
-        minutes: 45,
+        orderNumber: 'ORD-001',
+        minutes: 25,
         priority: AlertPriority.high,
         timestamp: DateTime.now().subtract(const Duration(minutes: 10)),
       ),
       CaptainAlert(
         id: 'alert_002',
-        type: AlertType.orderDelayed,
-        title: 'Orden ORD-003 - Retraso en cocina',
-        message: 'La orden ORD-003 lleva más de 30 minutos en preparación',
-        orderNumber: 'ORD-003',
-        minutes: 30,
-        priority: AlertPriority.medium,
-        timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
-      ),
-      CaptainAlert(
-        id: 'alert_003',
-        type: AlertType.serviceIssue,
-        title: 'Mesa 3 - Problema de servicio',
-        message: 'El cliente de la mesa 3 reporta problema con su orden',
+        type: AlertType.tableDelayed,
+        title: 'Mesa 3',
+        message: 'Cuenta pendiente • 45 min sin cobrar',
         tableNumber: 3,
-        minutes: 15,
+        minutes: 45,
         priority: AlertPriority.high,
-        timestamp: DateTime.now().subtract(const Duration(minutes: 2)),
+        timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
       ),
     ];
 
-    // Inicializar órdenes activas de ejemplo
+    // Inicializar órdenes activas de ejemplo según las imágenes
     _activeOrders = [
       CaptainOrder(
         id: 'ORD-001',
@@ -113,7 +104,7 @@ class CaptainController extends ChangeNotifier {
         orderTime: DateTime.now().subtract(const Duration(minutes: 25)),
         elapsedMinutes: 25,
         waiter: 'Juan Martínez',
-        total: 159.0,
+        total: 157.55,
         items: [
           CaptainOrderItem(
             name: 'Taco de Barbacoa',
@@ -121,12 +112,6 @@ class CaptainController extends ChangeNotifier {
             station: 'Tacos',
             status: 'preparando',
             notes: 'Sin cebolla',
-          ),
-          CaptainOrderItem(
-            name: 'Consomé Grande',
-            quantity: 1,
-            station: 'Consomes',
-            status: 'listo',
           ),
         ],
         priority: AlertPriority.medium,
@@ -138,8 +123,8 @@ class CaptainController extends ChangeNotifier {
         status: CaptainOrderStatus.listo,
         orderTime: DateTime.now().subtract(const Duration(minutes: 40)),
         elapsedMinutes: 40,
-        waiter: 'María López',
-        total: 161.0,
+        waiter: 'María García',
+        total: 145.95,
         items: [
           CaptainOrderItem(
             name: 'Mix Barbacoa',
@@ -174,9 +159,9 @@ class CaptainController extends ChangeNotifier {
         number: 3,
         status: CaptainTableStatus.cuenta,
         customers: 4,
-        waiter: 'María López',
+        waiter: 'María García',
         lastOrderTime: DateTime.now().subtract(const Duration(minutes: 45)),
-        currentTotal: 161.0,
+        currentTotal: 145.95,
         hasActiveOrder: true,
         notes: 'Esperando pago',
       ),
@@ -392,6 +377,44 @@ class CaptainController extends ChangeNotifier {
       stats[alert.priority] = (stats[alert.priority] ?? 0) + 1;
     }
     return stats;
+  }
+
+  // Obtener monto total de cuentas pendientes
+  double getPendingBillsAmount() {
+    // Simular cálculo de cuentas pendientes
+    // En producción, esto vendría de las facturas pendientes
+    return 303.50;
+  }
+
+  // Obtener lista de facturas pendientes
+  List<Map<String, dynamic>> getPendingBills() {
+    // Simular lista de facturas pendientes
+    // En producción, esto vendría del módulo Cajero
+    return [
+      {
+        'id': 'BILL-001',
+        'tableNumber': 5,
+        'total': 157.55,
+        'waiter': 'Juan Martínez',
+        'isTakeaway': false,
+        'elapsedMinutes': 2917,
+      },
+      {
+        'id': 'BILL-002',
+        'tableNumber': null,
+        'total': 145.95,
+        'waiter': 'María García',
+        'isTakeaway': true,
+        'customerName': 'Roberto',
+        'elapsedMinutes': 2927,
+      },
+    ];
+  }
+
+  // Eliminar alerta por ID de orden
+  void removeAlertByOrderId(String orderId) {
+    _alerts = _alerts.where((alert) => alert.orderNumber != orderId).toList();
+    notifyListeners();
   }
 }
 

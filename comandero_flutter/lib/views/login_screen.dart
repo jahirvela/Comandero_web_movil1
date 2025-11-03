@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import '../controllers/auth_controller.dart';
 import '../utils/app_colors.dart';
+import '../utils/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -80,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: AppColors.background, // Fondo del proyecto React
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(AppTheme.spacingXL),
           child: Form(
             key: _formKey,
             child: Column(
@@ -90,15 +91,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 // Card principal como en React
                 Card(
-                  elevation: 8,
+                  elevation: AppTheme.elevationLG,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusLG),
                     side: BorderSide(
                       color: AppColors.primary.withValues(alpha: 0.2),
+                      width: 1.0,
                     ),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(24.0),
+                    padding: const EdgeInsets.all(AppTheme.spacingXL),
                     child: Column(
                       children: [
                         // Logo y título
@@ -109,8 +111,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 width: 64,
                                 height: 64,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFFF6B35),
-                                  borderRadius: BorderRadius.circular(12),
+                                  color: AppColors.primary,
+                                  borderRadius: BorderRadius.circular(AppTheme.radiusMD),
                                 ),
                                 child: const Icon(
                                   Icons.restaurant,
@@ -118,21 +120,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                   color: Colors.white,
                                 ),
                               ),
-                              const SizedBox(height: 16),
-                              const Text(
+                              SizedBox(height: AppTheme.spacingLG),
+                              Text(
                                 'Comandix',
                                 style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF3C2317),
+                                  fontSize: AppTheme.fontSize2XL,
+                                  fontWeight: AppTheme.fontWeightBold,
+                                  color: AppColors.textPrimary,
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              const Text(
+                              SizedBox(height: AppTheme.spacingXS),
+                              Text(
                                 'Sistema de comandero para puesto de barbacoa',
                                 style: TextStyle(
-                                  fontSize: 14,
-                                  color: Color(0xFF8D6E63),
+                                  fontSize: AppTheme.fontSizeSM,
+                                  color: AppColors.textSecondary,
                                 ),
                                 textAlign: TextAlign.center,
                               ),
@@ -140,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
 
-                        const SizedBox(height: 24),
+                        SizedBox(height: AppTheme.spacingXL),
 
                         // Grid de roles de referencia
                         Container(
@@ -206,7 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
 
-                        const SizedBox(height: 24),
+                        SizedBox(height: AppTheme.spacingXL),
 
                         // Campo de usuario
                         TextFormField(
@@ -224,7 +226,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                         ),
 
-                        const SizedBox(height: 16),
+                        SizedBox(height: AppTheme.spacingLG),
 
                         // Campo de contraseña
                         TextFormField(
@@ -255,17 +257,17 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                         ),
 
-                        const SizedBox(height: 24),
+                        SizedBox(height: AppTheme.spacingXL),
 
                         // Botón de login con gradiente
                         Container(
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
-                              colors: [Color(0xFFFF6B35), Color(0xFFFF9800)],
+                              colors: [AppColors.primary, AppColors.warning],
                               begin: Alignment.centerLeft,
                               end: Alignment.centerRight,
                             ),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(AppTheme.radiusMD),
                             boxShadow: [
                               BoxShadow(
                                 color: const Color(
@@ -308,7 +310,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
 
-                        const SizedBox(height: 16),
+                        SizedBox(height: AppTheme.spacingLG),
 
                         // Texto de ayuda
                         const Text(

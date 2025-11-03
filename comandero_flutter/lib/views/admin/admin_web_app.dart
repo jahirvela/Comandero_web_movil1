@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
+import 'package:syncfusion_flutter_charts/charts.dart';
+import 'package:intl/intl.dart';
 import '../../controllers/admin_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/admin_model.dart';
@@ -21,10 +24,28 @@ class _AdminWebAppState extends State<AdminWebApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Guard: Verificar que estamos en web y el usuario es admin
+    if (!kIsWeb) {
+      return const Scaffold(
+        body: Center(
+          child: Text('Este panel solo está disponible en web'),
+        ),
+      );
+    }
+
     return MultiProvider(
       providers: [ChangeNotifierProvider(create: (_) => AdminController())],
       child: Consumer2<AdminController, AuthController>(
         builder: (context, adminController, authController, child) {
+          // Verificar que el usuario es admin
+          if (authController.userRole != 'admin') {
+            return const Scaffold(
+              body: Center(
+                child: Text('Acceso denegado. Solo administradores pueden acceder.'),
+              ),
+            );
+          }
+
           return LayoutBuilder(
             builder: (context, constraints) {
               final isDesktop = constraints.maxWidth > 1200;
@@ -1187,6 +1208,10 @@ class _AdminWebAppState extends State<AdminWebApp> {
     bool isTablet,
     bool isDesktop,
   ) {
+    final chartData = salesByHour.entries.map((entry) {
+      return SalesData(entry.key, entry.value);
+    }).toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1200,48 +1225,52 @@ class _AdminWebAppState extends State<AdminWebApp> {
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: isDesktop ? 200.0 : (isTablet ? 150.0 : 120.0),
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: salesByHour.length,
-            itemBuilder: (context, index) {
-              final entry = salesByHour.entries.elementAt(index);
-              final maxValue = salesByHour.values.reduce(
-                (a, b) => a > b ? a : b,
-              );
-              final height =
-                  (entry.value / maxValue) *
-                  (isDesktop ? 160.0 : (isTablet ? 120.0 : 80.0));
-
-              return Container(
-                width: isDesktop ? 50.0 : (isTablet ? 40.0 : 30.0),
-                margin: const EdgeInsets.only(right: 8),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Container(
-                      height: height,
-                      width: isDesktop ? 40.0 : (isTablet ? 30.0 : 20.0),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      entry.key,
-                      style: TextStyle(
-                        fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
+          height: isDesktop ? 250.0 : (isTablet ? 200.0 : 150.0),
+          child: SfCartesianChart(
+            primaryXAxis: CategoryAxis(
+              labelStyle: TextStyle(
+                fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                color: AppColors.textSecondary,
+              ),
+            ),
+            primaryYAxis: NumericAxis(
+              labelStyle: TextStyle(
+                fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                color: AppColors.textSecondary,
+              ),
+              numberFormat: NumberFormat.currency(symbol: '\$'),
+            ),
+            series: <CartesianSeries>[
+              ColumnSeries<SalesData, String>(
+                dataSource: chartData,
+                xValueMapper: (SalesData sales, _) => sales.hour,
+                yValueMapper: (SalesData sales, _) => sales.amount,
+                pointColorMapper: (SalesData sales, _) => AppColors.primary,
+                borderRadius: const BorderRadius.all(Radius.circular(4)),
+                dataLabelSettings: DataLabelSettings(
+                  isVisible: isDesktop,
+                  labelAlignment: ChartDataLabelAlignment.top,
+                  textStyle: TextStyle(
+                    fontSize: 10.0,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
-              );
-            },
+              ),
+            ],
+            tooltipBehavior: TooltipBehavior(
+              enable: true,
+            ),
           ),
         ),
       ],
     );
   }
+}
+
+// Clase auxiliar para los datos de la gráfica
+class SalesData {
+  final String hour;
+  final double amount;
+
+  SalesData(this.hour, this.amount);
 }

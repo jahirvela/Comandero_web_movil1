@@ -191,7 +191,7 @@ class _SalesReportsViewState extends State<SalesReportsView> {
                         'Promedio por Factura',
                         controller.formatCurrency(
                           stats['total']! /
-                              (paidBills.length > 0 ? paidBills.length : 1),
+                              (paidBills.isNotEmpty ? paidBills.length : 1),
                         ),
                         AppColors.info,
                         Icons.analytics,
@@ -292,7 +292,7 @@ class _SalesReportsViewState extends State<SalesReportsView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedPeriod,
+                        initialValue: selectedPeriod,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -343,7 +343,7 @@ class _SalesReportsViewState extends State<SalesReportsView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedReportType,
+                        initialValue: selectedReportType,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),

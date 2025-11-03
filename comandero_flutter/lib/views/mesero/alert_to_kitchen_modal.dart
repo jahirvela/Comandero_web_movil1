@@ -309,6 +309,8 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
     if (!_canSendAlert()) return;
 
     // TODO: Implementar envío de alerta a cocina
+    // Datos de la alerta (preparado para integración con backend)
+    // ignore: unused_local_variable
     final alertData = {
       'tableNumber': widget.tableNumber,
       'orderId': widget.orderId,
@@ -319,7 +321,9 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
       'timestamp': DateTime.now(),
     };
 
-    print('Enviando alerta a cocina: $alertData');
+    // TODO: Enviar alertData a cocina a través del controller o backend
+    // Por ahora solo se muestra una notificación local
+    // La variable alertData se usará cuando se conecte con el backend
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

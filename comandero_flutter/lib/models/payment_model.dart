@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 class PaymentModel {
   final String id;
   final String type; // 'cash', 'card', 'mixed'
@@ -12,6 +14,15 @@ class PaymentModel {
   final String billId;
   final DateTime timestamp;
   final String cashierName;
+  // Campos para pagos con tarjeta
+  final String? cardMethod; // 'debito', 'credito'
+  final String? terminal;
+  final String? transactionId;
+  final String? authorizationCode;
+  final String? last4Digits;
+  final String? cardBrand; // 'Visa', 'Mastercard', etc.
+  final bool? voucherPrinted;
+  final DateTime? cardPaymentDate;
 
   PaymentModel({
     required this.id,
@@ -27,6 +38,14 @@ class PaymentModel {
     required this.billId,
     required this.timestamp,
     required this.cashierName,
+    this.cardMethod,
+    this.terminal,
+    this.transactionId,
+    this.authorizationCode,
+    this.last4Digits,
+    this.cardBrand,
+    this.voucherPrinted,
+    this.cardPaymentDate,
   });
 
   factory PaymentModel.fromJson(Map<String, dynamic> json) {
@@ -44,6 +63,16 @@ class PaymentModel {
       billId: json['billId'],
       timestamp: DateTime.parse(json['timestamp']),
       cashierName: json['cashierName'],
+      cardMethod: json['cardMethod'],
+      terminal: json['terminal'],
+      transactionId: json['transactionId'],
+      authorizationCode: json['authorizationCode'],
+      last4Digits: json['last4Digits'],
+      cardBrand: json['cardBrand'],
+      voucherPrinted: json['voucherPrinted'],
+      cardPaymentDate: json['cardPaymentDate'] != null
+          ? DateTime.parse(json['cardPaymentDate'])
+          : null,
     );
   }
 
@@ -62,6 +91,14 @@ class PaymentModel {
       'billId': billId,
       'timestamp': timestamp.toIso8601String(),
       'cashierName': cashierName,
+      'cardMethod': cardMethod,
+      'terminal': terminal,
+      'transactionId': transactionId,
+      'authorizationCode': authorizationCode,
+      'last4Digits': last4Digits,
+      'cardBrand': cardBrand,
+      'voucherPrinted': voucherPrinted,
+      'cardPaymentDate': cardPaymentDate?.toIso8601String(),
     };
   }
 
@@ -79,6 +116,14 @@ class PaymentModel {
     String? billId,
     DateTime? timestamp,
     String? cashierName,
+    String? cardMethod,
+    String? terminal,
+    String? transactionId,
+    String? authorizationCode,
+    String? last4Digits,
+    String? cardBrand,
+    bool? voucherPrinted,
+    DateTime? cardPaymentDate,
   }) {
     return PaymentModel(
       id: id ?? this.id,
@@ -94,6 +139,14 @@ class PaymentModel {
       billId: billId ?? this.billId,
       timestamp: timestamp ?? this.timestamp,
       cashierName: cashierName ?? this.cashierName,
+      cardMethod: cardMethod ?? this.cardMethod,
+      terminal: terminal ?? this.terminal,
+      transactionId: transactionId ?? this.transactionId,
+      authorizationCode: authorizationCode ?? this.authorizationCode,
+      last4Digits: last4Digits ?? this.last4Digits,
+      cardBrand: cardBrand ?? this.cardBrand,
+      voucherPrinted: voucherPrinted ?? this.voucherPrinted,
+      cardPaymentDate: cardPaymentDate ?? this.cardPaymentDate,
     );
   }
 }
@@ -105,10 +158,17 @@ class BillModel {
   final double subtotal;
   final double tax;
   final double total;
+  final double discount; // Descuento aplicado
   final String status; // 'pending', 'paid', 'cancelled'
   final DateTime createdAt;
   final String? customerName;
+  final String? customerPhone;
   final bool isTakeaway;
+  final String? waiterName;
+  final String? waiterNotes; // Notas del mesero
+  final bool isPrinted; // Si el ticket ya fue impreso
+  final String? printedBy; // Quien imprimió el ticket
+  final bool requestedByWaiter; // Si fue solicitado por mesero
 
   BillModel({
     required this.id,
@@ -117,10 +177,17 @@ class BillModel {
     required this.subtotal,
     required this.tax,
     required this.total,
+    this.discount = 0.0,
     required this.status,
     required this.createdAt,
     this.customerName,
+    this.customerPhone,
     this.isTakeaway = false,
+    this.waiterName,
+    this.waiterNotes,
+    this.isPrinted = false,
+    this.printedBy,
+    this.requestedByWaiter = false,
   });
 
   factory BillModel.fromJson(Map<String, dynamic> json) {
@@ -133,10 +200,17 @@ class BillModel {
       subtotal: json['subtotal'].toDouble(),
       tax: json['tax'].toDouble(),
       total: json['total'].toDouble(),
+      discount: (json['discount'] as num?)?.toDouble() ?? 0.0,
       status: json['status'],
       createdAt: DateTime.parse(json['createdAt']),
       customerName: json['customerName'],
+      customerPhone: json['customerPhone'],
       isTakeaway: json['isTakeaway'] ?? false,
+      waiterName: json['waiterName'],
+      waiterNotes: json['waiterNotes'],
+      isPrinted: json['isPrinted'] ?? false,
+      printedBy: json['printedBy'],
+      requestedByWaiter: json['requestedByWaiter'] ?? false,
     );
   }
 
@@ -148,10 +222,17 @@ class BillModel {
       'subtotal': subtotal,
       'tax': tax,
       'total': total,
+      'discount': discount,
       'status': status,
       'createdAt': createdAt.toIso8601String(),
       'customerName': customerName,
+      'customerPhone': customerPhone,
       'isTakeaway': isTakeaway,
+      'waiterName': waiterName,
+      'waiterNotes': waiterNotes,
+      'isPrinted': isPrinted,
+      'printedBy': printedBy,
+      'requestedByWaiter': requestedByWaiter,
     };
   }
 
@@ -162,10 +243,17 @@ class BillModel {
     double? subtotal,
     double? tax,
     double? total,
+    double? discount,
     String? status,
     DateTime? createdAt,
     String? customerName,
+    String? customerPhone,
     bool? isTakeaway,
+    String? waiterName,
+    String? waiterNotes,
+    bool? isPrinted,
+    String? printedBy,
+    bool? requestedByWaiter,
   }) {
     return BillModel(
       id: id ?? this.id,
@@ -174,10 +262,17 @@ class BillModel {
       subtotal: subtotal ?? this.subtotal,
       tax: tax ?? this.tax,
       total: total ?? this.total,
+      discount: discount ?? this.discount,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       customerName: customerName ?? this.customerName,
+      customerPhone: customerPhone ?? this.customerPhone,
       isTakeaway: isTakeaway ?? this.isTakeaway,
+      waiterName: waiterName ?? this.waiterName,
+      waiterNotes: waiterNotes ?? this.waiterNotes,
+      isPrinted: isPrinted ?? this.isPrinted,
+      printedBy: printedBy ?? this.printedBy,
+      requestedByWaiter: requestedByWaiter ?? this.requestedByWaiter,
     );
   }
 }
@@ -358,6 +453,8 @@ class PaymentType {
 // Estados de factura
 class BillStatus {
   static const String pending = 'pending';
+  static const String printed = 'printed';
+  static const String delivered = 'delivered';
   static const String paid = 'paid';
   static const String cancelled = 'cancelled';
 
@@ -365,12 +462,33 @@ class BillStatus {
     switch (status) {
       case pending:
         return 'Pendiente';
+      case printed:
+        return 'Impreso';
+      case delivered:
+        return 'Entregado';
       case paid:
         return 'Pagado';
       case cancelled:
         return 'Cancelado';
       default:
         return 'Desconocido';
+    }
+  }
+
+  static Color getStatusColor(String status) {
+    switch (status) {
+      case pending:
+        return Colors.orange;
+      case printed:
+        return Colors.blue;
+      case delivered:
+        return Colors.green;
+      case paid:
+        return Colors.green;
+      case cancelled:
+        return Colors.red;
+      default:
+        return Colors.grey;
     }
   }
 }

@@ -4,6 +4,7 @@ import '../../controllers/cocinero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
+import '../../services/kitchen_order_service.dart';
 import 'ingredient_consumption_view.dart';
 import 'critical_notes_view.dart';
 import 'station_management_view.dart';
@@ -15,7 +16,12 @@ class CocineroApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => CocineroController())],
+      providers: [ChangeNotifierProvider(create: (_) {
+        final controller = CocineroController();
+        // Registrar controller en el servicio para recibir pedidos
+        KitchenOrderService().registerCocineroController(controller);
+        return controller;
+      })],
       child: Consumer2<CocineroController, AuthController>(
         builder: (context, cocineroController, authController, child) {
           return LayoutBuilder(
@@ -361,7 +367,14 @@ class CocineroApp extends StatelessWidget {
                       ),
                       const SizedBox(width: 16),
                       Expanded(
-                        child: _buildTakeawayFilter(
+                        child: _buildShowFilter(
+                          cocineroController,
+                          isTablet,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildAlertFilter(
                           cocineroController,
                           isTablet,
                         ),
@@ -375,7 +388,9 @@ class CocineroApp extends StatelessWidget {
                       const SizedBox(height: 12),
                       _buildStatusFilter(cocineroController, isTablet),
                       const SizedBox(height: 12),
-                      _buildTakeawayFilter(cocineroController, isTablet),
+                      _buildShowFilter(cocineroController, isTablet),
+                      const SizedBox(height: 12),
+                      _buildAlertFilter(cocineroController, isTablet),
                     ],
                   );
                 }
@@ -531,12 +546,12 @@ class CocineroApp extends StatelessWidget {
     );
   }
 
-  Widget _buildTakeawayFilter(CocineroController controller, bool isTablet) {
+  Widget _buildShowFilter(CocineroController controller, bool isTablet) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Para Llevar',
+          'Mostrar',
           style: TextStyle(
             fontSize: isTablet ? 14.0 : 12.0,
             fontWeight: FontWeight.w500,
@@ -553,7 +568,7 @@ class CocineroApp extends StatelessWidget {
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
-              value: controller.showTakeawayOnly.toString(),
+              value: controller.selectedShow,
               isExpanded: true,
               style: TextStyle(
                 fontSize: isTablet ? 14.0 : 12.0,
@@ -561,17 +576,79 @@ class CocineroApp extends StatelessWidget {
               ),
               onChanged: (value) {
                 if (value != null) {
-                  controller.setShowTakeawayOnly(value == 'true');
+                  controller.setSelectedShow(value);
                 }
               },
               items: [
                 DropdownMenuItem(
-                  value: 'false',
-                  child: Text('Todos los Pedidos'),
+                  value: 'todos',
+                  child: Text('Todos'),
                 ),
                 DropdownMenuItem(
-                  value: 'true',
-                  child: Text('Solo Para Llevar'),
+                  value: 'para_llevar',
+                  child: Text('Solo para llevar'),
+                ),
+                DropdownMenuItem(
+                  value: 'mesas',
+                  child: Text('Mesas'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAlertFilter(CocineroController controller, bool isTablet) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Alertas',
+          style: TextStyle(
+            fontSize: isTablet ? 14.0 : 12.0,
+            fontWeight: FontWeight.w500,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(horizontal: isTablet ? 16.0 : 12.0),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: controller.selectedAlert,
+              isExpanded: true,
+              style: TextStyle(
+                fontSize: isTablet ? 14.0 : 12.0,
+                color: AppColors.textPrimary,
+              ),
+              onChanged: (value) {
+                if (value != null) {
+                  controller.setSelectedAlert(value);
+                }
+              },
+              items: [
+                DropdownMenuItem(
+                  value: 'todas',
+                  child: Text('Todas'),
+                ),
+                DropdownMenuItem(
+                  value: 'demoras',
+                  child: Text('Demoras'),
+                ),
+                DropdownMenuItem(
+                  value: 'canceladas',
+                  child: Text('Canceladas'),
+                ),
+                DropdownMenuItem(
+                  value: 'cambios',
+                  child: Text('Cambios'),
                 ),
               ],
             ),
@@ -661,23 +738,60 @@ class CocineroApp extends StatelessWidget {
       return _buildEmptyOrders(isTablet);
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Pedidos (${orders.length})',
-          style: TextStyle(
-            fontSize: isTablet ? 20.0 : 18.0,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
+    // Para desktop mostrar en grid de columnas, para móvil/tablet en lista vertical
+    if (isDesktop) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Pedidos (${orders.length})',
+            style: TextStyle(
+              fontSize: isTablet ? 20.0 : 18.0,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        ...orders.map(
-          (order) => _buildOrderCard(context, order, controller, isTablet),
-        ),
-      ],
-    );
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final crossAxisCount = (constraints.maxWidth / 400).floor().clamp(1, 4);
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  childAspectRatio: 0.85,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                ),
+                itemCount: orders.length,
+                itemBuilder: (context, index) {
+                  return _buildOrderCard(context, orders[index], controller, isTablet);
+                },
+              );
+            },
+          ),
+        ],
+      );
+    } else {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Pedidos (${orders.length})',
+            style: TextStyle(
+              fontSize: isTablet ? 20.0 : 18.0,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ...orders.map(
+            (order) => _buildOrderCard(context, order, controller, isTablet),
+          ),
+        ],
+      );
+    }
   }
 
   Widget _buildEmptyOrders(bool isTablet) {
@@ -726,232 +840,438 @@ class CocineroApp extends StatelessWidget {
     bool isTablet,
   ) {
     final statusColor = controller.getStatusColor(order.status);
-    final priorityColor = controller.getPriorityColor(order.priority);
     final elapsedTime = controller.formatElapsedTime(order.orderTime);
 
+    // Obtener texto del estado
+    String statusText = OrderStatus.getStatusText(order.status).toUpperCase();
+    if (statusText == 'PENDIENTE') {
+      statusText = 'PENDIENTE';
+    } else if (statusText == 'EN PREPARACIÓN') {
+      statusText = 'EN PREPARACION';
+    } else if (statusText == 'LISTO PARA RECOGER') {
+      statusText = 'LISTO PARA RECOGER';
+    }
+
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(bottom: isTablet ? 20.0 : 16.0),
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: statusColor.withValues(alpha: 0.3)),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: statusColor.withValues(alpha: 0.05),
+        side: BorderSide(
+          color: order.priority == OrderPriority.alta 
+              ? Colors.red.withValues(alpha: 0.5)
+              : statusColor.withValues(alpha: 0.3),
+          width: 2,
         ),
-        child: Padding(
-          padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header del pedido
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        order.id,
-                        style: TextStyle(
-                          fontSize: isTablet ? 18.0 : 16.0,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+      ),
+      child: InkWell(
+        onTap: () {
+          _showOrderDetailModal(context, order, controller, isTablet);
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.white,
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Badges de estado y prioridad
+                Row(
+                  children: [
+                    _buildStatusBadge(
+                      order.priority == OrderPriority.alta ? 'URGENTE' : 'Normal',
+                      order.priority == OrderPriority.alta ? Colors.red : Colors.blue,
+                      isTablet,
+                    ),
+                    const SizedBox(width: 8),
+                    _buildStatusBadge(
+                      statusText,
+                      statusColor,
+                      isTablet,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Información del pedido
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            order.isTakeaway ? 'Para llevar' : 'Mesa ${order.tableNumber}',
+                            style: TextStyle(
+                              fontSize: isTablet ? 16.0 : 14.0,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            order.id,
+                            style: TextStyle(
+                              fontSize: isTablet ? 14.0 : 12.0,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
-                      if (order.isTakeaway) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Para Llevar - ${order.customerName}',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w500,
+                    ),
+                    if (order.isTakeaway && order.customerPhone != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.check_circle, size: 14, color: Colors.blue),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Solo para llevar - ${order.customerName ?? ''}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 12.0 : 10.0,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ] else ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Mesa ${order.tableNumber}',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
+                          const SizedBox(height: 4),
+                          Text(
+                            order.customerPhone!,
+                            style: TextStyle(
+                              fontSize: isTablet ? 12.0 : 10.0,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Container(
+                        ],
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Tiempo y mesero
+                Row(
+                  children: [
+                    Icon(
+                      Icons.access_time,
+                      size: isTablet ? 16.0 : 14.0,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      elapsedTime,
+                      style: TextStyle(
+                        fontSize: isTablet ? 14.0 : 12.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Icon(
+                      Icons.person,
+                      size: isTablet ? 16.0 : 14.0,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      order.waiter,
+                      style: TextStyle(
+                        fontSize: isTablet ? 14.0 : 12.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // ETA clickeable
+                Row(
+                  children: [
+                    Text(
+                      'ETA:',
+                      style: TextStyle(
+                        fontSize: isTablet ? 14.0 : 12.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: () {
+                        _showEditTimeDialog(context, order, controller, isTablet);
+                      },
+                      child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                          horizontal: 12,
+                          vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: statusColor.withValues(alpha: 0.1),
+                          color: Colors.blue.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                            color: statusColor.withValues(alpha: 0.3),
+                            color: Colors.blue.withValues(alpha: 0.3),
                           ),
                         ),
-                        child: Text(
-                          OrderStatus.getStatusText(order.status),
-                          style: TextStyle(
-                            fontSize: isTablet ? 12.0 : 10.0,
-                            fontWeight: FontWeight.w500,
-                            color: statusColor,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.access_time, size: 16, color: Colors.blue),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${order.estimatedTime} min',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.blue,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: priorityColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: priorityColor.withValues(alpha: 0.1),
-                          ),
-                        ),
-                        child: Text(
-                          OrderPriority.getPriorityText(order.priority),
-                          style: TextStyle(
-                            fontSize: isTablet ? 10.0 : 8.0,
-                            fontWeight: FontWeight.w500,
-                            color: priorityColor,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Items del pedido
-              ...order.items.map((item) => _buildOrderItem(item, isTablet)),
-              const SizedBox(height: 16),
-
-              // Información adicional
-              Row(
-                children: [
-                  Icon(
-                    Icons.access_time,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Tiempo: $elapsedTime',
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      color: AppColors.textSecondary,
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Icon(
-                    Icons.person,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    order.waiter,
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
+                  ],
+                ),
+                const SizedBox(height: 16),
 
-              // Botones de acción
-              _buildActionButtons(context, order, controller, isTablet),
-            ],
+                // Items del pedido
+                ...order.items.map((item) => _buildOrderItem(
+                  item, 
+                  controller, 
+                  isTablet,
+                )),
+                const SizedBox(height: 16),
+
+                // Botones de acción
+                _buildActionButtons(context, order, controller, isTablet),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildOrderItem(OrderItem item, bool isTablet) {
+  Widget _buildStatusBadge(String text, Color color, bool isTablet) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: EdgeInsets.all(isTablet ? 12.0 : 8.0),
+      padding: EdgeInsets.symmetric(
+        horizontal: isTablet ? 10.0 : 8.0,
+        vertical: isTablet ? 6.0 : 4.0,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: color.withValues(alpha: 0.4),
+          width: 1.5,
+        ),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: isTablet ? 12.0 : 10.0,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderItem(
+    OrderItem item,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final isCritical = controller.isCriticalNote(item.notes);
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
+        border: Border.all(
+          color: isCritical 
+              ? AppColors.error.withValues(alpha: 0.3)
+              : AppColors.primary.withValues(alpha: 0.1),
+          width: isCritical ? 2 : 1,
+        ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '${item.quantity}x',
-              style: TextStyle(
-                fontSize: isTablet ? 12.0 : 10.0,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.name,
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '${item.quantity}x',
                   style: TextStyle(
                     fontSize: isTablet ? 14.0 : 12.0,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  item.name,
+                  style: TextStyle(
+                    fontSize: isTablet ? 15.0 : 13.0,
+                    fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                if (item.notes.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    'Nota: ${item.notes}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 12.0 : 10.0,
-                      color: AppColors.textSecondary,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: AppColors.secondary,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              KitchenStation.getStationName(item.station),
-              style: TextStyle(
-                fontSize: isTablet ? 10.0 : 8.0,
-                color: AppColors.textSecondary,
               ),
-            ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.secondary.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  KitchenStation.getStationName(item.station),
+                  style: TextStyle(
+                    fontSize: isTablet ? 11.0 : 9.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
           ),
+          if (item.notes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _buildNoteWidget(item.notes, isCritical, isTablet),
+          ],
         ],
       ),
     );
+  }
+
+  Widget _buildNoteWidget(String notes, bool isCritical, bool isTablet) {
+    if (isCritical) {
+      return Container(
+        padding: EdgeInsets.all(isTablet ? 10.0 : 8.0),
+        decoration: BoxDecoration(
+          color: AppColors.error.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: AppColors.error.withValues(alpha: 0.5),
+            width: 2,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  size: isTablet ? 20.0 : 18.0,
+                  color: AppColors.error,
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.error,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Nota crítica',
+                    style: TextStyle(
+                      fontSize: isTablet ? 12.0 : 10.0,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              notes,
+              style: TextStyle(
+                fontSize: isTablet ? 13.0 : 11.0,
+                fontWeight: FontWeight.w500,
+                color: AppColors.error,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(
+                  Icons.warning,
+                  size: isTablet ? 14.0 : 12.0,
+                  color: AppColors.error,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Mostrar siempre',
+                  style: TextStyle(
+                    fontSize: isTablet ? 11.0 : 9.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.error,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    } else {
+      return Container(
+        padding: EdgeInsets.all(isTablet ? 8.0 : 6.0),
+        decoration: BoxDecoration(
+          color: Colors.yellow.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: Colors.yellow.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Row(
+          children: [
+            Text(
+              'Nota:',
+              style: TextStyle(
+                fontSize: isTablet ? 12.0 : 10.0,
+                fontWeight: FontWeight.w600,
+                color: Colors.orange[800],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                notes,
+                style: TextStyle(
+                  fontSize: isTablet ? 12.0 : 10.0,
+                  color: Colors.orange[800],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Widget _buildActionButtons(
@@ -979,11 +1299,11 @@ class CocineroApp extends StatelessWidget {
               },
               icon: const Icon(Icons.play_arrow),
               label: Text(
-                'Comenzar',
+                'Iniciar',
                 style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.warning,
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -999,16 +1319,30 @@ class CocineroApp extends StatelessWidget {
                     ? OrderStatus.listoParaRecoger
                     : OrderStatus.listo;
                 controller.updateOrderStatus(order.id, newStatus);
+                
+                // Notificar al mesero que el pedido está listo
+                final service = KitchenOrderService();
+                service.notifyOrderReady(
+                  orderId: order.id,
+                  isTakeaway: order.isTakeaway,
+                  tableNumber: order.tableNumber,
+                  customerName: order.customerName,
+                );
+                
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Pedido ${order.id} listo'),
+                    content: Text(
+                      order.isTakeaway
+                          ? 'Pedido ${order.id} listo para recoger'
+                          : 'Pedido ${order.id} listo',
+                    ),
                     backgroundColor: AppColors.success,
                   ),
                 );
               },
               icon: const Icon(Icons.check),
               label: Text(
-                'Marcar Listo',
+                order.isTakeaway ? 'Listo para recoger' : 'Listo',
                 style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
               ),
               style: ElevatedButton.styleFrom(
@@ -1020,25 +1354,26 @@ class CocineroApp extends StatelessWidget {
               ),
             ),
           ),
-        ],
-        const SizedBox(width: 8),
-        OutlinedButton.icon(
-          onPressed: () {
-            // TODO: Implementar editar tiempo estimado
-          },
-          icon: const Icon(Icons.timer),
-          label: Text(
-            'Tiempo: ${order.estimatedTime}min',
-            style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
-          ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.primary,
-            side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+        ] else if (order.status == OrderStatus.listo ||
+                   order.status == OrderStatus.listoParaRecoger) ...[
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.check_circle),
+              label: Text(
+                order.isTakeaway ? 'Listo para recoger' : 'Pedido completado',
+                style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.success.withValues(alpha: 0.6),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -1056,6 +1391,592 @@ class CocineroApp extends StatelessWidget {
         label: Text(
           isTablet ? 'Cocina Activa' : 'Activa',
           style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+        ),
+      ),
+    );
+  }
+
+  void _showOrderDetailModal(
+    BuildContext context,
+    OrderModel order,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final statusColor = controller.getStatusColor(order.status);
+    final priorityColor = controller.getPriorityColor(order.priority);
+    final elapsedTime = controller.formatElapsedTime(order.orderTime);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Container(
+          constraints: BoxConstraints(
+            maxWidth: isTablet ? 600 : double.infinity,
+            maxHeight: MediaQuery.of(context).size.height * 0.9,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.restaurant_menu,
+                      color: statusColor,
+                      size: isTablet ? 28.0 : 24.0,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Detalle del Pedido',
+                            style: TextStyle(
+                              fontSize: isTablet ? 20.0 : 18.0,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            order.id,
+                            style: TextStyle(
+                              fontSize: isTablet ? 16.0 : 14.0,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Contenido scrolleable
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Información del pedido
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildDetailItem(
+                              'Estado',
+                              OrderStatus.getStatusText(order.status),
+                              statusColor,
+                              isTablet,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildDetailItem(
+                              'Prioridad',
+                              OrderPriority.getPriorityText(order.priority),
+                              priorityColor,
+                              isTablet,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      if (order.isTakeaway) ...[
+                        _buildDetailItem(
+                          'Para Llevar',
+                          '${order.customerName}${order.customerPhone != null ? '\n${order.customerPhone}' : ''}',
+                          AppColors.primary,
+                          isTablet,
+                        ),
+                        const SizedBox(height: 16),
+                      ] else ...[
+                        _buildDetailItem(
+                          'Mesa',
+                          '${order.tableNumber}',
+                          AppColors.textPrimary,
+                          isTablet,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildDetailItem(
+                              'Tiempo transcurrido',
+                              elapsedTime,
+                              AppColors.textSecondary,
+                              isTablet,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildDetailItem(
+                              'Tiempo estimado',
+                              '${order.estimatedTime} min',
+                              AppColors.primary,
+                              isTablet,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      _buildDetailItem(
+                        'Mesero',
+                        order.waiter,
+                        AppColors.textSecondary,
+                        isTablet,
+                      ),
+                      const SizedBox(height: 24),
+                      
+                      // Items del pedido
+                      Text(
+                        'Items del Pedido',
+                        style: TextStyle(
+                          fontSize: isTablet ? 18.0 : 16.0,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...order.items.map((item) => Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.1),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    '${item.quantity}x',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 14.0 : 12.0,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    item.name,
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 16.0 : 14.0,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.secondary,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    KitchenStation.getStationName(item.station),
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 10.0 : 8.0,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (item.notes.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: EdgeInsets.all(isTablet ? 8.0 : 6.0),
+                                decoration: BoxDecoration(
+                                  color: AppColors.warning.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: AppColors.warning.withValues(alpha: 0.2),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.note,
+                                      size: isTablet ? 14.0 : 12.0,
+                                      color: AppColors.warning,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        item.notes,
+                                        style: TextStyle(
+                                          fontSize: isTablet ? 12.0 : 10.0,
+                                          color: AppColors.textSecondary,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // Footer con acciones
+              Container(
+                padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                  ),
+                ),
+                child: _buildActionButtons(context, order, controller, isTablet),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailItem(
+    String label,
+    String value,
+    Color color,
+    bool isTablet,
+  ) {
+    return Container(
+      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+      decoration: BoxDecoration(
+        color: AppColors.secondary.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTablet ? 12.0 : 10.0,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isTablet ? 16.0 : 14.0,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditTimeDialog(
+    BuildContext context,
+    OrderModel order,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    int selectedMinutes = order.estimatedTime;
+    bool isCustom = false;
+    final customController = TextEditingController(
+      text: selectedMinutes.toString(),
+    );
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            'Modificar tiempo de salida (ETA)',
+            style: TextStyle(
+              fontSize: isTablet ? 20.0 : 18.0,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          content: Container(
+            constraints: BoxConstraints(
+              maxWidth: isTablet ? 400 : double.infinity,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Actualiza el tiempo estimado de salida para esta orden',
+                  style: TextStyle(
+                    fontSize: isTablet ? 14.0 : 12.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Opciones rápidas',
+                  style: TextStyle(
+                    fontSize: isTablet ? 16.0 : 14.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildQuickTimeOption(
+                      '5 min',
+                      5,
+                      selectedMinutes,
+                      isCustom,
+                      () {
+                        setState(() {
+                          selectedMinutes = 5;
+                          isCustom = false;
+                        });
+                      },
+                      isTablet,
+                    ),
+                    _buildQuickTimeOption(
+                      '15 min',
+                      15,
+                      selectedMinutes,
+                      isCustom,
+                      () {
+                        setState(() {
+                          selectedMinutes = 15;
+                          isCustom = false;
+                        });
+                      },
+                      isTablet,
+                    ),
+                    _buildQuickTimeOption(
+                      '30 min',
+                      30,
+                      selectedMinutes,
+                      isCustom,
+                      () {
+                        setState(() {
+                          selectedMinutes = 30;
+                          isCustom = false;
+                        });
+                      },
+                      isTablet,
+                    ),
+                    _buildQuickTimeOption(
+                      '45 min',
+                      45,
+                      selectedMinutes,
+                      isCustom,
+                      () {
+                        setState(() {
+                          selectedMinutes = 45;
+                          isCustom = false;
+                        });
+                      },
+                      isTablet,
+                    ),
+                    _buildQuickTimeOption(
+                      '1 h',
+                      60,
+                      selectedMinutes,
+                      isCustom,
+                      () {
+                        setState(() {
+                          selectedMinutes = 60;
+                          isCustom = false;
+                        });
+                      },
+                      isTablet,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: isCustom,
+                      onChanged: (value) {
+                        setState(() {
+                          isCustom = value ?? false;
+                        });
+                      },
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          isCustom = !isCustom;
+                        });
+                      },
+                      child: Text(
+                        'Personalizado',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (isCustom) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: customController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Minutos',
+                      hintText: 'Ej: 10',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      prefixIcon: const Icon(Icons.access_time),
+                    ),
+                    onChanged: (value) {
+                      final parsed = int.tryParse(value);
+                      if (parsed != null && parsed > 0) {
+                        setState(() {
+                          selectedMinutes = parsed;
+                        });
+                      }
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.textSecondary,
+              ),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final newTime = isCustom
+                    ? int.tryParse(customController.text) ?? selectedMinutes
+                    : selectedMinutes;
+                if (newTime > 0 && newTime <= 120) {
+                  controller.updateEstimatedTime(order.id, newTime);
+                  Navigator.of(dialogContext).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Tiempo estimado actualizado a $newTime minutos',
+                      ),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                } else {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(
+                      content: const Text(
+                        'El tiempo debe estar entre 1 y 120 minutos',
+                      ),
+                      backgroundColor: AppColors.error,
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Actualizar ETA'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickTimeOption(
+    String label,
+    int minutes,
+    int selectedMinutes,
+    bool isCustom,
+    VoidCallback onTap,
+    bool isTablet,
+  ) {
+    final isSelected = !isCustom && selectedMinutes == minutes;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isTablet ? 16.0 : 12.0,
+          vertical: isTablet ? 10.0 : 8.0,
+        ),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.primary.withValues(alpha: 0.1)
+              : AppColors.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected
+                ? AppColors.primary
+                : AppColors.border,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: isTablet ? 14.0 : 12.0,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            color: isSelected ? AppColors.primary : AppColors.textPrimary,
+          ),
         ),
       ),
     );

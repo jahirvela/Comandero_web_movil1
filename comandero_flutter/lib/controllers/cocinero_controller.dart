@@ -8,6 +8,8 @@ class CocineroController extends ChangeNotifier {
   // Filtros
   String _selectedStation = 'todas';
   String _selectedStatus = 'todas';
+  String _selectedShow = 'todos'; // 'todos', 'para_llevar', 'mesas'
+  String _selectedAlert = 'todas'; // 'todas', 'demoras', 'canceladas', 'cambios'
   bool _showTakeawayOnly = false;
 
   // Vista actual
@@ -17,6 +19,8 @@ class CocineroController extends ChangeNotifier {
   List<OrderModel> get orders => _orders;
   String get selectedStation => _selectedStation;
   String get selectedStatus => _selectedStatus;
+  String get selectedShow => _selectedShow;
+  String get selectedAlert => _selectedAlert;
   bool get showTakeawayOnly => _showTakeawayOnly;
   String get currentView => _currentView;
 
@@ -28,8 +32,16 @@ class CocineroController extends ChangeNotifier {
           order.items.any((item) => item.station == _selectedStation);
       final statusMatch =
           _selectedStatus == 'todas' || order.status == _selectedStatus;
-      final takeawayMatch = !_showTakeawayOnly || order.isTakeaway;
-      return stationMatch && statusMatch && takeawayMatch;
+      
+      // Filtro de Mostrar
+      final showMatch = _selectedShow == 'todos' ||
+          (_selectedShow == 'para_llevar' && order.isTakeaway) ||
+          (_selectedShow == 'mesas' && !order.isTakeaway);
+      
+      // Filtro de Alertas (por ahora todos pasan, se puede mejorar después)
+      // final alertMatch = _selectedAlert == 'todas' || ...;
+      
+      return stationMatch && statusMatch && showMatch;
     }).toList();
   }
 
@@ -149,6 +161,18 @@ class CocineroController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Cambiar filtro de Mostrar
+  void setSelectedShow(String show) {
+    _selectedShow = show;
+    notifyListeners();
+  }
+
+  // Cambiar filtro de Alertas
+  void setSelectedAlert(String alert) {
+    _selectedAlert = alert;
+    notifyListeners();
+  }
+
   // Cambiar vista actual
   void setCurrentView(String view) {
     _currentView = view;
@@ -242,7 +266,22 @@ class CocineroController extends ChangeNotifier {
   // Formatear tiempo transcurrido
   String formatElapsedTime(DateTime orderTime) {
     final elapsed = DateTime.now().difference(orderTime).inMinutes;
-    return '$elapsed min';
+    return 'Hace $elapsed min';
+  }
+
+  // Verificar si una nota es crítica
+  bool isCriticalNote(String notes) {
+    if (notes.isEmpty) return false;
+    
+    final criticalKeywords = [
+      'alergia', 'alérgico', 'alérgica', 'alergico', 'alergica',
+      'sin', 'no', 'diabético', 'diabética', 'diabetico', 'diabetica',
+      'celíaco', 'celíaca', 'celiaco', 'celiaca',
+      'gluten', 'importante', 'cuidado', 'atención', 'especial'
+    ];
+    
+    final lowerNotes = notes.toLowerCase();
+    return criticalKeywords.any((keyword) => lowerNotes.contains(keyword));
   }
 
   // Obtener color de estado

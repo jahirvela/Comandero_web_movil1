@@ -519,7 +519,7 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   Text(
-                    user.email,
+                    user.username,
                     style: TextStyle(
                       fontSize: 12,
                       color: AppColors.textSecondary,
@@ -1106,7 +1106,7 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
           .where(
             (user) =>
                 user.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-                user.email.toLowerCase().contains(_searchQuery.toLowerCase()),
+                user.username.toLowerCase().contains(_searchQuery.toLowerCase()),
           )
           .toList();
     }

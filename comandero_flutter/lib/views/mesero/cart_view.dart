@@ -12,6 +12,8 @@ class CartView extends StatefulWidget {
 
 class _CartViewState extends State<CartView> {
   double discountPercentage = 0.0;
+  double tipPercentage = 0.0;
+  double tipAmount = 0.0;
   bool isTakeaway = false;
   String customerName = '';
   String customerPhone = '';
@@ -24,7 +26,9 @@ class _CartViewState extends State<CartView> {
         final cart = controller.getCurrentCart();
         final subtotal = controller.calculateTotal();
         final discountAmount = subtotal * (discountPercentage / 100);
-        final total = subtotal - discountAmount;
+        final subtotalAfterDiscount = subtotal - discountAmount;
+        tipAmount = subtotalAfterDiscount * (tipPercentage / 100);
+        final total = subtotalAfterDiscount + tipAmount;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -63,10 +67,15 @@ class _CartViewState extends State<CartView> {
                             _buildSplitSection(isTablet),
                             const SizedBox(height: 24),
 
+                            // Propina
+                            _buildTipSection(isTablet),
+                            const SizedBox(height: 24),
+
                             // Resumen y totales
                             _buildSummarySection(
                               subtotal,
                               discountAmount,
+                              tipAmount,
                               total,
                               isTablet,
                             ),
@@ -424,7 +433,7 @@ class _CartViewState extends State<CartView> {
                   isTakeaway = value;
                 });
               },
-              activeColor: AppColors.primary,
+              activeThumbColor: AppColors.primary,
             ),
 
             if (isTakeaway) ...[
@@ -561,9 +570,115 @@ class _CartViewState extends State<CartView> {
     );
   }
 
+  Widget _buildTipSection(bool isTablet) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Propina',
+              style: TextStyle(
+                fontSize: isTablet ? 20.0 : 18.0,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Botones de porcentaje rápido
+            Row(
+              children: [
+                _buildTipButton('0%', 0.0, isTablet),
+                const SizedBox(width: 8),
+                _buildTipButton('10%', 10.0, isTablet),
+                const SizedBox(width: 8),
+                _buildTipButton('15%', 15.0, isTablet),
+                const SizedBox(width: 8),
+                _buildTipButton('20%', 20.0, isTablet),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Campo personalizado
+            TextField(
+              onChanged: (value) {
+                setState(() {
+                  tipPercentage = double.tryParse(value) ?? 0.0;
+                });
+              },
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Propina personalizada (%)',
+                hintText: '0',
+                suffixText: '%',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Campo de monto fijo
+            TextField(
+              onChanged: (value) {
+                setState(() {
+                  tipAmount = double.tryParse(value) ?? 0.0;
+                  // Calcular porcentaje equivalente
+                  final subtotal = context.read<MeseroController>().calculateTotal();
+                  if (subtotal > 0) {
+                    tipPercentage = (tipAmount / subtotal) * 100;
+                  }
+                });
+              },
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Propina (monto fijo)',
+                hintText: '0.00',
+                prefixText: '\$',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTipButton(String label, double percentage, bool isTablet) {
+    final isSelected = tipPercentage == percentage;
+
+    return Expanded(
+      child: ElevatedButton(
+        onPressed: () {
+          setState(() {
+            tipPercentage = percentage;
+          });
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isSelected ? AppColors.primary : AppColors.secondary,
+          foregroundColor: isSelected ? Colors.white : AppColors.textPrimary,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSummarySection(
     double subtotal,
     double discountAmount,
+    double tipAmount,
     double total,
     bool isTablet,
   ) {
@@ -618,6 +733,28 @@ class _CartViewState extends State<CartView> {
                 ],
               ),
             ],
+            if (tipAmount > 0) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Propina (${tipPercentage.toStringAsFixed(0)}%):',
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      color: AppColors.info,
+                    ),
+                  ),
+                  Text(
+                    '\$${tipAmount.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      color: AppColors.info,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 16),
@@ -661,12 +798,10 @@ class _CartViewState extends State<CartView> {
           height: isTablet ? 56.0 : 48.0,
           child: ElevatedButton.icon(
             onPressed: () {
-              controller.sendToKitchen();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('¡Pedido enviado a cocina! 🔥'),
-                  backgroundColor: AppColors.success,
-                ),
+              _showSendToKitchenConfirmation(
+                context,
+                controller,
+                isTablet,
               );
             },
             icon: const Icon(Icons.send),
@@ -754,6 +889,153 @@ class _CartViewState extends State<CartView> {
     );
   }
 
+  void _showSendToKitchenConfirmation(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    final cart = controller.getCurrentCart();
+    final table = controller.selectedTable;
+    
+    if (cart.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El carrito está vacío'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              Icons.restaurant_menu,
+              color: AppColors.success,
+              size: isTablet ? 28.0 : 24.0,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '¡Pedido enviado a cocina!',
+                style: TextStyle(
+                  fontSize: isTablet ? 20.0 : 18.0,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Mesa ${table?.number ?? ''}',
+              style: TextStyle(
+                fontSize: isTablet ? 16.0 : 14.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'El pedido ha sido enviado exitosamente a cocina. El cocinero recibirá una notificación.',
+              style: TextStyle(
+                fontSize: isTablet ? 14.0 : 12.0,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: AppColors.success.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.check_circle,
+                    color: AppColors.success,
+                    size: isTablet ? 20.0 : 18.0,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${cart.length} ${cart.length == 1 ? 'artículo' : 'artículos'} enviados',
+                      style: TextStyle(
+                        fontSize: isTablet ? 14.0 : 12.0,
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                // Enviar pedido a cocina
+                controller.sendOrderToKitchen(
+                  isTakeaway: isTakeaway,
+                  customerName: isTakeaway ? customerName : null,
+                  customerPhone: isTakeaway ? customerPhone : null,
+                );
+                
+                Navigator.of(dialogContext).pop();
+                
+                // Regresar a la vista de mesa
+                controller.setCurrentView('table');
+                
+                // Mostrar confirmación
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('¡Pedido enviado a cocina! 🔥'),
+                    backgroundColor: AppColors.success,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.success,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  vertical: isTablet ? 16.0 : 14.0,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                'Aceptar',
+                style: TextStyle(
+                  fontSize: isTablet ? 16.0 : 14.0,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showCloseTableDialog(
     BuildContext context,
     MeseroController controller,
@@ -770,7 +1052,11 @@ class _CartViewState extends State<CartView> {
           ),
           TextButton(
             onPressed: () {
-              // TODO: Implementar cerrar mesa
+              final table = controller.selectedTable;
+              if (table != null) {
+                controller.sendToCashier(table.id);
+                controller.setCurrentView('floor');
+              }
               Navigator.pop(context);
             },
             child: const Text('Cerrar'),

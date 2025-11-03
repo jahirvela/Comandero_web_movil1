@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/table_model.dart';
 import '../models/product_model.dart';
+import '../services/kitchen_order_service.dart';
 
 class MeseroController extends ChangeNotifier {
   // Estado de las mesas
@@ -9,6 +10,9 @@ class MeseroController extends ChangeNotifier {
 
   // Estado del carrito por mesa
   final Map<String, List<CartItem>> _tableOrders = {};
+
+  // Historial de pedidos por mesa (pedidos enviados a cocina)
+  final Map<String, List<Map<String, dynamic>>> _tableOrderHistory = {};
 
   // Estado de la vista actual
   String _currentView = 'floor';
@@ -181,28 +185,19 @@ class MeseroController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Enviar pedido a cocina
+  // Enviar pedido a cocina (método legacy, usar sendOrderToKitchen)
   void sendToKitchen({
     bool isTakeaway = false,
     String? customerName,
     String? customerPhone,
     String? pickupTime,
   }) {
-    if (_selectedTable == null) return;
-
-    final currentCart = getCurrentCart();
-    if (currentCart.isEmpty) return;
-
-    // Aquí se enviaría el pedido a cocina
-    // Por ahora solo limpiamos el carrito
-    clearCart();
-
-    // Mostrar mensaje de confirmación
-    if (isTakeaway) {
-      // Mostrar toast para takeaway
-    } else {
-      // Mostrar toast para pedido normal
-    }
+    sendOrderToKitchen(
+      isTakeaway: isTakeaway,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      pickupTime: pickupTime,
+    );
   }
 
   // Calcular total del carrito actual
@@ -231,5 +226,162 @@ class MeseroController extends ChangeNotifier {
         .where((t) => t.status != TableStatus.libre)
         .length;
     return (occupiedTables / _tables.length) * 100;
+  }
+
+  // Actualizar número de comensales en una mesa
+  void updateTableCustomers(int tableId, int customers) {
+    _tables = _tables.map((table) {
+      if (table.id == tableId) {
+        return table.copyWith(
+          customers: customers > 0 ? customers : null,
+        );
+      }
+      return table;
+    }).toList();
+    notifyListeners();
+  }
+
+  // Obtener historial de pedidos de una mesa
+  List<Map<String, dynamic>> getTableOrderHistory(int tableId) {
+    return _tableOrderHistory[tableId.toString()] ?? [];
+  }
+
+  // Limpiar historial de una mesa
+  void clearTableHistory(int tableId) {
+    _tableOrderHistory[tableId.toString()] = [];
+    notifyListeners();
+  }
+
+  // Restaurar historial demo
+  void restoreDemoHistory(int tableId) {
+    final demoHistory = [
+      {
+        'id': 'ORD-034',
+        'items': ['3x Taco Barbacoa'],
+        'status': 'Listo',
+        'time': '14:20',
+        'date': DateTime.now().toString(),
+      },
+      {
+        'id': 'ORD-029',
+        'items': ['1x Mix Barbacoa', '2x Agua Horchata'],
+        'status': 'En preparación',
+        'time': '13:45',
+        'date': DateTime.now().toString(),
+      },
+      {
+        'id': 'ORD-025',
+        'items': ['2x Quesadilla Barbacoa'],
+        'status': 'Entregado',
+        'time': '13:15',
+        'date': DateTime.now().toString(),
+      },
+    ];
+    _tableOrderHistory[tableId.toString()] = demoHistory;
+    notifyListeners();
+  }
+
+  // Enviar cuenta al cajero
+  void sendToCashier(int tableId) {
+    final cart = _tableOrders[tableId.toString()] ?? [];
+    if (cart.isEmpty) return;
+
+    final total = cart.fold(0.0, (sum, item) => sum + item.product.price);
+    
+    // Actualizar valor de orden en la mesa
+    _tables = _tables.map((table) {
+      if (table.id == tableId) {
+        return table.copyWith(orderValue: total);
+      }
+      return table;
+    }).toList();
+
+    // Agregar al historial como "Enviado al Cajero"
+    final orderId = 'ACC-${DateTime.now().millisecondsSinceEpoch}';
+    final order = {
+      'id': orderId,
+      'items': cart.map((item) {
+        final qty = item.customizations['quantity'] as int? ?? 1;
+        return '${qty}x ${item.product.name}';
+      }).toList(),
+      'status': 'Enviado al Cajero',
+      'time': '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+      'date': DateTime.now().toString(),
+      'total': total,
+    };
+
+    final history = _tableOrderHistory[tableId.toString()] ?? [];
+    _tableOrderHistory[tableId.toString()] = [order, ...history];
+
+    notifyListeners();
+  }
+
+  // Mejorar sendToKitchen para agregar al historial y enviar a cocina
+  void sendOrderToKitchen({
+    bool isTakeaway = false,
+    String? customerName,
+    String? customerPhone,
+    String? pickupTime,
+  }) {
+    if (_selectedTable == null) return;
+
+    final currentCart = getCurrentCart();
+    if (currentCart.isEmpty) return;
+
+    final tableId = _selectedTable!.id.toString();
+    
+    // Crear ID de orden único
+    final orderId = 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+    
+    // Crear pedido para historial
+    final order = {
+      'id': orderId,
+      'items': currentCart.map((item) {
+        final qty = item.customizations['quantity'] as int? ?? 1;
+        return '${qty}x ${item.product.name}';
+      }).toList(),
+      'status': 'Enviado',
+      'time': '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+      'date': DateTime.now().toString(),
+      'isTakeaway': isTakeaway,
+      'customerName': customerName,
+      'customerPhone': customerPhone,
+      'pickupTime': pickupTime,
+    };
+
+    // Agregar al historial
+    final history = _tableOrderHistory[tableId] ?? [];
+    _tableOrderHistory[tableId] = [order, ...history];
+
+    // Enviar pedido a cocina a través del servicio
+    final service = KitchenOrderService();
+    service.sendOrderToKitchen(
+      orderId: orderId,
+      cartItems: currentCart,
+      tableNumber: isTakeaway ? null : _selectedTable!.number,
+      waiterName: 'Mesero', // TODO: Obtener del AuthController cuando esté disponible
+      isTakeaway: isTakeaway,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      pickupTime: pickupTime,
+    );
+
+    // Limpiar carrito
+    clearCart();
+
+    notifyListeners();
+  }
+
+  // Actualizar estado de pedido (cuando cocinero lo tiene listo)
+  void updateOrderStatus(String orderId, String newStatus) {
+    _tableOrderHistory.forEach((tableId, orders) {
+      for (var order in orders) {
+        if (order['id'] == orderId) {
+          order['status'] = newStatus;
+          notifyListeners();
+          return;
+        }
+      }
+    });
   }
 }

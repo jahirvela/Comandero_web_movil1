@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/captain_controller.dart';
 import '../../controllers/auth_controller.dart';
+import '../../controllers/cocinero_controller.dart';
 import '../../models/captain_model.dart';
+import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
+import 'report_order_status_modal.dart';
+import '../cocinero/order_detail_modal.dart';
 
 class CaptainApp extends StatelessWidget {
   const CaptainApp({super.key});
@@ -11,37 +15,43 @@ class CaptainApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => CaptainController())],
-      child: Consumer2<CaptainController, AuthController>(
-        builder: (context, captainController, authController, child) {
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final isTablet = constraints.maxWidth > 600;
-              final isDesktop = constraints.maxWidth > 900;
+      providers: [
+        ChangeNotifierProvider(create: (_) => CaptainController()),
+        ChangeNotifierProvider(create: (_) => CocineroController()),
+      ],
+      child: Consumer3<CaptainController, AuthController, CocineroController>(
+        builder:
+            (
+              context,
+              captainController,
+              authController,
+              cocineroController,
+              child,
+            ) {
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final isTablet = constraints.maxWidth > 600;
+                  final isDesktop = constraints.maxWidth > 900;
 
-              return Scaffold(
-                backgroundColor: AppColors.background,
-                appBar: _buildAppBar(
-                  context,
-                  captainController,
-                  authController,
-                  isTablet,
-                ),
-                body: _buildBody(
-                  context,
-                  captainController,
-                  isTablet,
-                  isDesktop,
-                ),
-                floatingActionButton: _buildFloatingActionButton(
-                  context,
-                  captainController,
-                  isTablet,
-                ),
+                  return Scaffold(
+                    backgroundColor: AppColors.background,
+                    appBar: _buildAppBar(
+                      context,
+                      captainController,
+                      authController,
+                      isTablet,
+                    ),
+                    body: _buildBody(
+                      context,
+                      captainController,
+                      cocineroController,
+                      isTablet,
+                      isDesktop,
+                    ),
+                  );
+                },
               );
             },
-          );
-        },
       ),
     );
   }
@@ -52,8 +62,6 @@ class CaptainApp extends StatelessWidget {
     AuthController authController,
     bool isTablet,
   ) {
-    final unreadAlerts = captainController.getUnreadAlerts().length;
-
     return AppBar(
       title: Row(
         children: [
@@ -98,52 +106,21 @@ class CaptainApp extends StatelessWidget {
       ),
       actions: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          margin: const EdgeInsets.only(right: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.purple.withValues(alpha: 0.2),
+            color: Colors.purple,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
           ),
           child: Text(
             'Solo lectura',
             style: TextStyle(
               fontSize: isTablet ? 12.0 : 10.0,
               fontWeight: FontWeight.w600,
-              color: Colors.purple,
+              color: Colors.white,
             ),
           ),
         ),
-        if (unreadAlerts > 0) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.orange.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.notifications,
-                  size: isTablet ? 16.0 : 14.0,
-                  color: Colors.orange,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '$unreadAlerts',
-                  style: TextStyle(
-                    fontSize: isTablet ? 14.0 : 12.0,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.orange,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-        const SizedBox(width: 8),
         IconButton(
           onPressed: () async {
             await authController.logout();
@@ -151,7 +128,14 @@ class CaptainApp extends StatelessWidget {
               Navigator.of(context).pushReplacementNamed('/login');
             }
           },
-          icon: Icon(Icons.logout, size: isTablet ? 24.0 : 20.0),
+          icon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.arrow_forward),
+              const SizedBox(width: 4),
+              Text('Salir', style: TextStyle(fontSize: isTablet ? 14.0 : 12.0)),
+            ],
+          ),
         ),
         const SizedBox(width: 8),
       ],
@@ -164,6 +148,7 @@ class CaptainApp extends StatelessWidget {
   Widget _buildBody(
     BuildContext context,
     CaptainController captainController,
+    CocineroController cocineroController,
     bool isTablet,
     bool isDesktop,
   ) {
@@ -172,151 +157,271 @@ class CaptainApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Estadísticas del día
-          _buildDailyStats(captainController, isTablet),
+          // Tarjetas de resumen
+          _buildSummaryCards(captainController, isTablet),
           const SizedBox(height: 24),
 
-          // Alertas
-          _buildAlertsSection(context, captainController, isTablet),
-          const SizedBox(height: 24),
-
-          // Filtros
-          _buildFiltersCard(context, captainController, isTablet),
-          const SizedBox(height: 24),
-
-          // Tabs para mesas y órdenes
-          _buildTabsSection(context, captainController, isTablet, isDesktop),
+          // Layout principal: Alertas a la izquierda, Órdenes/Cuentas a la derecha
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth > 900) {
+                // Desktop: lado a lado
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Columna izquierda: Alertas y Órdenes Recientes
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        children: [
+                          _buildAlertsSection(
+                            context,
+                            captainController,
+                            cocineroController,
+                            isTablet,
+                          ),
+                          const SizedBox(height: 24),
+                          _buildRecentOrdersSection(
+                            context,
+                            captainController,
+                            cocineroController,
+                            isTablet,
+                          ),
+                          const SizedBox(height: 24),
+                          _buildTablesStatusSection(
+                            context,
+                            captainController,
+                            isTablet,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    // Columna derecha: Cuentas por Cobrar
+                    Expanded(
+                      flex: 1,
+                      child: _buildAccountsToCollectSection(
+                        context,
+                        captainController,
+                        isTablet,
+                      ),
+                    ),
+                  ],
+                );
+              } else {
+                // Mobile/Tablet: vertical
+                return Column(
+                  children: [
+                    _buildAlertsSection(
+                      context,
+                      captainController,
+                      cocineroController,
+                      isTablet,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildRecentOrdersSection(
+                      context,
+                      captainController,
+                      cocineroController,
+                      isTablet,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildAccountsToCollectSection(
+                      context,
+                      captainController,
+                      isTablet,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildTablesStatusSection(
+                      context,
+                      captainController,
+                      isTablet,
+                    ),
+                  ],
+                );
+              }
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildDailyStats(CaptainController controller, bool isTablet) {
+  Widget _buildSummaryCards(CaptainController controller, bool isTablet) {
     final stats = controller.stats;
+    final pendingBills = controller.getPendingBillsAmount();
 
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth > 600) {
+          return Row(
+            children: [
+              Expanded(
+                child: _buildSummaryCard(
+                  'Ventas del Día',
+                  controller.formatCurrency(stats.todaySales),
+                  '+${stats.variation.replaceAll('%', '')}%',
+                  Colors.green,
+                  Icons.show_chart,
+                  isTablet,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSummaryCard(
+                  'Órdenes',
+                  '${stats.totalOrders}',
+                  null,
+                  Colors.purple,
+                  Icons.attach_money,
+                  isTablet,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSummaryCard(
+                  'Ticket Promedio',
+                  controller.formatCurrency(stats.avgTicket),
+                  null,
+                  Colors.purple,
+                  Icons.calculate,
+                  isTablet,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSummaryCard(
+                  'Por Cobrar',
+                  controller.formatCurrency(pendingBills),
+                  null,
+                  Colors.red,
+                  Icons.error_outline,
+                  isTablet,
+                ),
+              ),
+            ],
+          );
+        } else {
+          return Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSummaryCard(
+                      'Ventas del Día',
+                      controller.formatCurrency(stats.todaySales),
+                      '+${stats.variation.replaceAll('%', '')}%',
+                      Colors.green,
+                      Icons.show_chart,
+                      isTablet,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSummaryCard(
+                      'Órdenes',
+                      '${stats.totalOrders}',
+                      null,
+                      Colors.purple,
+                      Icons.attach_money,
+                      isTablet,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSummaryCard(
+                      'Ticket Promedio',
+                      controller.formatCurrency(stats.avgTicket),
+                      null,
+                      Colors.purple,
+                      Icons.calculate,
+                      isTablet,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSummaryCard(
+                      'Por Cobrar',
+                      controller.formatCurrency(pendingBills),
+                      null,
+                      Colors.red,
+                      Icons.error_outline,
+                      isTablet,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        }
+      },
+    );
+  }
+
+  Widget _buildSummaryCard(
+    String title,
+    String value,
+    String? variation,
+    Color color,
+    IconData icon,
+    bool isTablet,
+  ) {
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
-      ),
-      child: Padding(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
         padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.white,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Icon(
-                  Icons.trending_up,
-                  color: AppColors.primary,
-                  size: isTablet ? 20.0 : 18.0,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Estadísticas del Día',
-                  style: TextStyle(
-                    fontSize: isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: isTablet ? 12.0 : 10.0,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        value,
+                        style: TextStyle(
+                          fontSize: isTablet ? 24.0 : 20.0,
+                          fontWeight: FontWeight.bold,
+                          color: color == Colors.red
+                              ? Colors.red
+                              : AppColors.textPrimary,
+                        ),
+                      ),
+                      if (variation != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          variation,
+                          style: TextStyle(
+                            fontSize: isTablet ? 12.0 : 10.0,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
+                Icon(icon, color: Colors.purple, size: isTablet ? 24.0 : 20.0),
               ],
-            ),
-            const SizedBox(height: 16),
-
-            LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth > 600) {
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: _buildStatCard(
-                          'Ventas Hoy',
-                          stats.todaySales,
-                          Colors.green,
-                          isTablet,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildStatCard(
-                          'Variación',
-                          stats.variation,
-                          Colors.blue,
-                          isTablet,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildStatCard(
-                          'Ticket Promedio',
-                          stats.avgTicket,
-                          Colors.orange,
-                          isTablet,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildStatCard(
-                          'Total Órdenes',
-                          stats.totalOrders.toDouble(),
-                          AppColors.primary,
-                          isTablet,
-                        ),
-                      ),
-                    ],
-                  );
-                } else {
-                  return Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildStatCard(
-                              'Ventas Hoy',
-                              stats.todaySales,
-                              Colors.green,
-                              isTablet,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildStatCard(
-                              'Variación',
-                              stats.variation,
-                              Colors.blue,
-                              isTablet,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildStatCard(
-                              'Ticket Promedio',
-                              stats.avgTicket,
-                              Colors.orange,
-                              isTablet,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildStatCard(
-                              'Total Órdenes',
-                              stats.totalOrders.toDouble(),
-                              AppColors.primary,
-                              isTablet,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  );
-                }
-              },
             ),
           ],
         ),
@@ -324,42 +429,10 @@ class CaptainApp extends StatelessWidget {
     );
   }
 
-  Widget _buildStatCard(
-    String title,
-    dynamic value,
-    Color color,
-    bool isTablet,
-  ) {
-    return Container(
-      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            value is String ? value : '\$${value.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: isTablet ? 20.0 : 18.0,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(fontSize: isTablet ? 12.0 : 10.0, color: color),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAlertsSection(
     BuildContext context,
     CaptainController controller,
+    CocineroController cocineroController,
     bool isTablet,
   ) {
     final alerts = controller.filteredAlerts;
@@ -415,13 +488,17 @@ class CaptainApp extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-
             if (alerts.isEmpty)
               _buildEmptyAlerts(isTablet)
             else
               ...alerts.map(
-                (alert) =>
-                    _buildAlertCard(context, alert, controller, isTablet),
+                (alert) => _buildAlertCard(
+                  context,
+                  alert,
+                  controller,
+                  cocineroController,
+                  isTablet,
+                ),
               ),
           ],
         ),
@@ -463,25 +540,18 @@ class CaptainApp extends StatelessWidget {
     BuildContext context,
     CaptainAlert alert,
     CaptainController controller,
+    CocineroController cocineroController,
     bool isTablet,
   ) {
-    final priorityColor = controller.getPriorityColor(alert.priority);
-    final isUnread = !alert.isRead;
+    final alertTypeText = AlertType.getTypeText(alert.type);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
       decoration: BoxDecoration(
-        color: isUnread
-            ? priorityColor.withValues(alpha: 0.1)
-            : Colors.grey.withValues(alpha: 0.1),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isUnread
-              ? priorityColor.withValues(alpha: 0.1)
-              : Colors.grey.withValues(alpha: 0.1),
-          width: isUnread ? 2 : 1,
-        ),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.3), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -491,12 +561,14 @@ class CaptainApp extends StatelessWidget {
               Icon(
                 AlertType.getTypeIcon(alert.type),
                 size: isTablet ? 20.0 : 18.0,
-                color: priorityColor,
+                color: Colors.orange,
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  alert.title,
+                  alert.orderNumber != null
+                      ? 'Orden ${alert.orderNumber}'
+                      : alert.title,
                   style: TextStyle(
                     fontSize: isTablet ? 16.0 : 14.0,
                     fontWeight: FontWeight.w600,
@@ -507,18 +579,16 @@ class CaptainApp extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: priorityColor.withValues(alpha: 0.1),
+                  color: Colors.red.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: priorityColor.withValues(alpha: 0.1),
-                  ),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
                 ),
                 child: Text(
-                  AlertPriority.getPriorityText(alert.priority),
+                  alertTypeText,
                   style: TextStyle(
                     fontSize: isTablet ? 10.0 : 8.0,
                     fontWeight: FontWeight.w600,
-                    color: priorityColor,
+                    color: Colors.red,
                   ),
                 ),
               ),
@@ -526,46 +596,47 @@ class CaptainApp extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            alert.message,
+            alert.tableNumber != null
+                ? 'Mesa ${alert.tableNumber} • ${alert.message}'
+                : alert.message,
             style: TextStyle(
               fontSize: isTablet ? 14.0 : 12.0,
               color: AppColors.textSecondary,
             ),
           ),
           const SizedBox(height: 8),
+          Text(
+            '${alert.minutes} min de retraso',
+            style: TextStyle(
+              fontSize: isTablet ? 12.0 : 10.0,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 12),
           Row(
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Icon(
-                Icons.access_time,
-                size: isTablet ? 16.0 : 14.0,
-                color: AppColors.textSecondary,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '${alert.minutes} min de retraso',
-                style: TextStyle(
-                  fontSize: isTablet ? 12.0 : 10.0,
-                  color: AppColors.textSecondary,
+              OutlinedButton(
+                onPressed: () => _handleViewAlert(
+                  context,
+                  alert,
+                  controller,
+                  cocineroController,
                 ),
-              ),
-              const Spacer(),
-              if (isUnread)
-                ElevatedButton(
-                  onPressed: () => controller.markAlertAsRead(alert.id),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: priorityColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    minimumSize: Size.zero,
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
-                  child: Text(
-                    'Marcar como leída',
-                    style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
+                child: Text(
+                  'Ver',
+                  style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                ),
+              ),
             ],
           ),
         ],
@@ -573,17 +644,492 @@ class CaptainApp extends StatelessWidget {
     );
   }
 
-  Widget _buildFiltersCard(
+  void _handleViewAlert(
+    BuildContext context,
+    CaptainAlert alert,
+    CaptainController controller,
+    CocineroController cocineroController,
+  ) {
+    // Mostrar mensaje
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          alert.orderNumber != null ? 'Orden ${alert.orderNumber}' : 'Alerta',
+        ),
+        content: Text(
+          alert.tableNumber != null
+              ? 'Abriendo orden ${alert.orderNumber ?? ''} - Mesa ${alert.tableNumber}'
+              : 'Abriendo alerta...',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              // Buscar la orden en el CocineroController y abrirla
+              _openOrderDetail(context, alert, cocineroController);
+            },
+            child: const Text('Aceptar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openOrderDetail(
+    BuildContext context,
+    CaptainAlert alert,
+    CocineroController cocineroController,
+  ) {
+    // Buscar la orden correspondiente
+    final orders = cocineroController.orders;
+    OrderModel? order;
+
+    try {
+      if (alert.orderNumber != null) {
+        order = orders.firstWhere((o) => o.id == alert.orderNumber);
+      } else if (alert.tableNumber != null) {
+        order = orders.firstWhere(
+          (o) => o.tableNumber == alert.tableNumber && !o.isTakeaway,
+        );
+      }
+    } catch (e) {
+      // Orden no encontrada, usar la primera disponible como demo
+      if (orders.isNotEmpty) {
+        order = orders.first;
+      }
+    }
+
+    if (order != null) {
+      // Mostrar modal de detalle de orden
+      OrderDetailModal.show(
+        context,
+        order: order,
+        controller: cocineroController,
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Orden no encontrada'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
+  Widget _buildRecentOrdersSection(
+    BuildContext context,
+    CaptainController controller,
+    CocineroController cocineroController,
+    bool isTablet,
+  ) {
+    final orders = cocineroController.orders
+        .where(
+          (o) =>
+              o.status == OrderStatus.pendiente ||
+              o.status == OrderStatus.enPreparacion ||
+              o.status == OrderStatus.listo ||
+              o.status == OrderStatus.listoParaRecoger,
+        )
+        .toList();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Órdenes Recientes',
+                  style: TextStyle(
+                    fontSize: isTablet ? 18.0 : 16.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    // TODO: Implementar exportar
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Exportando órdenes...')),
+                    );
+                  },
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Exportar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (orders.isEmpty)
+              _buildEmptyOrders(isTablet)
+            else
+              ...orders
+                  .take(3)
+                  .map(
+                    (order) => _buildRecentOrderCard(
+                      context,
+                      order,
+                      cocineroController,
+                      isTablet,
+                    ),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecentOrderCard(
+    BuildContext context,
+    OrderModel order,
+    CocineroController cocineroController,
+    bool isTablet,
+  ) {
+    final statusColor = _getOrderStatusColor(order.status);
+    final statusText = _getOrderStatusText(order.status);
+    final elapsedMinutes = DateTime.now().difference(order.orderTime).inMinutes;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: order.isTakeaway ? Colors.blue : Colors.red,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  order.isTakeaway
+                      ? 'Para llevar'
+                      : 'Mesa ${order.tableNumber}',
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: statusColor),
+                ),
+                child: Text(
+                  statusText,
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    fontWeight: FontWeight.w600,
+                    color: statusColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            order.isTakeaway && order.customerName != null
+                ? 'Cliente: ${order.customerName} • Mesero: ${order.waiter}'
+                : 'Mesero: ${order.waiter}',
+            style: TextStyle(
+              fontSize: isTablet ? 14.0 : 12.0,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () {
+                  ReportOrderStatusModal.show(
+                    context,
+                    orderId: order.id,
+                    tableNumber: order.tableNumber,
+                    isTakeaway: order.isTakeaway,
+                    onSend: (tipo, motivo, detalles, notifyCook) {
+                      _handleSendNotification(
+                        context,
+                        order,
+                        tipo,
+                        motivo,
+                        detalles,
+                        notifyCook,
+                        cocineroController,
+                      );
+                    },
+                  );
+                },
+                icon: const Icon(Icons.notifications, size: 18),
+                label: const Text('Notificar a Cocina'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.purple,
+                  side: const BorderSide(color: Colors.grey),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '\$${_estimateOrderTotal(order).toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.purple,
+                    ),
+                  ),
+                  Text(
+                    '$elapsedMinutes min',
+                    style: TextStyle(
+                      fontSize: isTablet ? 12.0 : 10.0,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountsToCollectSection(
     BuildContext context,
     CaptainController controller,
     bool isTablet,
   ) {
+    final bills = controller.getPendingBills();
+
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Cuentas por Cobrar',
+                  style: TextStyle(
+                    fontSize: isTablet ? 18.0 : 16.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    // TODO: Implementar exportar
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Exportando cuentas...')),
+                    );
+                  },
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Exportar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (bills.isEmpty)
+              _buildEmptyBills(isTablet)
+            else
+              ...bills
+                  .take(2)
+                  .map(
+                    (bill) =>
+                        _buildBillCard(context, bill, controller, isTablet),
+                  ),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildBillCard(
+    BuildContext context,
+    dynamic bill,
+    CaptainController controller,
+    bool isTablet,
+  ) {
+    // Simular estructura de bill
+    final billId = bill['id'] ?? 'BILL-001';
+    final total = bill['total']?.toDouble() ?? 0.0;
+    final waiter = bill['waiter'] ?? 'Mesero';
+    final tableNumber = bill['tableNumber'];
+    final isTakeaway = bill['isTakeaway'] ?? false;
+    final customerName = bill['customerName'];
+    final elapsedMinutes = bill['elapsedMinutes'] ?? 0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: tableNumber != null ? Colors.red : Colors.blue,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  tableNumber != null ? 'Mesa $tableNumber' : 'Para llevar',
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.blue),
+                ),
+                child: Text(
+                  billId,
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.blue,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isTakeaway && customerName != null
+                ? 'Cliente: $customerName • Mesero: $waiter'
+                : 'Mesero: $waiter',
+            style: TextStyle(
+              fontSize: isTablet ? 14.0 : 12.0,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () {
+                  // Notificar al cajero
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Notificación enviada a Cocina'),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.notifications, size: 18),
+                label: const Text('Notificar a Cocina'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.purple,
+                  side: const BorderSide(color: Colors.grey),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    controller.formatCurrency(total),
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.purple,
+                    ),
+                  ),
+                  Text(
+                    '$elapsedMinutes min',
+                    style: TextStyle(
+                      fontSize: isTablet ? 12.0 : 10.0,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTablesStatusSection(
+    BuildContext context,
+    CaptainController controller,
+    bool isTablet,
+  ) {
+    final tables = controller.filteredTables;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
         child: Column(
@@ -591,53 +1137,49 @@ class CaptainApp extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.filter_list,
-                  color: AppColors.primary,
-                  size: isTablet ? 20.0 : 18.0,
-                ),
-                const SizedBox(width: 8),
                 Text(
-                  'Filtros',
+                  'Estado de Mesas',
                   style: TextStyle(
                     fontSize: isTablet ? 18.0 : 16.0,
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.purple,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'Solo lectura (Capitán)',
+                    style: TextStyle(
+                      fontSize: isTablet ? 10.0 : 8.0,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-
-            LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth > 600) {
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: _buildTableStatusFilter(controller, isTablet),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildOrderStatusFilter(controller, isTablet),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildPriorityFilter(controller, isTablet),
-                      ),
-                    ],
-                  );
-                } else {
-                  return Column(
-                    children: [
-                      _buildTableStatusFilter(controller, isTablet),
-                      const SizedBox(height: 12),
-                      _buildOrderStatusFilter(controller, isTablet),
-                      const SizedBox(height: 12),
-                      _buildPriorityFilter(controller, isTablet),
-                    ],
-                  );
-                }
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: isTablet ? 4 : 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 1.2,
+              ),
+              itemCount: tables.length,
+              itemBuilder: (context, index) {
+                final table = tables[index];
+                return _buildTableStatusCard(table, controller, isTablet);
               },
             ),
           ],
@@ -646,317 +1188,51 @@ class CaptainApp extends StatelessWidget {
     );
   }
 
-  Widget _buildTableStatusFilter(CaptainController controller, bool isTablet) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Estado de Mesa',
-          style: TextStyle(
-            fontSize: isTablet ? 14.0 : 12.0,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(horizontal: isTablet ? 16.0 : 12.0),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: controller.selectedTableStatus,
-              isExpanded: true,
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textPrimary,
-              ),
-              onChanged: (value) {
-                if (value != null) {
-                  controller.setSelectedTableStatus(value);
-                }
-              },
-              items: [
-                DropdownMenuItem(
-                  value: 'todas',
-                  child: Text('Todas las Mesas'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainTableStatus.disponible,
-                  child: Text('Disponibles'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainTableStatus.ocupada,
-                  child: Text('Ocupadas'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainTableStatus.cuenta,
-                  child: Text('Cuenta'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainTableStatus.reservada,
-                  child: Text('Reservadas'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildOrderStatusFilter(CaptainController controller, bool isTablet) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Estado de Orden',
-          style: TextStyle(
-            fontSize: isTablet ? 14.0 : 12.0,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(horizontal: isTablet ? 16.0 : 12.0),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: controller.selectedOrderStatus,
-              isExpanded: true,
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textPrimary,
-              ),
-              onChanged: (value) {
-                if (value != null) {
-                  controller.setSelectedOrderStatus(value);
-                }
-              },
-              items: [
-                DropdownMenuItem(
-                  value: 'todas',
-                  child: Text('Todas las Órdenes'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainOrderStatus.preparando,
-                  child: Text('Preparando'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainOrderStatus.listo,
-                  child: Text('Listo'),
-                ),
-                DropdownMenuItem(
-                  value: CaptainOrderStatus.entregado,
-                  child: Text('Entregado'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPriorityFilter(CaptainController controller, bool isTablet) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Prioridad',
-          style: TextStyle(
-            fontSize: isTablet ? 14.0 : 12.0,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(horizontal: isTablet ? 16.0 : 12.0),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: controller.selectedPriority,
-              isExpanded: true,
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textPrimary,
-              ),
-              onChanged: (value) {
-                if (value != null) {
-                  controller.setSelectedPriority(value);
-                }
-              },
-              items: [
-                DropdownMenuItem(
-                  value: 'todas',
-                  child: Text('Todas las Prioridades'),
-                ),
-                DropdownMenuItem(
-                  value: AlertPriority.high,
-                  child: Text('Alta'),
-                ),
-                DropdownMenuItem(
-                  value: AlertPriority.medium,
-                  child: Text('Media'),
-                ),
-                DropdownMenuItem(value: AlertPriority.low, child: Text('Baja')),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTabsSection(
-    BuildContext context,
+  Widget _buildTableStatusCard(
+    CaptainTable table,
     CaptainController controller,
     bool isTablet,
-    bool isDesktop,
   ) {
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          TabBar(
-            labelColor: AppColors.primary,
-            unselectedLabelColor: AppColors.textSecondary,
-            indicatorColor: AppColors.primary,
-            tabs: [
-              Tab(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.table_bar, size: isTablet ? 20.0 : 18.0),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Mesas',
-                      style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
-                    ),
-                  ],
-                ),
-              ),
-              Tab(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.receipt_long, size: isTablet ? 20.0 : 18.0),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Órdenes',
-                      style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          SizedBox(
-            height: isDesktop ? 500 : (isTablet ? 400 : 300),
-            child: TabBarView(
-              children: [
-                _buildTablesView(context, controller, isTablet, isDesktop),
-                _buildOrdersView(context, controller, isTablet, isDesktop),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    final statusColor = controller.getTableStatusColor(table.status);
+    final statusText = CaptainTableStatus.getStatusText(table.status);
 
-  Widget _buildTablesView(
-    BuildContext context,
-    CaptainController controller,
-    bool isTablet,
-    bool isDesktop,
-  ) {
-    final tables = controller.filteredTables;
-
-    if (tables.isEmpty) {
-      return _buildEmptyTables(isTablet);
-    }
-
-    return GridView.builder(
-      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: isDesktop ? 4 : (isTablet ? 3 : 2),
-        crossAxisSpacing: isTablet ? 16.0 : 12.0,
-        mainAxisSpacing: isTablet ? 16.0 : 12.0,
-        childAspectRatio: isDesktop ? 1.2 : (isTablet ? 1.0 : 0.8),
-      ),
-      itemCount: tables.length,
-      itemBuilder: (context, index) {
-        final table = tables[index];
-        return _buildTableCard(context, table, controller, isTablet);
-      },
-    );
-  }
-
-  Widget _buildOrdersView(
-    BuildContext context,
-    CaptainController controller,
-    bool isTablet,
-    bool isDesktop,
-  ) {
-    final orders = controller.filteredOrders;
-
-    if (orders.isEmpty) {
-      return _buildEmptyOrders(isTablet);
-    }
-
-    return ListView.builder(
-      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-      itemCount: orders.length,
-      itemBuilder: (context, index) {
-        final order = orders[index];
-        return _buildOrderCard(context, order, controller, isTablet);
-      },
-    );
-  }
-
-  Widget _buildEmptyTables(bool isTablet) {
     return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isTablet ? 60.0 : 40.0),
+      padding: EdgeInsets.all(isTablet ? 12.0 : 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border),
+      ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.table_bar,
-            size: isTablet ? 64.0 : 48.0,
-            color: AppColors.textSecondary.withValues(alpha: 0.1),
-          ),
-          const SizedBox(height: 16),
           Text(
-            'No hay mesas para mostrar',
+            'Mesa ${table.number}',
             style: TextStyle(
-              fontSize: isTablet ? 20.0 : 18.0,
+              fontSize: isTablet ? 14.0 : 12.0,
               fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Text(
-            'Revisa los filtros aplicados',
+            statusText.toLowerCase(),
             style: TextStyle(
-              fontSize: isTablet ? 14.0 : 12.0,
-              color: AppColors.textSecondary,
+              fontSize: isTablet ? 12.0 : 10.0,
+              color: statusColor,
+              fontWeight: FontWeight.w500,
             ),
           ),
+          if (table.customers != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${table.customers} pers.',
+              style: TextStyle(
+                fontSize: isTablet ? 10.0 : 8.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -964,446 +1240,119 @@ class CaptainApp extends StatelessWidget {
 
   Widget _buildEmptyOrders(bool isTablet) {
     return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isTablet ? 60.0 : 40.0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.receipt_long,
-            size: isTablet ? 64.0 : 48.0,
-            color: AppColors.textSecondary.withValues(alpha: 0.1),
+      padding: EdgeInsets.all(isTablet ? 40.0 : 30.0),
+      child: Center(
+        child: Text(
+          'No hay órdenes recientes',
+          style: TextStyle(
+            fontSize: isTablet ? 14.0 : 12.0,
+            color: AppColors.textSecondary,
           ),
-          const SizedBox(height: 16),
-          Text(
-            'No hay órdenes activas',
-            style: TextStyle(
-              fontSize: isTablet ? 20.0 : 18.0,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyBills(bool isTablet) {
+    return Container(
+      padding: EdgeInsets.all(isTablet ? 40.0 : 30.0),
+      child: Center(
+        child: Text(
+          'No hay cuentas por cobrar',
+          style: TextStyle(
+            fontSize: isTablet ? 14.0 : 12.0,
+            color: AppColors.textSecondary,
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Revisa los filtros aplicados',
-            style: TextStyle(
-              fontSize: isTablet ? 14.0 : 12.0,
-              color: AppColors.textSecondary,
-            ),
+        ),
+      ),
+    );
+  }
+
+  Color _getOrderStatusColor(String status) {
+    switch (status) {
+      case OrderStatus.pendiente:
+        return Colors.red;
+      case OrderStatus.enPreparacion:
+        return Colors.yellow;
+      case OrderStatus.listo:
+        return Colors.green;
+      case OrderStatus.listoParaRecoger:
+        return Colors.green;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _getOrderStatusText(String status) {
+    switch (status) {
+      case OrderStatus.pendiente:
+        return 'PENDIENTE';
+      case OrderStatus.enPreparacion:
+        return 'PREPARANDO';
+      case OrderStatus.listo:
+        return 'LISTO';
+      case OrderStatus.listoParaRecoger:
+        return 'LISTO PARA RECOGER';
+      default:
+        return status.toUpperCase();
+    }
+  }
+
+  void _handleSendNotification(
+    BuildContext context,
+    OrderModel order,
+    String tipo,
+    String motivo,
+    String? detalles,
+    bool notifyCook,
+    CocineroController cocineroController,
+  ) {
+    // Mostrar mensaje de confirmación
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Notificación Enviada'),
+        content: Text('Notificación enviada a Cocina — $tipo'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              // Remover la alerta relacionada
+              final captainController = Provider.of<CaptainController>(
+                context,
+                listen: false,
+              );
+              captainController.removeAlertByOrderId(order.id);
+              // Mostrar mensaje de éxito
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Notificación enviada y alerta eliminada'),
+                  backgroundColor: AppColors.success,
+                ),
+              );
+            },
+            child: const Text('Aceptar'),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTableCard(
-    BuildContext context,
-    CaptainTable table,
-    CaptainController controller,
-    bool isTablet,
-  ) {
-    final statusColor = controller.getTableStatusColor(table.status);
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: statusColor.withValues(alpha: 0.3)),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: statusColor.withValues(alpha: 0.05),
-        ),
-        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Mesa ${table.number}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: statusColor.withValues(alpha: 0.1),
-                    ),
-                  ),
-                  child: Text(
-                    CaptainTableStatus.getStatusText(table.status),
-                    style: TextStyle(
-                      fontSize: isTablet ? 10.0 : 8.0,
-                      fontWeight: FontWeight.w600,
-                      color: statusColor,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            if (table.customers != null) ...[
-              Row(
-                children: [
-                  Icon(
-                    Icons.people,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${table.customers} personas',
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
-
-            if (table.waiter != null) ...[
-              Row(
-                children: [
-                  Icon(
-                    Icons.person,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    table.waiter!,
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
-
-            if (table.currentTotal != null) ...[
-              Row(
-                children: [
-                  Icon(
-                    Icons.attach_money,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    controller.formatCurrency(table.currentTotal!),
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
-
-            if (table.notes != null) ...[
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.blue.withValues(alpha: 0.1)),
-                ),
-                child: Text(
-                  table.notes!,
-                  style: TextStyle(
-                    fontSize: isTablet ? 12.0 : 10.0,
-                    color: Colors.blue,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOrderCard(
-    BuildContext context,
-    CaptainOrder order,
-    CaptainController controller,
-    bool isTablet,
-  ) {
-    final statusColor = controller.getOrderStatusColor(order.status);
-    final priorityColor = controller.getPriorityColor(order.priority);
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: order.isUrgent
-              ? Colors.red
-              : statusColor.withValues(alpha: 0.1),
-          width: order.isUrgent ? 2 : 1,
-        ),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: order.isUrgent
-              ? Colors.red.withValues(alpha: 0.1)
-              : statusColor.withValues(alpha: 0.1),
-        ),
-        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  order.id,
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: statusColor.withValues(alpha: 0.1),
-                        ),
-                      ),
-                      child: Text(
-                        CaptainOrderStatus.getStatusText(order.status),
-                        style: TextStyle(
-                          fontSize: isTablet ? 10.0 : 8.0,
-                          fontWeight: FontWeight.w600,
-                          color: statusColor,
-                        ),
-                      ),
-                    ),
-                    if (order.isUrgent) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: Colors.red.withValues(alpha: 0.1),
-                          ),
-                        ),
-                        child: Text(
-                          'URGENTE',
-                          style: TextStyle(
-                            fontSize: isTablet ? 10.0 : 8.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.red,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            Row(
-              children: [
-                Icon(
-                  Icons.table_bar,
-                  size: isTablet ? 16.0 : 14.0,
-                  color: AppColors.textSecondary,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Mesa ${order.tableNumber}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 14.0 : 12.0,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Icon(
-                  Icons.access_time,
-                  size: isTablet ? 16.0 : 14.0,
-                  color: AppColors.textSecondary,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  controller.formatElapsedTime(order.elapsedMinutes),
-                  style: TextStyle(
-                    fontSize: isTablet ? 14.0 : 12.0,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  controller.formatCurrency(order.total),
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            Row(
-              children: [
-                Icon(
-                  Icons.person,
-                  size: isTablet ? 16.0 : 14.0,
-                  color: AppColors.textSecondary,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  order.waiter,
-                  style: TextStyle(
-                    fontSize: isTablet ? 14.0 : 12.0,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: priorityColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: priorityColor.withValues(alpha: 0.1),
-                    ),
-                  ),
-                  child: Text(
-                    AlertPriority.getPriorityText(order.priority),
-                    style: TextStyle(
-                      fontSize: isTablet ? 10.0 : 8.0,
-                      fontWeight: FontWeight.w600,
-                      color: priorityColor,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            // Items de la orden
-            ...order.items.map((item) => _buildOrderItem(item, isTablet)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOrderItem(CaptainOrderItem item, bool isTablet) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: EdgeInsets.all(isTablet ? 8.0 : 6.0),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              '${item.quantity}x',
-              style: TextStyle(
-                fontSize: isTablet ? 10.0 : 8.0,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              item.name,
-              style: TextStyle(
-                fontSize: isTablet ? 12.0 : 10.0,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ),
-          Text(
-            item.station,
-            style: TextStyle(
-              fontSize: isTablet ? 10.0 : 8.0,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFloatingActionButton(
-    BuildContext context,
-    CaptainController controller,
-    bool isTablet,
-  ) {
-    return Container(
-      margin: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-      child: FloatingActionButton.extended(
-        onPressed: () {
-          controller.markAllAlertsAsRead();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Todas las alertas marcadas como leídas'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        },
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.mark_email_read),
-        label: Text(
-          isTablet ? 'Marcar Alertas' : 'Alertas',
-          style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
-        ),
-      ),
-    );
+  // Estimar total de orden basado en items
+  double _estimateOrderTotal(OrderModel order) {
+    // Estimación simple basada en cantidad de items
+    // En producción esto vendría del modelo de datos
+    double estimatedPrice = 0.0;
+    for (var item in order.items) {
+      // Estimación: ~$15-25 por item según estación
+      double itemPrice = 20.0; // Precio promedio
+      if (item.station == 'Consomes') {
+        itemPrice = 25.0;
+      } else if (item.station == 'Bebidas') {
+        itemPrice = 15.0;
+      }
+      estimatedPrice += itemPrice * item.quantity;
+    }
+    return estimatedPrice;
   }
 }

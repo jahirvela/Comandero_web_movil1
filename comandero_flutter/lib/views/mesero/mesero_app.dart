@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../services/kitchen_order_service.dart';
 import 'floor_view.dart';
 import 'table_view.dart';
 import 'menu_view.dart';
@@ -14,7 +15,12 @@ class MeseroApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => MeseroController())],
+      providers: [ChangeNotifierProvider(create: (_) {
+        final controller = MeseroController();
+        // Registrar controller en el servicio para notificaciones
+        KitchenOrderService().registerMeseroController(controller);
+        return controller;
+      })],
       child: Consumer2<MeseroController, AuthController>(
         builder: (context, meseroController, authController, child) {
           return LayoutBuilder(

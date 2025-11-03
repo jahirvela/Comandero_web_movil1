@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../controllers/auth_controller.dart';
+import '../utils/app_colors.dart';
+import '../utils/app_theme.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -21,7 +23,7 @@ class _SplashScreenState extends State<SplashScreen>
     super.initState();
 
     _animationController = AnimationController(
-      duration: const Duration(seconds: 2),
+      duration: AppTheme.durationSlow,
       vsync: this,
     );
 
@@ -41,8 +43,8 @@ class _SplashScreenState extends State<SplashScreen>
     // Verificar estado de autenticación
     await context.read<AuthController>().checkAuthStatus();
 
-    // Esperar un poco para mostrar la animación
-    await Future.delayed(const Duration(seconds: 3));
+    // Esperar un poco para mostrar la animación (3 segundos total)
+    await Future.delayed(const Duration(milliseconds: 1000));
 
     if (mounted) {
       final authController = context.read<AuthController>();
@@ -63,7 +65,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFF6B35), // Color principal actualizado
+      backgroundColor: AppColors.primary,
       body: Center(
         child: AnimatedBuilder(
           animation: _animationController,
@@ -81,44 +83,47 @@ class _SplashScreenState extends State<SplashScreen>
                       height: 120,
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusLG),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.1),
-                            blurRadius: 10,
-                            offset: const Offset(0, 5),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                            spreadRadius: 2,
                           ),
                         ],
                       ),
                       child: const Icon(
                         Icons.restaurant,
                         size: 60,
-                        color: Color(0xFFFF6B35),
+                        color: AppColors.primary,
                       ),
                     ),
-                    const SizedBox(height: 30),
+                    SizedBox(height: AppTheme.spacing2XL),
 
                     // Título de la app
-                    const Text(
+                    Text(
                       'Comandix',
                       style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
+                        fontSize: AppTheme.fontSize4XL,
+                        fontWeight: AppTheme.fontWeightBold,
                         color: Colors.white,
-                        letterSpacing: 2,
+                        letterSpacing: AppTheme.letterSpacingWide,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: AppTheme.spacingSM),
 
-                    const Text(
+                    // Subtítulo
+                    Text(
                       'Sistema de Gestión Restaurante',
                       style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.white70,
-                        letterSpacing: 1,
+                        fontSize: AppTheme.fontSizeBase,
+                        color: Colors.white.withValues(alpha: 0.9),
+                        letterSpacing: AppTheme.letterSpacingNormal,
+                        fontWeight: AppTheme.fontWeightNormal,
                       ),
                     ),
-                    const SizedBox(height: 50),
+                    SizedBox(height: AppTheme.spacing4XL),
 
                     // Indicador de carga
                     const CircularProgressIndicator(

@@ -383,7 +383,7 @@ class _StaffManagementViewState extends State<StaffManagementView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedShift,
+                        initialValue: selectedShift,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -436,7 +436,7 @@ class _StaffManagementViewState extends State<StaffManagementView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedStation,
+                        initialValue: selectedStation,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),

@@ -17,6 +17,7 @@ class CajeroController extends ChangeNotifier {
   // Filtros
   String _selectedStatus = 'todas';
   String _selectedPaymentType = 'todas';
+  String _selectedShowFilter = 'Todos'; // 'Todos', 'Solo para llevar', 'Mesas'
 
   // Vista actual
   String _currentView = 'main';
@@ -28,6 +29,7 @@ class CajeroController extends ChangeNotifier {
   BillModel? get selectedBill => _selectedBill;
   String get selectedStatus => _selectedStatus;
   String get selectedPaymentType => _selectedPaymentType;
+  String get selectedShowFilter => _selectedShowFilter;
   String get currentView => _currentView;
 
   // Obtener facturas filtradas
@@ -35,7 +37,13 @@ class CajeroController extends ChangeNotifier {
     return _bills.where((bill) {
       final statusMatch =
           _selectedStatus == 'todas' || bill.status == _selectedStatus;
-      return statusMatch;
+      
+      // Filtro por tipo (Todos, Solo para llevar, Mesas)
+      final showMatch = _selectedShowFilter == 'Todos' ||
+          (_selectedShowFilter == 'Solo para llevar' && bill.isTakeaway) ||
+          (_selectedShowFilter == 'Mesas' && !bill.isTakeaway && bill.tableNumber != null);
+      
+      return statusMatch && showMatch && bill.status == BillStatus.pending;
     }).toList();
   }
 
@@ -80,10 +88,12 @@ class CajeroController extends ChangeNotifier {
           ),
         ],
         subtotal: 137.0,
-        tax: 22.0,
-        total: 159.0,
+        tax: 0.0,
+        discount: 0.0,
+        total: 137.0,
         status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
+        createdAt: DateTime.now().subtract(const Duration(minutes: 226)),
+        waiterName: 'Mesero',
       ),
       BillModel(
         id: 'BILL-002',
@@ -98,10 +108,16 @@ class CajeroController extends ChangeNotifier {
           ),
         ],
         subtotal: 139.0,
-        tax: 22.0,
-        total: 161.0,
+        tax: 0.0,
+        discount: 6.95,
+        total: 132.05,
         status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 45)),
+        createdAt: DateTime.now().subtract(const Duration(minutes: 236)),
+        waiterName: 'Mesero',
+        waiterNotes: 'Separar cuenta para dos personas',
+        isPrinted: true,
+        printedBy: 'Ana Rodríguez',
+        requestedByWaiter: true,
       ),
       BillModel(
         id: 'BILL-003',
@@ -113,15 +129,36 @@ class CajeroController extends ChangeNotifier {
             price: 40.0,
             total: 80.0,
           ),
-          BillItem(name: 'Refresco', quantity: 3, price: 12.0, total: 36.0),
+          BillItem(name: 'Refresco', quantity: 2, price: 12.0, total: 24.0),
         ],
-        subtotal: 116.0,
-        tax: 19.0,
-        total: 135.0,
+        subtotal: 104.0,
+        tax: 0.0,
+        discount: 0.0,
+        total: 104.0,
         status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 20)),
+        createdAt: DateTime.now().subtract(const Duration(minutes: 211)),
         isTakeaway: true,
         customerName: 'Jahir',
+        customerPhone: '55 1234 5678',
+        waiterName: 'Mesero',
+      ),
+      BillModel(
+        id: 'BILL-004',
+        tableNumber: 7,
+        items: [
+          BillItem(name: 'Barbacoa por Kilo', quantity: 1, price: 180.0, total: 180.0),
+          BillItem(name: 'Tortillas', quantity: 1, price: 12.0, total: 12.0),
+          BillItem(name: 'Consomé Mediano', quantity: 2, price: 25.0, total: 50.0),
+        ],
+        subtotal: 242.0,
+        tax: 0.0,
+        discount: 0.0,
+        total: 242.0,
+        status: BillStatus.pending,
+        createdAt: DateTime.now().subtract(const Duration(minutes: 206)),
+        waiterName: 'Mesero',
+        waiterNotes: 'Cliente solicita factura',
+        requestedByWaiter: true,
       ),
     ];
 
@@ -204,6 +241,12 @@ class CajeroController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Cambiar filtro de mostrar
+  void setSelectedShowFilter(String filter) {
+    _selectedShowFilter = filter;
+    notifyListeners();
+  }
+
   // Cambiar vista actual
   void setCurrentView(String view) {
     _currentView = view;
@@ -214,14 +257,23 @@ class CajeroController extends ChangeNotifier {
   void processPayment(PaymentModel payment) {
     _payments.add(payment);
 
-    // Actualizar estado de la factura
+    // Actualizar estado de la factura y removerla de la lista (ya está pagada)
+    _bills = _bills.where((bill) => bill.id != payment.billId).toList();
+
+    notifyListeners();
+  }
+
+  // Marcar factura como impresa
+  void markBillAsPrinted(String billId, String printedBy) {
     _bills = _bills.map((bill) {
-      if (bill.id == payment.billId) {
-        return bill.copyWith(status: BillStatus.paid);
+      if (bill.id == billId) {
+        return bill.copyWith(
+          isPrinted: true,
+          printedBy: printedBy,
+        );
       }
       return bill;
     }).toList();
-
     notifyListeners();
   }
 
@@ -305,13 +357,23 @@ class CajeroController extends ChangeNotifier {
   }
 
   // Calcular cambio para pago en efectivo
+  // Cambio = efectivo recibido - total (sin restar propina)
+  // La propina NO se descuenta del efectivo recibido
   double calculateChange(
     double totalAmount,
     double cashReceived,
     double tipAmount,
   ) {
-    final cashApplied = cashReceived - tipAmount;
-    return cashApplied - totalAmount;
+    return cashReceived - totalAmount;
+  }
+
+  // Calcular efectivo aplicado al pago (para registro en cierre)
+  // Efectivo aplicado = total + propina (para contar todo el dinero)
+  double calculateCashApplied(
+    double totalAmount,
+    double tipAmount,
+  ) {
+    return totalAmount + tipAmount;
   }
 
   // Validar pago en efectivo
@@ -320,8 +382,8 @@ class CajeroController extends ChangeNotifier {
     double cashReceived,
     double tipAmount,
   ) {
-    final cashApplied = cashReceived - tipAmount;
-    return cashApplied >= totalAmount;
+    // El efectivo recibido debe ser suficiente para cubrir el total
+    return cashReceived >= totalAmount;
   }
 
   // Obtener color de estado de factura

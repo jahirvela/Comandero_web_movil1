@@ -226,13 +226,28 @@ class TableView extends StatelessWidget {
                     ),
                   ],
                 ),
-                Text(
-                  '${table.customers ?? 0} personas',
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      '${table.customers ?? 0} personas',
+                      style: TextStyle(
+                        fontSize: isTablet ? 16.0 : 14.0,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () => _showEditCustomersDialog(context, controller, table, isTablet),
+                      child: Text(
+                        'Editar',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -538,27 +553,32 @@ class TableView extends StatelessWidget {
     TableModel table,
     bool isTablet,
   ) {
-    // Mock de historial de pedidos
-    final orderHistory = [
-      {
-        'id': 'ORD-034',
-        'items': ['3x Taco Barbacoa'],
-        'status': 'Listo',
-        'time': '14:20',
-      },
-      {
-        'id': 'ORD-029',
-        'items': ['1x Mix Barbacoa', '2x Agua Horchata'],
-        'status': 'En preparación',
-        'time': '13:45',
-      },
-      {
-        'id': 'ORD-025',
-        'items': ['2x Quesadilla Barbacoa'],
-        'status': 'Entregado',
-        'time': '13:15',
-      },
-    ];
+    // Obtener historial real del controller
+    final orderHistory = controller.getTableOrderHistory(table.id);
+    
+    // Si no hay historial, mostrar historial demo inicial
+    final displayHistory = orderHistory.isEmpty 
+        ? [
+            {
+              'id': 'ORD-034',
+              'items': ['3x Taco Barbacoa'],
+              'status': 'Listo',
+              'time': '14:20',
+            },
+            {
+              'id': 'ORD-029',
+              'items': ['1x Mix Barbacoa', '2x Agua Horchata'],
+              'status': 'En preparación',
+              'time': '13:45',
+            },
+            {
+              'id': 'ORD-025',
+              'items': ['2x Quesadilla Barbacoa'],
+              'status': 'Entregado',
+              'time': '13:15',
+            },
+          ]
+        : orderHistory;
 
     return Card(
       elevation: 2,
@@ -577,23 +597,77 @@ class TableView extends StatelessWidget {
             // Header del historial
             Padding(
               padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-              child: Row(
+              child: Column(
                 children: [
-                  Icon(
-                    Icons.access_time,
-                    color: AppColors.info,
-                    size: isTablet ? 20.0 : 18.0,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Historial de Pedidos — Mesa ${table.number}',
-                      style: TextStyle(
-                        fontSize: isTablet ? 16.0 : 14.0,
-                        fontWeight: FontWeight.w600,
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time,
                         color: AppColors.info,
+                        size: isTablet ? 20.0 : 18.0,
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Historial de Pedidos — Mesa ${table.number}',
+                          style: TextStyle(
+                            fontSize: isTablet ? 16.0 : 14.0,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.info,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _showCloseAccountDialog(
+                            context,
+                            controller,
+                            table,
+                            isTablet,
+                          ),
+                          icon: const Icon(Icons.warning_amber, size: 18),
+                          label: Text(
+                            'Cerrar cuenta',
+                            style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.warning,
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isTablet ? 12.0 : 8.0,
+                              vertical: isTablet ? 12.0 : 8.0,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () => _showClearHistoryDialog(
+                          context,
+                          controller,
+                          table,
+                          isTablet,
+                        ),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: Text(
+                          'Limpiar historial',
+                          style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.error,
+                          side: BorderSide(color: AppColors.error),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isTablet ? 12.0 : 8.0,
+                            vertical: isTablet ? 12.0 : 8.0,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -601,9 +675,9 @@ class TableView extends StatelessWidget {
 
             // Lista de pedidos
             Expanded(
-              child: orderHistory.isEmpty
-                  ? _buildEmptyOrderHistory(isTablet)
-                  : _buildOrderHistoryList(orderHistory, isTablet),
+              child: displayHistory.isEmpty
+                  ? _buildEmptyOrderHistory(isTablet, table, controller)
+                  : _buildOrderHistoryList(displayHistory, isTablet),
             ),
           ],
         ),
@@ -611,7 +685,11 @@ class TableView extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyOrderHistory(bool isTablet) {
+  Widget _buildEmptyOrderHistory(
+    bool isTablet,
+    TableModel table,
+    MeseroController controller,
+  ) {
     return Container(
       padding: EdgeInsets.all(isTablet ? 40.0 : 32.0),
       child: Column(
@@ -630,6 +708,18 @@ class TableView extends StatelessWidget {
               color: AppColors.info,
             ),
             textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () {
+              controller.restoreDemoHistory(table.id);
+            },
+            icon: const Icon(Icons.restore),
+            label: const Text('Restaurar demo'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.info,
+              foregroundColor: Colors.white,
+            ),
           ),
         ],
       ),
@@ -804,6 +894,526 @@ class TableView extends StatelessWidget {
       default:
         return Colors.grey;
     }
+  }
+
+  void _showEditCustomersDialog(
+    BuildContext context,
+    MeseroController controller,
+    TableModel table,
+    bool isTablet,
+  ) {
+    final customersController = TextEditingController(
+      text: '${table.customers ?? 0}',
+    );
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Editar Comensales',
+          style: TextStyle(
+            fontSize: isTablet ? 20.0 : 18.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Mesa ${table.number}',
+              style: TextStyle(
+                fontSize: isTablet ? 16.0 : 14.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: customersController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Número de personas',
+                hintText: 'Ej: 4',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final customers = int.tryParse(customersController.text) ?? 0;
+              if (customers >= 0 && customers <= table.seats) {
+                // Actualizar número de comensales
+                final updatedTable = table.copyWith(customers: customers > 0 ? customers : null);
+                controller.changeTableStatus(
+                  table.id,
+                  updatedTable.status,
+                );
+                // Actualizar comensales en el controller
+                _updateTableCustomers(controller, table.id, customers);
+                Navigator.of(dialogContext).pop();
+              } else {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'El número de personas debe estar entre 0 y ${table.seats}',
+                    ),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _updateTableCustomers(
+    MeseroController controller,
+    int tableId,
+    int customers,
+  ) {
+    // Actualizar comensales en la mesa
+    controller.updateTableCustomers(tableId, customers);
+  }
+
+  void _showClearHistoryDialog(
+    BuildContext context,
+    MeseroController controller,
+    TableModel table,
+    bool isTablet,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Limpiar historial de mesa',
+          style: TextStyle(
+            fontSize: isTablet ? 20.0 : 18.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '0 artículos',
+              style: TextStyle(
+                fontSize: isTablet ? 14.0 : 12.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Confirma si deseas limpiar el historial de pedidos para esta mesa',
+              style: TextStyle(
+                fontSize: isTablet ? 16.0 : 14.0,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '¿Confirmas que deseas limpiar el historial de Pedidos para la Mesa ${table.number}? Esto no eliminará registros del sistema, solo ocultará la lista en esta sesión.',
+              style: TextStyle(
+                fontSize: isTablet ? 14.0 : 12.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.textSecondary,
+            ),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              controller.clearTableHistory(table.id);
+              Navigator.of(dialogContext).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Historial limpiado'),
+                  backgroundColor: AppColors.success,
+                  action: SnackBarAction(
+                    label: 'Restaurar demo',
+                    textColor: Colors.white,
+                    onPressed: () {
+                      controller.restoreDemoHistory(table.id);
+                    },
+                  ),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Limpiar historial'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCloseAccountDialog(
+    BuildContext context,
+    MeseroController controller,
+    TableModel table,
+    bool isTablet,
+  ) {
+    final cart = controller.getCurrentCart();
+    final total = controller.calculateTotal();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Container(
+          constraints: BoxConstraints(
+            maxWidth: isTablet ? 600 : double.infinity,
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.receipt_long,
+                      color: AppColors.warning,
+                      size: isTablet ? 28.0 : 24.0,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Cerrar cuenta — Mesa ${table.number}',
+                            style: TextStyle(
+                              fontSize: isTablet ? 20.0 : 18.0,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            'Resumen de consumo',
+                            style: TextStyle(
+                              fontSize: isTablet ? 14.0 : 12.0,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Contenido scrolleable
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                  child: Column(
+                    children: [
+                      // Tabla de consumo
+                      if (cart.isNotEmpty) ...[
+                        DataTable(
+                          headingRowColor: WidgetStateProperty.all(
+                            AppColors.secondary.withValues(alpha: 0.3),
+                          ),
+                          columns: [
+                            DataColumn(
+                              label: Text(
+                                'Cantidad',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'Nombre del producto',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'Extras / Salsas',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'Precio Unit.',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'Subtotal',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                ),
+                              ),
+                            ),
+                          ],
+                          rows: cart.map((item) {
+                            final quantity = item.customizations['quantity'] as int? ?? 1;
+                            final sauce = item.customizations['sauce'] as String?;
+                            final extras = item.customizations['extras'] as List<dynamic>? ?? [];
+                            final unitPrice = item.product.price;
+                            final subtotal = unitPrice * quantity;
+
+                            return DataRow(
+                              cells: [
+                                DataCell(Text('$quantity')),
+                                DataCell(Text(item.product.name)),
+                                DataCell(
+                                  Text(
+                                    sauce != null
+                                        ? sauce.split('(').first.trim()
+                                        : (extras.isNotEmpty
+                                            ? extras.join(', ')
+                                            : '-'),
+                                  ),
+                                ),
+                                DataCell(Text('\$${unitPrice.toStringAsFixed(0)}')),
+                                DataCell(Text('\$${subtotal.toStringAsFixed(0)}')),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ] else ...[
+                        Padding(
+                          padding: EdgeInsets.all(isTablet ? 40.0 : 32.0),
+                          child: Text(
+                            'No hay consumo registrado para esta mesa',
+                            style: TextStyle(
+                              fontSize: isTablet ? 16.0 : 14.0,
+                              color: AppColors.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Totales
+                      Container(
+                        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+                        decoration: BoxDecoration(
+                          color: AppColors.secondary.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Subtotal:',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  '\$${total.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Total:',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 20.0 : 18.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                                Text(
+                                  '\$${total.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 22.0 : 20.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      
+                      // Mensaje informativo
+                      Container(
+                        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                        decoration: BoxDecoration(
+                          color: AppColors.info.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppColors.info.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              color: AppColors.info,
+                              size: isTablet ? 20.0 : 18.0,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Al enviar la cuenta, llegará al Cajero para su cobro e impresión de ticket.',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // Botones de acción
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.textPrimary,
+                          side: BorderSide(color: AppColors.border),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isTablet ? 16.0 : 14.0,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.close),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Cancelar',
+                              style: TextStyle(
+                                fontSize: isTablet ? 16.0 : 14.0,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          controller.sendToCashier(table.id);
+                          Navigator.of(dialogContext).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Cuenta de Mesa ${table.number} enviada al Cajero',
+                              ),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.send),
+                        label: Text(
+                          'Enviar al Cajero',
+                          style: TextStyle(
+                            fontSize: isTablet ? 16.0 : 14.0,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.success,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            vertical: isTablet ? 16.0 : 14.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

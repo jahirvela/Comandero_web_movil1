@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
 import 'views/splash_screen.dart';
@@ -8,13 +8,14 @@ import 'views/login_screen.dart';
 import 'views/home_screen.dart';
 import 'controllers/auth_controller.dart';
 import 'controllers/app_controller.dart';
-import 'utils/app_colors.dart';
 import 'views/mesero/mesero_app.dart';
 import 'views/cocinero/cocinero_app.dart';
 import 'views/cajero/cajero_app.dart';
 import 'views/captain/captain_app.dart';
 import 'views/admin/admin_app.dart';
 import 'views/admin/admin_web_app.dart';
+import 'views/admin/access_denied_view.dart';
+import 'utils/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,70 +37,7 @@ class ComanderoApp extends StatelessWidget {
           return MaterialApp.router(
             title: 'Comandero Flutter',
             debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              // Esquema de colores basado en el proyecto React original
-              primaryColor: AppColors.primary,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: AppColors.primary,
-                brightness: Brightness.light,
-                primary: AppColors.primary,
-                secondary: AppColors.secondary,
-                surface: AppColors.surface,
-                error: AppColors.error,
-              ),
-              textTheme: GoogleFonts.robotoTextTheme().copyWith(
-                bodyLarge: const TextStyle(color: AppColors.textPrimary),
-                bodyMedium: const TextStyle(color: AppColors.textPrimary),
-                titleLarge: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              appBarTheme: const AppBarTheme(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 2,
-                centerTitle: true,
-              ),
-              elevatedButtonTheme: ElevatedButtonThemeData(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  elevation: 2,
-                ),
-              ),
-              cardTheme: CardThemeData(
-                elevation: 2,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                color: AppColors.surface,
-              ),
-              inputDecorationTheme: InputDecorationTheme(
-                filled: true,
-                fillColor: AppColors.inputBackground,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.borderFocus),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.border),
-                ),
-              ),
-              scaffoldBackgroundColor: AppColors.background,
-            ),
+            theme: AppTheme.lightTheme,
             routerConfig: _createRouter(authController),
           );
         },
@@ -159,10 +97,36 @@ class ComanderoApp extends StatelessWidget {
         ),
         GoRoute(
           path: '/admin-web',
+          redirect: (context, state) {
+            // Guard: Solo admin puede acceder en web
+            final userRole = authController.userRole;
+            final isLoggedIn = authController.isLoggedIn;
+            
+            // Si no está logueado, ir a login
+            if (!isLoggedIn) {
+              return '/login';
+            }
+            
+            // Si no es web, redirigir a home
+            if (!kIsWeb) {
+              return '/home';
+            }
+            
+            // Si no es admin, redirigir a acceso denegado
+            if (userRole != 'admin') {
+              return '/access-denied';
+            }
+            
+            return null; // Permitir acceso
+          },
           builder: (context, state) {
             // Dashboard web privado para administradores
             return const AdminWebApp();
           },
+        ),
+        GoRoute(
+          path: '/access-denied',
+          builder: (context, state) => const AccessDeniedView(),
         ),
       ],
     );

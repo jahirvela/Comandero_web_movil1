@@ -292,7 +292,7 @@ class _CashManagementViewState extends State<CashManagementView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedOperation,
+                        initialValue: selectedOperation,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -353,7 +353,7 @@ class _CashManagementViewState extends State<CashManagementView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: 'Hoy',
+                        initialValue: 'Hoy',
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),

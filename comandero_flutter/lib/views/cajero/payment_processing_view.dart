@@ -290,7 +290,7 @@ class _PaymentProcessingViewState extends State<PaymentProcessingView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedPaymentMethod,
+                        initialValue: selectedPaymentMethod,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -343,7 +343,7 @@ class _PaymentProcessingViewState extends State<PaymentProcessingView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedStatus,
+                        initialValue: selectedStatus,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),

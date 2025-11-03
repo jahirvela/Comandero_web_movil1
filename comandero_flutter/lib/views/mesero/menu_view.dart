@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../models/product_model.dart';
+import 'product_modifier_modal.dart';
 
 class MenuView extends StatefulWidget {
   const MenuView({super.key});
@@ -828,16 +830,85 @@ class _MenuViewState extends State<MenuView> {
     );
   }
 
-  void _addToCart(Map<String, dynamic> item) {
-    // TODO: Implementar lógica de agregar al carrito
-    // final controller = context.read<MeseroController>();
+  void _addToCart(Map<String, dynamic> item) async {
+    final controller = context.read<MeseroController>();
+    
+    // Verificar que hay una mesa seleccionada
+    if (controller.selectedTable == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Por favor, selecciona una mesa primero'),
+          backgroundColor: AppColors.error,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${item['name']} agregado al carrito'),
-        backgroundColor: AppColors.success,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    // Abrir modal de modificadores
+    final result = await ProductModifierModal.show(context, item);
+    
+    if (result != null && mounted) {
+      // Crear ProductModel desde el item
+      final product = ProductModel(
+        id: DateTime.now().millisecondsSinceEpoch,
+        name: item['name'] as String,
+        description: item['description'] as String? ?? '',
+        price: result['totalPrice'] as double,
+        category: _getCategoryId(item['category'] as String? ?? ''),
+        available: true,
+        hot: item['hot'] as bool? ?? false,
+        extras: result['extras'] as List<String>?,
+      );
+
+      // Crear mapa de customizations
+      final customizations = <String, dynamic>{
+        'quantity': result['quantity'] as int,
+        'sauce': result['sauce'] as String?,
+        'size': result['size'] as String?,
+        'temperature': result['temperature'] as String?,
+        'kitchenNotes': result['kitchenNotes'] as String? ?? '',
+        'extras': result['extras'] as List<dynamic>? ?? [],
+        'extraPrices': result['extraPrices'] as List<dynamic>? ?? [],
+      };
+
+      // Agregar al carrito
+      controller.addToCart(product, customizations: customizations);
+
+      // Mostrar confirmación
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${item['name']} agregado al pedido'),
+          backgroundColor: AppColors.success,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // Regresar a la vista de mesa después de agregar
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          controller.setCurrentView('table');
+        }
+      });
+    }
+  }
+
+  int _getCategoryId(String category) {
+    switch (category) {
+      case 'Tacos':
+        return ProductCategory.tacos;
+      case 'Platos Especiales':
+        return ProductCategory.platosEspeciales;
+      case 'Acompañamientos':
+        return ProductCategory.acompanamientos;
+      case 'Bebidas':
+        return ProductCategory.bebidas;
+      case 'Extras':
+        return ProductCategory.extras;
+      case 'Consomes':
+        return ProductCategory.consomes;
+      default:
+        return ProductCategory.tacos;
+    }
   }
 }
