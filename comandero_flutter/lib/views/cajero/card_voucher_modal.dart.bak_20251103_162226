@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../models/payment_model.dart';
 import '../../controllers/cajero_controller.dart';
@@ -129,7 +129,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                       child: Text(
                         widget.cardMethod == 'debito'
                             ? 'Tarjeta de debito'
-                            : 'Tarjeta de crÃ©dito',
+                            : 'Tarjeta de crédito',
                         style: TextStyle(
                           fontSize: widget.isTablet ? 12.0 : 10.0,
                           color: Colors.white,
@@ -159,7 +159,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
               ),
               const SizedBox(height: 16),
 
-              // MÃ©todo y Terminal
+              // Método y Terminal
               Row(
                 children: [
                   Expanded(
@@ -167,7 +167,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'MÃ©todo',
+                          'Método',
                           style: TextStyle(
                             fontSize: widget.isTablet ? 12.0 : 10.0,
                             color: AppColors.textSecondary,
@@ -177,7 +177,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                         Text(
                           widget.cardMethod == 'debito'
                               ? 'Tarjeta de debito'
-                              : 'Tarjeta de crÃ©dito',
+                              : 'Tarjeta de crédito',
                           style: TextStyle(
                             fontSize: widget.isTablet ? 14.0 : 12.0,
                             fontWeight: FontWeight.w500,
@@ -273,11 +273,11 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
               ),
               const SizedBox(height: 16),
 
-              // ID de transacciÃ³n (requerido)
+              // ID de transacción (requerido)
               TextFormField(
                 controller: _transactionIdController,
                 decoration: InputDecoration(
-                  labelText: 'ID de transacciÃ³n (voucher) *',
+                  labelText: 'ID de transacción (voucher) *',
                   hintText: 'Ej: 123456789012',
                   prefixIcon: const Icon(Icons.receipt_long),
                   border: OutlineInputBorder(
@@ -304,11 +304,11 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                 ),
               const SizedBox(height: 16),
 
-              // CÃ³digo de autorizaciÃ³n (opcional)
+              // Código de autorización (opcional)
               TextFormField(
                 controller: _authorizationCodeController,
                 decoration: InputDecoration(
-                  labelText: 'CÃ³digo de autorizaciÃ³n (opcional)',
+                  labelText: 'Código de autorización (opcional)',
                   hintText: 'Ej: 123456',
                   prefixIcon: const Icon(Icons.vpn_key),
                   border: OutlineInputBorder(
@@ -318,11 +318,11 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
               ),
               const SizedBox(height: 16),
 
-              // Ãšltimos 4 dÃ­gitos (opcional)
+              // Últimos 4 dígitos (opcional)
               TextFormField(
                 controller: _last4DigitsController,
                 decoration: InputDecoration(
-                  labelText: 'Ãšltimos 4 dÃ­gitos (opcional)',
+                  labelText: 'Últimos 4 dígitos (opcional)',
                   hintText: '1234',
                   prefixIcon: const Icon(Icons.credit_card),
                   border: OutlineInputBorder(
@@ -377,7 +377,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                 controller: _notesController,
                 decoration: InputDecoration(
                   labelText: 'Notas / Comentarios',
-                  hintText: 'Ej: Cliente aprobÃ³ en terminal; voucher TX...',
+                  hintText: 'Ej: Cliente aprobó en terminal; voucher TX...',
                   prefixIcon: const Icon(Icons.note),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
@@ -422,7 +422,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   void _confirmPayment() {
     if (_transactionIdController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('El ID de transacciÃ³n es requerido')),
+        const SnackBar(content: Text('El ID de transacción es requerido')),
       );
       return;
     }
@@ -454,7 +454,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     widget.controller.processPayment(payment);
     Navigator.of(context).pop();
 
-    // Mostrar modal de Ã©xito
+    // Mostrar modal de éxito
     _showSuccessModal(payment);
   }
 
@@ -480,7 +480,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Â¡Pago procesado exitosamente!',
+                    '¡Pago procesado exitosamente!',
                     style: TextStyle(
                       fontSize: widget.isTablet ? 18.0 : 16.0,
                       fontWeight: FontWeight.bold,
@@ -510,11 +510,11 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
               ),
               child: Column(
                 children: [
-                  _buildDetailRow('MÃ©todo:', payment.cardMethod == 'debito'
+                  _buildDetailRow('Método:', payment.cardMethod == 'debito'
                       ? 'Tarjeta de debito'
-                      : 'Tarjeta de crÃ©dito'),
+                      : 'Tarjeta de crédito'),
                   _buildDetailRow('Terminal:', payment.terminal ?? ''),
-                  _buildDetailRow('ID de transacciÃ³n:', payment.transactionId ?? ''),
+                  _buildDetailRow('ID de transacción:', payment.transactionId ?? ''),
                   const Divider(),
                   _buildDetailRow('Total:', widget.controller.formatCurrency(payment.totalAmount)),
                   _buildDetailRow('Orden:', payment.billId),
@@ -535,7 +535,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.of(context).pop();
-              // TODO: Implementar impresiÃ³n de comprobante
+              // TODO: Implementar impresión de comprobante
             },
             icon: const Icon(Icons.print),
             label: const Text('Imprimir comprobante'),
@@ -579,5 +579,4 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     );
   }
 }
-
 
