@@ -172,7 +172,7 @@ class _CashClosureViewState extends State<CashClosureView> {
                     Expanded(
                       child: _buildSummaryCard(
                         'Cortes Pendientes',
-                        '$pendingClosures.length',
+                        '${pendingClosures.length}',
                         AppColors.warning,
                         Icons.schedule,
                         isTablet,

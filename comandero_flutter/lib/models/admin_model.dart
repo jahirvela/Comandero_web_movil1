@@ -4,6 +4,7 @@ class AdminUser {
   final String id;
   final String name;
   final String username;
+  final String password; // Campo de contraseña
   final String? phone;
   final List<String> roles;
   final bool isActive;
@@ -15,6 +16,7 @@ class AdminUser {
     required this.id,
     required this.name,
     required this.username,
+    required this.password,
     this.phone,
     required this.roles,
     required this.isActive,
@@ -28,6 +30,7 @@ class AdminUser {
       id: json['id'],
       name: json['name'],
       username: json['username'],
+      password: json['password'] ?? '',
       phone: json['phone'],
       roles: List<String>.from(json['roles']),
       isActive: json['isActive'],
@@ -44,6 +47,7 @@ class AdminUser {
       'id': id,
       'name': name,
       'username': username,
+      'password': password,
       'phone': phone,
       'roles': roles,
       'isActive': isActive,
@@ -57,6 +61,7 @@ class AdminUser {
     String? id,
     String? name,
     String? username,
+    String? password,
     String? phone,
     List<String>? roles,
     bool? isActive,
@@ -68,6 +73,7 @@ class AdminUser {
       id: id ?? this.id,
       name: name ?? this.name,
       username: username ?? this.username,
+      password: password ?? this.password,
       phone: phone ?? this.phone,
       roles: roles ?? this.roles,
       isActive: isActive ?? this.isActive,

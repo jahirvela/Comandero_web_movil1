@@ -6,8 +6,10 @@ import '../../controllers/cocinero_controller.dart';
 import '../../models/captain_model.dart';
 import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
+import '../../widgets/logout_button.dart';
 import 'report_order_status_modal.dart';
 import '../cocinero/order_detail_modal.dart';
+import '../../services/kitchen_order_service.dart';
 
 class CaptainApp extends StatelessWidget {
   const CaptainApp({super.key});
@@ -121,23 +123,18 @@ class CaptainApp extends StatelessWidget {
             ),
           ),
         ),
-        IconButton(
-          onPressed: () async {
-            await authController.logout();
-            if (context.mounted) {
-              Navigator.of(context).pushReplacementNamed('/login');
-            }
-          },
-          icon: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.arrow_forward),
-              const SizedBox(width: 4),
-              Text('Salir', style: TextStyle(fontSize: isTablet ? 14.0 : 12.0)),
-            ],
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: LogoutButton(
+            isTablet: isTablet,
+            onPressed: () async {
+              await authController.logout();
+              if (context.mounted) {
+                Navigator.of(context).pushReplacementNamed('/login');
+              }
+            },
           ),
         ),
-        const SizedBox(width: 8),
       ],
       backgroundColor: Colors.white,
       foregroundColor: AppColors.textPrimary,
@@ -741,36 +738,13 @@ class CaptainApp extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Órdenes Recientes',
-                  style: TextStyle(
-                    fontSize: isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    // TODO: Implementar exportar
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Exportando órdenes...')),
-                    );
-                  },
-                  icon: const Icon(Icons.download, size: 18),
-                  label: const Text('Exportar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                ),
-              ],
+            Text(
+              'Órdenes Recientes',
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
             ),
             const SizedBox(height: 16),
             if (orders.isEmpty)
@@ -944,36 +918,13 @@ class CaptainApp extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Cuentas por Cobrar',
-                  style: TextStyle(
-                    fontSize: isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    // TODO: Implementar exportar
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Exportando cuentas...')),
-                    );
-                  },
-                  icon: const Icon(Icons.download, size: 18),
-                  label: const Text('Exportar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                ),
-              ],
+            Text(
+              'Cuentas por Cobrar',
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
             ),
             const SizedBox(height: 16),
             if (bills.isEmpty)
@@ -1070,50 +1021,28 @@ class CaptainApp extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () {
-                  // Notificar al cajero
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Notificación enviada a Cocina'),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.notifications, size: 18),
-                label: const Text('Notificar a Cocina'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.purple,
-                  side: const BorderSide(color: Colors.grey),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
+          Align(
+            alignment: Alignment.centerRight,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  controller.formatCurrency(total),
+                  style: TextStyle(
+                    fontSize: isTablet ? 16.0 : 14.0,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.purple,
                   ),
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    controller.formatCurrency(total),
-                    style: TextStyle(
-                      fontSize: isTablet ? 16.0 : 14.0,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.purple,
-                    ),
+                Text(
+                  '$elapsedMinutes min sin cobrar',
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    color: AppColors.textSecondary,
                   ),
-                  Text(
-                    '$elapsedMinutes min',
-                    style: TextStyle(
-                      fontSize: isTablet ? 12.0 : 10.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1307,6 +1236,21 @@ class CaptainApp extends StatelessWidget {
     bool notifyCook,
     CocineroController cocineroController,
   ) {
+    if (notifyCook) {
+      final tableLabel = order.tableNumber != null
+          ? order.tableNumber!.toString()
+          : (order.isTakeaway ? 'Para llevar' : 'Sin mesa');
+
+      KitchenOrderService().sendAlertToKitchen(
+        tableNumber: tableLabel,
+        orderId: order.id,
+        alertType: tipo,
+        reason: motivo,
+        details: detalles,
+        priority: tipo == 'Demora' ? 'Urgente' : 'Normal',
+      );
+    }
+
     // Mostrar mensaje de confirmación
     showDialog(
       context: context,

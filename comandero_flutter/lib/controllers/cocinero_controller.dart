@@ -4,6 +4,7 @@ import '../models/order_model.dart';
 class CocineroController extends ChangeNotifier {
   // Estado de los pedidos
   List<OrderModel> _orders = [];
+  final List<KitchenAlert> _alerts = [];
 
   // Filtros
   String _selectedStation = 'todas';
@@ -23,6 +24,7 @@ class CocineroController extends ChangeNotifier {
   String get selectedAlert => _selectedAlert;
   bool get showTakeawayOnly => _showTakeawayOnly;
   String get currentView => _currentView;
+  List<KitchenAlert> get alerts => List.unmodifiable(_alerts);
 
   // Obtener pedidos filtrados
   List<OrderModel> get filteredOrders {
@@ -42,6 +44,22 @@ class CocineroController extends ChangeNotifier {
       // final alertMatch = _selectedAlert == 'todas' || ...;
       
       return stationMatch && statusMatch && showMatch;
+    }).toList();
+  }
+
+  List<KitchenAlert> get filteredAlerts {
+    return _alerts.where((alert) {
+      if (_selectedAlert == 'todas') return true;
+      switch (_selectedAlert) {
+        case 'demoras':
+          return alert.type.toLowerCase() == 'demora';
+        case 'canceladas':
+          return alert.type.toLowerCase().contains('cancel');
+        case 'cambios':
+          return alert.type.toLowerCase().contains('cambio');
+        default:
+          return true;
+      }
     }).toList();
   }
 
@@ -207,6 +225,11 @@ class CocineroController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void addAlert(KitchenAlert alert) {
+    _alerts.insert(0, alert);
+    notifyListeners();
+  }
+
   // Remover pedido
   void removeOrder(String orderId) {
     _orders.removeWhere((order) => order.id == orderId);
@@ -311,4 +334,35 @@ class CocineroController extends ChangeNotifier {
         return Colors.blue;
     }
   }
+
+  void clearAlerts() {
+    _alerts.clear();
+    notifyListeners();
+  }
+
+  List<KitchenAlert> getAlertsByPriority(String priority) {
+    return _alerts.where((alert) => alert.priority == priority).toList();
+  }
+}
+
+class KitchenAlert {
+  final String id;
+  final String tableNumber;
+  final String orderId;
+  final String type;
+  final String reason;
+  final String? details;
+  final String priority;
+  final DateTime timestamp;
+
+  KitchenAlert({
+    required this.id,
+    required this.tableNumber,
+    required this.orderId,
+    required this.type,
+    required this.reason,
+    this.details,
+    required this.priority,
+    required this.timestamp,
+  });
 }

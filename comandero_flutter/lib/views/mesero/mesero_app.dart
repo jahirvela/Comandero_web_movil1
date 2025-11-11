@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../widgets/logout_button.dart';
 import '../../services/kitchen_order_service.dart';
+import '../../services/bill_repository.dart';
 import 'floor_view.dart';
 import 'table_view.dart';
 import 'menu_view.dart';
@@ -15,12 +17,18 @@ class MeseroApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) {
-        final controller = MeseroController();
-        // Registrar controller en el servicio para notificaciones
-        KitchenOrderService().registerMeseroController(controller);
-        return controller;
-      })],
+      providers: [
+        ChangeNotifierProvider(
+          create: (context) {
+            final controller = MeseroController(
+              billRepository: context.read<BillRepository>(),
+            );
+            // Registrar controller en el servicio para notificaciones
+            KitchenOrderService().registerMeseroController(controller);
+            return controller;
+          },
+        ),
+      ],
       child: Consumer2<MeseroController, AuthController>(
         builder: (context, meseroController, authController, child) {
           return LayoutBuilder(
@@ -92,35 +100,88 @@ class MeseroApp extends StatelessWidget {
           children: [
             IconButton(
               onPressed: () {
-                // TODO: Implementar notificaciones
+                // Mostrar notificaciones pendientes
+                final pendingNotifications =
+                    meseroController.pendingNotifications;
+                if (pendingNotifications.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('No hay notificaciones pendientes'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                } else {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Notificaciones'),
+                      content: SizedBox(
+                        width: double.maxFinite,
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: pendingNotifications.length,
+                          itemBuilder: (context, index) {
+                            final notification = pendingNotifications[index];
+                            return ListTile(
+                              leading: Icon(
+                                Icons.notifications_active,
+                                color: AppColors.primary,
+                              ),
+                              title: Text(
+                                notification['title'] ?? 'Notificación',
+                              ),
+                              subtitle: Text(notification['message'] ?? ''),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () {
+                                  meseroController.removeNotification(index);
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cerrar'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
               },
               icon: Icon(
                 Icons.notifications_outlined,
                 size: isTablet ? 28.0 : 24.0,
               ),
             ),
-            // Badge de notificaciones (mock)
-            Positioned(
-              right: 8,
-              top: 8,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: AppColors.error,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-                child: const Text(
-                  '3',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+            // Badge de notificaciones
+            if (meseroController.pendingNotifications.isNotEmpty)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: AppColors.error,
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  textAlign: TextAlign.center,
+                  constraints: const BoxConstraints(
+                    minWidth: 20,
+                    minHeight: 20,
+                  ),
+                  child: Text(
+                    '${meseroController.pendingNotifications.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
 
@@ -165,17 +226,20 @@ class MeseroApp extends StatelessWidget {
         ),
 
         // Botón de logout
-        IconButton(
-          onPressed: () async {
-            await authController.logout();
-            if (context.mounted) {
-              Navigator.of(context).pushReplacementNamed('/login');
-            }
-          },
-          icon: Icon(Icons.logout, size: isTablet ? 28.0 : 24.0),
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: LogoutButton(
+            isTablet: isTablet,
+            backgroundColor: Colors.white,
+            foregroundColor: AppColors.textPrimary,
+            onPressed: () async {
+              await authController.logout();
+              if (context.mounted) {
+                Navigator.of(context).pushReplacementNamed('/login');
+              }
+            },
+          ),
         ),
-
-        const SizedBox(width: 8),
       ],
       backgroundColor: AppColors.primary,
       foregroundColor: Colors.white,

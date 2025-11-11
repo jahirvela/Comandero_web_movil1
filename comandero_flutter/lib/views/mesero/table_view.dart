@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../models/table_model.dart';
 import '../../utils/app_colors.dart';
+import 'alert_to_kitchen_modal.dart';
 
 class TableView extends StatelessWidget {
   const TableView({super.key});
@@ -47,10 +48,13 @@ class TableView extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Columna principal - Información de la mesa
+          // Columna principal - Información de la mesa (scrollable)
           Expanded(
             flex: 2,
-            child: _buildMainColumn(context, controller, table, cart, true),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(right: 12.0),
+              child: _buildMainColumn(context, controller, table, cart, true),
+            ),
           ),
           const SizedBox(width: 24),
           // Columna lateral - Historial de pedidos
@@ -190,7 +194,9 @@ class TableView extends StatelessWidget {
                     color: _getStatusColor(table.status).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: _getStatusColor(table.status).withValues(alpha: 0.1),
+                      color: _getStatusColor(
+                        table.status,
+                      ).withValues(alpha: 0.1),
                     ),
                   ),
                   child: Text(
@@ -238,7 +244,12 @@ class TableView extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     TextButton(
-                      onPressed: () => _showEditCustomersDialog(context, controller, table, isTablet),
+                      onPressed: () => _showEditCustomersDialog(
+                        context,
+                        controller,
+                        table,
+                        isTablet,
+                      ),
                       child: Text(
                         'Editar',
                         style: TextStyle(
@@ -402,7 +413,7 @@ class TableView extends StatelessWidget {
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    if (item.product?.hot == true || item.hot == true) ...[
+                    if (item.product?.hot == true) ...[
                       const SizedBox(width: 8),
                       Icon(
                         Icons.local_fire_department,
@@ -475,6 +486,7 @@ class TableView extends StatelessWidget {
     MeseroController controller,
     bool isTablet,
   ) {
+    final table = controller.selectedTable;
     return Column(
       children: [
         // Botón Agregar Productos
@@ -485,7 +497,7 @@ class TableView extends StatelessWidget {
             onPressed: () => controller.setCurrentView('menu'),
             icon: const Icon(Icons.add),
             label: Text(
-              'Agregar Productos',
+              'Agregar pedido',
               style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
             ),
             style: ElevatedButton.styleFrom(
@@ -499,8 +511,40 @@ class TableView extends StatelessWidget {
         ),
         const SizedBox(height: 12),
 
+        // Botón de Alerta
+        if (table != null)
+          SizedBox(
+            width: double.infinity,
+            height: isTablet ? 48.0 : 44.0,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                showAlertToKitchenModal(
+                  context,
+                  tableNumber: table.number.toString(),
+                  orderId: 'ORD-${DateTime.now().millisecondsSinceEpoch}',
+                );
+              },
+              icon: Icon(Icons.warning_amber_rounded, color: AppColors.warning),
+              label: Text(
+                'Alerta',
+                style: TextStyle(
+                  fontSize: isTablet ? 16.0 : 14.0,
+                  color: AppColors.warning,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.warning,
+                side: BorderSide(color: AppColors.warning, width: 2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        if (table != null) const SizedBox(height: 12),
+
         // Botones adicionales si hay productos
-        if (controller.getCurrentCart().isNotEmpty) ...[
+        if (controller.getCurrentCart().isNotEmpty && table != null) ...[
           SizedBox(
             width: double.infinity,
             height: isTablet ? 48.0 : 44.0,
@@ -513,7 +557,9 @@ class TableView extends StatelessWidget {
               ),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.primary,
-                side: BorderSide(color: AppColors.primary.withValues(alpha: 0.1)),
+                side: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -525,9 +571,8 @@ class TableView extends StatelessWidget {
             width: double.infinity,
             height: isTablet ? 48.0 : 44.0,
             child: OutlinedButton.icon(
-              onPressed: () {
-                // TODO: Implementar cerrar mesa
-              },
+              onPressed: () =>
+                  _handleCloseTable(context, controller, table),
               icon: const Icon(Icons.receipt),
               label: Text(
                 'Cerrar Mesa',
@@ -535,7 +580,9 @@ class TableView extends StatelessWidget {
               ),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.warning,
-                side: BorderSide(color: AppColors.warning.withValues(alpha: 0.1)),
+                side: BorderSide(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -547,6 +594,53 @@ class TableView extends StatelessWidget {
     );
   }
 
+  void _handleCloseTable(
+    BuildContext context,
+    MeseroController controller,
+    TableModel? table,
+  ) async {
+    if (table == null) return;
+
+    final shouldClose = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Cerrar mesa'),
+            content: Text(
+              'Se eliminarán los pedidos de la mesa ${table.number} y volverá a estar disponible.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.warning,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Cerrar mesa'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!shouldClose) return;
+
+    controller.closeTable(table.id);
+    controller.setCurrentView('floor');
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Mesa ${table.number} cerrada correctamente.'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    }
+  }
+
   Widget _buildOrderHistoryColumn(
     BuildContext context,
     MeseroController controller,
@@ -555,9 +649,9 @@ class TableView extends StatelessWidget {
   ) {
     // Obtener historial real del controller
     final orderHistory = controller.getTableOrderHistory(table.id);
-    
+
     // Si no hay historial, mostrar historial demo inicial
-    final displayHistory = orderHistory.isEmpty 
+    final displayHistory = orderHistory.isEmpty
         ? [
             {
               'id': 'ORD-034',
@@ -579,6 +673,16 @@ class TableView extends StatelessWidget {
             },
           ]
         : orderHistory;
+
+    final normalizedHistory = displayHistory
+        .map<Map<String, dynamic>>(
+          (order) => {
+            ...order,
+            'tableNumber': order['tableNumber'] ?? table.number,
+          },
+        )
+        .toList();
+    final alertCandidate = _findOrderForAlert(normalizedHistory);
 
     return Card(
       elevation: 2,
@@ -620,9 +724,13 @@ class TableView extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.end,
                     children: [
-                      Expanded(
+                      SizedBox(
+                        width: isTablet ? 160 : 150,
                         child: ElevatedButton.icon(
                           onPressed: () => _showCloseAccountDialog(
                             context,
@@ -645,25 +753,55 @@ class TableView extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: () => _showClearHistoryDialog(
-                          context,
-                          controller,
-                          table,
-                          isTablet,
+                      SizedBox(
+                        width: isTablet ? 160 : 150,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _showClearHistoryDialog(
+                            context,
+                            controller,
+                            table,
+                            isTablet,
+                          ),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: Text(
+                            'Limpiar historial',
+                            style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.error,
+                            side: BorderSide(color: AppColors.error),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isTablet ? 12.0 : 8.0,
+                              vertical: isTablet ? 12.0 : 8.0,
+                            ),
+                          ),
                         ),
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        label: Text(
-                          'Limpiar historial',
-                          style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.error,
-                          side: BorderSide(color: AppColors.error),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: isTablet ? 12.0 : 8.0,
-                            vertical: isTablet ? 12.0 : 8.0,
+                      ),
+                      SizedBox(
+                        width: isTablet ? 160 : 150,
+                        child: ElevatedButton.icon(
+                          onPressed: alertCandidate == null
+                              ? null
+                              : () => _showAlertModalForOrder(
+                                  context,
+                                  table,
+                                  alertCandidate,
+                                ),
+                          icon: const Icon(
+                            Icons.notification_important,
+                            size: 18,
+                          ),
+                          label: Text(
+                            'Enviar alerta',
+                            style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isTablet ? 12.0 : 8.0,
+                              vertical: isTablet ? 12.0 : 8.0,
+                            ),
                           ),
                         ),
                       ),
@@ -675,9 +813,14 @@ class TableView extends StatelessWidget {
 
             // Lista de pedidos
             Expanded(
-              child: displayHistory.isEmpty
+              child: normalizedHistory.isEmpty
                   ? _buildEmptyOrderHistory(isTablet, table, controller)
-                  : _buildOrderHistoryList(displayHistory, isTablet),
+                  : _buildOrderHistoryList(
+                      context,
+                      normalizedHistory,
+                      isTablet,
+                      table,
+                    ),
             ),
           ],
         ),
@@ -726,18 +869,28 @@ class TableView extends StatelessWidget {
     );
   }
 
-  Widget _buildOrderHistoryList(List orderHistory, bool isTablet) {
+  Widget _buildOrderHistoryList(
+    BuildContext context,
+    List<Map<String, dynamic>> orderHistory,
+    bool isTablet,
+    TableModel table,
+  ) {
     return ListView.builder(
       padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
       itemCount: orderHistory.length,
       itemBuilder: (context, index) {
         final order = orderHistory[index];
-        return _buildOrderHistoryItem(order, isTablet);
+        return _buildOrderHistoryItem(context, order, isTablet, table);
       },
     );
   }
 
-  Widget _buildOrderHistoryItem(Map order, bool isTablet) {
+  Widget _buildOrderHistoryItem(
+    BuildContext context,
+    Map<String, dynamic> order,
+    bool isTablet,
+    TableModel table,
+  ) {
     final statusColor = _getOrderStatusColor(order['status']);
 
     return Container(
@@ -806,8 +959,65 @@ class TableView extends StatelessWidget {
               ),
             ],
           ),
+          if (_canSendAlertForStatus(order['status'])) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: () => _showAlertModalForOrder(context, table, order),
+                icon: const Icon(Icons.warning_amber_rounded),
+                label: const Text('Enviar alerta'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.warning,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isTablet ? 16.0 : 12.0,
+                    vertical: isTablet ? 10.0 : 8.0,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Map<String, dynamic>? _findOrderForAlert(List<Map<String, dynamic>> history) {
+    if (history.isEmpty) return null;
+
+    final priorityStatuses = ['En preparación', 'Listo', 'Enviado'];
+    for (final status in priorityStatuses) {
+      final match = history.firstWhere(
+        (order) => (order['status'] ?? '').toString() == status,
+        orElse: () => {},
+      );
+      if (match.isNotEmpty) {
+        return match;
+      }
+    }
+    return history.first;
+  }
+
+  bool _canSendAlertForStatus(String? status) {
+    if (status == null) return false;
+    final normalized = status.toLowerCase();
+    return normalized.contains('prepar') ||
+        normalized.contains('listo') ||
+        normalized.contains('enviado') ||
+        normalized.contains('pend');
+  }
+
+  void _showAlertModalForOrder(
+    BuildContext context,
+    TableModel table,
+    Map<String, dynamic> order,
+  ) {
+    final orderId = order['id']?.toString() ?? 'ORD';
+    showAlertToKitchenModal(
+      context,
+      tableNumber: table.number.toString(),
+      orderId: orderId,
     );
   }
 
@@ -948,22 +1158,14 @@ class TableView extends StatelessWidget {
           ElevatedButton(
             onPressed: () {
               final customers = int.tryParse(customersController.text) ?? 0;
-              if (customers >= 0 && customers <= table.seats) {
-                // Actualizar número de comensales
-                final updatedTable = table.copyWith(customers: customers > 0 ? customers : null);
-                controller.changeTableStatus(
-                  table.id,
-                  updatedTable.status,
-                );
-                // Actualizar comensales en el controller
+              if (customers >= 0) {
+                controller.changeTableStatus(table.id, table.status);
                 _updateTableCustomers(controller, table.id, customers);
                 Navigator.of(dialogContext).pop();
               } else {
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'El número de personas debe estar entre 0 y ${table.seats}',
-                    ),
+                  const SnackBar(
+                    content: Text('Ingresa un número válido de personas'),
                     backgroundColor: AppColors.error,
                   ),
                 );
@@ -1083,9 +1285,7 @@ class TableView extends StatelessWidget {
     showDialog(
       context: context,
       builder: (dialogContext) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
           constraints: BoxConstraints(
             maxWidth: isTablet ? 600 : double.infinity,
@@ -1141,7 +1341,7 @@ class TableView extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               // Contenido scrolleable
               Expanded(
                 child: SingleChildScrollView(
@@ -1202,9 +1402,14 @@ class TableView extends StatelessWidget {
                             ),
                           ],
                           rows: cart.map((item) {
-                            final quantity = item.customizations['quantity'] as int? ?? 1;
-                            final sauce = item.customizations['sauce'] as String?;
-                            final extras = item.customizations['extras'] as List<dynamic>? ?? [];
+                            final quantity =
+                                item.customizations['quantity'] as int? ?? 1;
+                            final sauce =
+                                item.customizations['sauce'] as String?;
+                            final extras =
+                                item.customizations['extras']
+                                    as List<dynamic>? ??
+                                [];
                             final unitPrice = item.product.price;
                             final subtotal = unitPrice * quantity;
 
@@ -1217,12 +1422,16 @@ class TableView extends StatelessWidget {
                                     sauce != null
                                         ? sauce.split('(').first.trim()
                                         : (extras.isNotEmpty
-                                            ? extras.join(', ')
-                                            : '-'),
+                                              ? extras.join(', ')
+                                              : '-'),
                                   ),
                                 ),
-                                DataCell(Text('\$${unitPrice.toStringAsFixed(0)}')),
-                                DataCell(Text('\$${subtotal.toStringAsFixed(0)}')),
+                                DataCell(
+                                  Text('\$${unitPrice.toStringAsFixed(0)}'),
+                                ),
+                                DataCell(
+                                  Text('\$${subtotal.toStringAsFixed(0)}'),
+                                ),
                               ],
                             );
                           }).toList(),
@@ -1240,9 +1449,9 @@ class TableView extends StatelessWidget {
                           ),
                         ),
                       ],
-                      
+
                       const SizedBox(height: 24),
-                      
+
                       // Totales
                       Container(
                         padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
@@ -1298,9 +1507,9 @@ class TableView extends StatelessWidget {
                           ],
                         ),
                       ),
-                      
+
                       const SizedBox(height: 16),
-                      
+
                       // Mensaje informativo
                       Container(
                         padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
@@ -1335,7 +1544,7 @@ class TableView extends StatelessWidget {
                   ),
                 ),
               ),
-              
+
               // Botones de acción
               Container(
                 padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
@@ -1416,5 +1625,3 @@ class TableView extends StatelessWidget {
     );
   }
 }
-
-

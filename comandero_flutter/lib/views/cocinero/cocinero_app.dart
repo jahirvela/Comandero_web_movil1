@@ -4,6 +4,7 @@ import '../../controllers/cocinero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
+import '../../widgets/logout_button.dart';
 import '../../services/kitchen_order_service.dart';
 import 'ingredient_consumption_view.dart';
 import 'critical_notes_view.dart';
@@ -16,12 +17,16 @@ class CocineroApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) {
-        final controller = CocineroController();
-        // Registrar controller en el servicio para recibir pedidos
-        KitchenOrderService().registerCocineroController(controller);
-        return controller;
-      })],
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) {
+            final controller = CocineroController();
+            // Registrar controller en el servicio para recibir pedidos
+            KitchenOrderService().registerCocineroController(controller);
+            return controller;
+          },
+        ),
+      ],
       child: Consumer2<CocineroController, AuthController>(
         builder: (context, cocineroController, authController, child) {
           return LayoutBuilder(
@@ -120,16 +125,18 @@ class CocineroApp extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        IconButton(
-          onPressed: () async {
-            await authController.logout();
-            if (context.mounted) {
-              Navigator.of(context).pushReplacementNamed('/login');
-            }
-          },
-          icon: Icon(Icons.logout, size: isTablet ? 24.0 : 20.0),
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: LogoutButton(
+            isTablet: isTablet,
+            onPressed: () async {
+              await authController.logout();
+              if (context.mounted) {
+                Navigator.of(context).pushReplacementNamed('/login');
+              }
+            },
+          ),
         ),
-        const SizedBox(width: 8),
       ],
       backgroundColor: Colors.white,
       foregroundColor: AppColors.textPrimary,
@@ -367,17 +374,11 @@ class CocineroApp extends StatelessWidget {
                       ),
                       const SizedBox(width: 16),
                       Expanded(
-                        child: _buildShowFilter(
-                          cocineroController,
-                          isTablet,
-                        ),
+                        child: _buildShowFilter(cocineroController, isTablet),
                       ),
                       const SizedBox(width: 16),
                       Expanded(
-                        child: _buildAlertFilter(
-                          cocineroController,
-                          isTablet,
-                        ),
+                        child: _buildAlertFilter(cocineroController, isTablet),
                       ),
                     ],
                   );
@@ -580,18 +581,12 @@ class CocineroApp extends StatelessWidget {
                 }
               },
               items: [
-                DropdownMenuItem(
-                  value: 'todos',
-                  child: Text('Todos'),
-                ),
+                DropdownMenuItem(value: 'todos', child: Text('Todos')),
                 DropdownMenuItem(
                   value: 'para_llevar',
                   child: Text('Solo para llevar'),
                 ),
-                DropdownMenuItem(
-                  value: 'mesas',
-                  child: Text('Mesas'),
-                ),
+                DropdownMenuItem(value: 'mesas', child: Text('Mesas')),
               ],
             ),
           ),
@@ -634,22 +629,13 @@ class CocineroApp extends StatelessWidget {
                 }
               },
               items: [
-                DropdownMenuItem(
-                  value: 'todas',
-                  child: Text('Todas'),
-                ),
-                DropdownMenuItem(
-                  value: 'demoras',
-                  child: Text('Demoras'),
-                ),
+                DropdownMenuItem(value: 'todas', child: Text('Todas')),
+                DropdownMenuItem(value: 'demoras', child: Text('Demoras')),
                 DropdownMenuItem(
                   value: 'canceladas',
                   child: Text('Canceladas'),
                 ),
-                DropdownMenuItem(
-                  value: 'cambios',
-                  child: Text('Cambios'),
-                ),
+                DropdownMenuItem(value: 'cambios', child: Text('Cambios')),
               ],
             ),
           ),
@@ -738,7 +724,7 @@ class CocineroApp extends StatelessWidget {
       return _buildEmptyOrders(isTablet);
     }
 
-    // Para desktop mostrar en grid de columnas, para móvil/tablet en lista vertical
+    // Para desktop mostrar en tarjetas ajustables tipo wrap; móvil/tablet lista vertical
     if (isDesktop) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -754,44 +740,58 @@ class CocineroApp extends StatelessWidget {
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
-              final crossAxisCount = (constraints.maxWidth / 400).floor().clamp(1, 4);
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  childAspectRatio: 0.85,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                ),
-                itemCount: orders.length,
-                itemBuilder: (context, index) {
-                  return _buildOrderCard(context, orders[index], controller, isTablet);
-                },
+              const spacing = 16.0;
+              const maxItemWidth = 360.0;
+              final availableWidth = constraints.maxWidth;
+              final crossAxisCount = (availableWidth / (maxItemWidth + spacing))
+                  .floor()
+                  .clamp(1, 4);
+              final spacingTotal =
+                  spacing * (crossAxisCount > 1 ? crossAxisCount - 1 : 0);
+              final itemWidth =
+                  (availableWidth - spacingTotal) / crossAxisCount;
+
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: orders
+                    .map(
+                      (order) => SizedBox(
+                        width: itemWidth,
+                        child: _buildOrderCard(
+                          context,
+                          order,
+                          controller,
+                          isTablet,
+                          withBottomMargin: false,
+                        ),
+                      ),
+                    )
+                    .toList(),
               );
             },
           ),
         ],
       );
-    } else {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Pedidos (${orders.length})',
-            style: TextStyle(
-              fontSize: isTablet ? 20.0 : 18.0,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 16),
-          ...orders.map(
-            (order) => _buildOrderCard(context, order, controller, isTablet),
-          ),
-        ],
-      );
     }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Pedidos (${orders.length})',
+          style: TextStyle(
+            fontSize: isTablet ? 20.0 : 18.0,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 16),
+        ...orders.map(
+          (order) => _buildOrderCard(context, order, controller, isTablet),
+        ),
+      ],
+    );
   }
 
   Widget _buildEmptyOrders(bool isTablet) {
@@ -837,8 +837,9 @@ class CocineroApp extends StatelessWidget {
     BuildContext context,
     OrderModel order,
     CocineroController controller,
-    bool isTablet,
-  ) {
+    bool isTablet, {
+    bool withBottomMargin = true,
+  }) {
     final statusColor = controller.getStatusColor(order.status);
     final elapsedTime = controller.formatElapsedTime(order.orderTime);
 
@@ -853,12 +854,14 @@ class CocineroApp extends StatelessWidget {
     }
 
     return Card(
-      margin: EdgeInsets.only(bottom: isTablet ? 20.0 : 16.0),
+      margin: EdgeInsets.only(
+        bottom: withBottomMargin ? (isTablet ? 20.0 : 16.0) : 0,
+      ),
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: order.priority == OrderPriority.alta 
+          color: order.priority == OrderPriority.alta
               ? Colors.red.withValues(alpha: 0.5)
               : statusColor.withValues(alpha: 0.3),
           width: 2,
@@ -883,16 +886,16 @@ class CocineroApp extends StatelessWidget {
                 Row(
                   children: [
                     _buildStatusBadge(
-                      order.priority == OrderPriority.alta ? 'URGENTE' : 'Normal',
-                      order.priority == OrderPriority.alta ? Colors.red : Colors.blue,
+                      order.priority == OrderPriority.alta
+                          ? 'URGENTE'
+                          : 'Normal',
+                      order.priority == OrderPriority.alta
+                          ? Colors.red
+                          : Colors.blue,
                       isTablet,
                     ),
                     const SizedBox(width: 8),
-                    _buildStatusBadge(
-                      statusText,
-                      statusColor,
-                      isTablet,
-                    ),
+                    _buildStatusBadge(statusText, statusColor, isTablet),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -907,7 +910,9 @@ class CocineroApp extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            order.isTakeaway ? 'Para llevar' : 'Mesa ${order.tableNumber}',
+                            order.isTakeaway
+                                ? 'Para llevar'
+                                : 'Mesa ${order.tableNumber}',
                             style: TextStyle(
                               fontSize: isTablet ? 16.0 : 14.0,
                               fontWeight: FontWeight.w600,
@@ -940,7 +945,11 @@ class CocineroApp extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.check_circle, size: 14, color: Colors.blue),
+                                Icon(
+                                  Icons.check_circle,
+                                  size: 14,
+                                  color: Colors.blue,
+                                ),
                                 const SizedBox(width: 4),
                                 Text(
                                   'Solo para llevar - ${order.customerName ?? ''}',
@@ -1013,7 +1022,12 @@ class CocineroApp extends StatelessWidget {
                     const SizedBox(width: 8),
                     InkWell(
                       onTap: () {
-                        _showEditTimeDialog(context, order, controller, isTablet);
+                        _showEditTimeDialog(
+                          context,
+                          order,
+                          controller,
+                          isTablet,
+                        );
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -1030,7 +1044,11 @@ class CocineroApp extends StatelessWidget {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.access_time, size: 16, color: Colors.blue),
+                            Icon(
+                              Icons.access_time,
+                              size: 16,
+                              color: Colors.blue,
+                            ),
                             const SizedBox(width: 4),
                             Text(
                               '${order.estimatedTime} min',
@@ -1049,11 +1067,9 @@ class CocineroApp extends StatelessWidget {
                 const SizedBox(height: 16),
 
                 // Items del pedido
-                ...order.items.map((item) => _buildOrderItem(
-                  item, 
-                  controller, 
-                  isTablet,
-                )),
+                ...order.items.map(
+                  (item) => _buildOrderItem(item, controller, isTablet),
+                ),
                 const SizedBox(height: 16),
 
                 // Botones de acción
@@ -1075,10 +1091,7 @@ class CocineroApp extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: color.withValues(alpha: 0.4),
-          width: 1.5,
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.4), width: 1.5),
       ),
       child: Text(
         text,
@@ -1097,7 +1110,7 @@ class CocineroApp extends StatelessWidget {
     bool isTablet,
   ) {
     final isCritical = controller.isCriticalNote(item.notes);
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
@@ -1105,7 +1118,7 @@ class CocineroApp extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isCritical 
+          color: isCritical
               ? AppColors.error.withValues(alpha: 0.3)
               : AppColors.primary.withValues(alpha: 0.1),
           width: isCritical ? 2 : 1,
@@ -1191,7 +1204,10 @@ class CocineroApp extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.error,
                     borderRadius: BorderRadius.circular(4),
@@ -1244,9 +1260,7 @@ class CocineroApp extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.yellow.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: Colors.yellow.withValues(alpha: 0.3),
-          ),
+          border: Border.all(color: Colors.yellow.withValues(alpha: 0.3)),
         ),
         child: Row(
           children: [
@@ -1319,7 +1333,7 @@ class CocineroApp extends StatelessWidget {
                     ? OrderStatus.listoParaRecoger
                     : OrderStatus.listo;
                 controller.updateOrderStatus(order.id, newStatus);
-                
+
                 // Notificar al mesero que el pedido está listo
                 final service = KitchenOrderService();
                 service.notifyOrderReady(
@@ -1328,7 +1342,7 @@ class CocineroApp extends StatelessWidget {
                   tableNumber: order.tableNumber,
                   customerName: order.customerName,
                 );
-                
+
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
@@ -1355,7 +1369,7 @@ class CocineroApp extends StatelessWidget {
             ),
           ),
         ] else if (order.status == OrderStatus.listo ||
-                   order.status == OrderStatus.listoParaRecoger) ...[
+            order.status == OrderStatus.listoParaRecoger) ...[
           Expanded(
             child: ElevatedButton.icon(
               onPressed: null,
@@ -1409,9 +1423,7 @@ class CocineroApp extends StatelessWidget {
     showDialog(
       context: context,
       builder: (dialogContext) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
           constraints: BoxConstraints(
             maxWidth: isTablet ? 600 : double.infinity,
@@ -1467,7 +1479,7 @@ class CocineroApp extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               // Contenido scrolleable
               Expanded(
                 child: SingleChildScrollView(
@@ -1498,7 +1510,7 @@ class CocineroApp extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      
+
                       if (order.isTakeaway) ...[
                         _buildDetailItem(
                           'Para Llevar',
@@ -1516,7 +1528,7 @@ class CocineroApp extends StatelessWidget {
                         ),
                         const SizedBox(height: 16),
                       ],
-                      
+
                       Row(
                         children: [
                           Expanded(
@@ -1539,7 +1551,7 @@ class CocineroApp extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      
+
                       _buildDetailItem(
                         'Mesero',
                         order.waiter,
@@ -1547,7 +1559,7 @@ class CocineroApp extends StatelessWidget {
                         isTablet,
                       ),
                       const SizedBox(height: 24),
-                      
+
                       // Items del pedido
                       Text(
                         'Items del Pedido',
@@ -1558,110 +1570,120 @@ class CocineroApp extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      ...order.items.map((item) => Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: AppColors.primary.withValues(alpha: 0.1),
+                      ...order.items.map(
+                        (item) => Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: AppColors.primary.withValues(alpha: 0.1),
+                            ),
                           ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary.withValues(
+                                        alpha: 0.1,
+                                      ),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      '${item.quantity}x',
+                                      style: TextStyle(
+                                        fontSize: isTablet ? 14.0 : 12.0,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
                                   ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      item.name,
+                                      style: TextStyle(
+                                        fontSize: isTablet ? 16.0 : 14.0,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.secondary,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      KitchenStation.getStationName(
+                                        item.station,
+                                      ),
+                                      style: TextStyle(
+                                        fontSize: isTablet ? 10.0 : 8.0,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (item.notes.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: EdgeInsets.all(isTablet ? 8.0 : 6.0),
                                   decoration: BoxDecoration(
-                                    color: AppColors.primary.withValues(alpha: 0.1),
+                                    color: AppColors.warning.withValues(
+                                      alpha: 0.1,
+                                    ),
                                     borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    '${item.quantity}x',
-                                    style: TextStyle(
-                                      fontSize: isTablet ? 14.0 : 12.0,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.primary,
+                                    border: Border.all(
+                                      color: AppColors.warning.withValues(
+                                        alpha: 0.2,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    item.name,
-                                    style: TextStyle(
-                                      fontSize: isTablet ? 16.0 : 14.0,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.textPrimary,
-                                    ),
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.secondary,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    KitchenStation.getStationName(item.station),
-                                    style: TextStyle(
-                                      fontSize: isTablet ? 10.0 : 8.0,
-                                      color: AppColors.textSecondary,
-                                    ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.note,
+                                        size: isTablet ? 14.0 : 12.0,
+                                        color: AppColors.warning,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          item.notes,
+                                          style: TextStyle(
+                                            fontSize: isTablet ? 12.0 : 10.0,
+                                            color: AppColors.textSecondary,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
-                            ),
-                            if (item.notes.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: EdgeInsets.all(isTablet ? 8.0 : 6.0),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warning.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
-                                    color: AppColors.warning.withValues(alpha: 0.2),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.note,
-                                      size: isTablet ? 14.0 : 12.0,
-                                      color: AppColors.warning,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        item.notes,
-                                        style: TextStyle(
-                                          fontSize: isTablet ? 12.0 : 10.0,
-                                          color: AppColors.textSecondary,
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
                             ],
-                          ],
+                          ),
                         ),
-                      )),
+                      ),
                     ],
                   ),
                 ),
               ),
-              
+
               // Footer con acciones
               Container(
                 padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
@@ -1672,7 +1694,12 @@ class CocineroApp extends StatelessWidget {
                     bottomRight: Radius.circular(16),
                   ),
                 ),
-                child: _buildActionButtons(context, order, controller, isTablet),
+                child: _buildActionButtons(
+                  context,
+                  order,
+                  controller,
+                  isTablet,
+                ),
               ),
             ],
           ),
@@ -1964,9 +1991,7 @@ class CocineroApp extends StatelessWidget {
               : AppColors.surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected
-                ? AppColors.primary
-                : AppColors.border,
+            color: isSelected ? AppColors.primary : AppColors.border,
             width: isSelected ? 2 : 1,
           ),
         ),

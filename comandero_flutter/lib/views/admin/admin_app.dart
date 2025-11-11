@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../../controllers/admin_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../controllers/cocinero_controller.dart';
 import '../../models/admin_model.dart';
 import '../../models/order_model.dart';
 import '../../models/payment_model.dart' as payment_models;
+import '../../services/payment_repository.dart';
 import '../../utils/app_colors.dart';
+import '../../widgets/logout_button.dart';
 import '../../utils/app_theme.dart';
 import '../cocinero/order_detail_modal.dart';
 
@@ -17,7 +20,11 @@ class AdminApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AdminController()),
+        ChangeNotifierProvider(
+          create: (context) => AdminController(
+            paymentRepository: context.read<PaymentRepository>(),
+          ),
+        ),
         ChangeNotifierProvider(create: (_) => CocineroController()),
       ],
       child: Consumer3<AdminController, AuthController, CocineroController>(
@@ -128,16 +135,18 @@ class AdminApp extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        IconButton(
-          onPressed: () async {
-            await authController.logout();
-            if (context.mounted) {
-              Navigator.of(context).pushReplacementNamed('/login');
-            }
-          },
-          icon: Icon(Icons.logout, size: isTablet ? 24.0 : 20.0),
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: LogoutButton(
+            isTablet: isTablet,
+            onPressed: () async {
+              await authController.logout();
+              if (context.mounted) {
+                Navigator.of(context).pushReplacementNamed('/login');
+              }
+            },
+          ),
         ),
-        const SizedBox(width: 8),
       ],
       backgroundColor: Colors.white,
       foregroundColor: AppColors.textPrimary,
@@ -248,6 +257,10 @@ class AdminApp extends StatelessWidget {
               color: AppColors.textPrimary,
             ),
           ),
+          SizedBox(height: AppTheme.spacingLG),
+
+          // Resumen general del puesto
+          _buildGeneralSummarySection(context, adminController, isTablet),
           SizedBox(height: AppTheme.spacingXL),
 
           // Consumo del Día con Filtros
@@ -268,6 +281,100 @@ class AdminApp extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildGeneralSummarySection(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final cards = _getGeneralSummaryCards();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLG),
+        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.15)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(
+          isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Resumen general del puesto de barbacoa',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: AppTheme.fontWeightBold,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            SizedBox(height: AppTheme.spacingLG),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final maxWidth = constraints.maxWidth;
+                final cardWidth = isTablet ? 220.0 : 200.0;
+                final spacing = AppTheme.spacingMD;
+                final crossAxisCount = (maxWidth / (cardWidth + spacing))
+                    .floor()
+                    .clamp(1, 4);
+                final itemWidth =
+                    (maxWidth -
+                        spacing *
+                            (crossAxisCount > 1 ? crossAxisCount - 1 : 0)) /
+                    crossAxisCount;
+
+                return Wrap(
+                  spacing: spacing,
+                  runSpacing: spacing,
+                  children: [
+                    for (final card in cards)
+                      SizedBox(
+                        width: itemWidth,
+                        child: _SummaryCard(card: card, isTablet: isTablet),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<_SummaryCardData> _getGeneralSummaryCards() {
+    return [
+      _SummaryCardData(
+        title: 'Ventas del Día',
+        value: '\$3,250',
+        subtitle: '+12.5% vs ayer',
+        color: AppColors.success,
+        icon: Icons.trending_up,
+      ),
+      _SummaryCardData(
+        title: 'Órdenes Activas',
+        value: '8',
+        subtitle: '3 en cocina',
+        color: AppColors.info,
+        icon: Icons.receipt_long,
+      ),
+      _SummaryCardData(
+        title: 'Mesas Ocupadas',
+        value: '5/8',
+        subtitle: '62.5% ocupación',
+        color: AppColors.warning,
+        icon: Icons.table_restaurant,
+      ),
+      _SummaryCardData(
+        title: 'Stock Crítico',
+        value: '2',
+        subtitle: 'Carnitas, Tortillas',
+        color: AppColors.error,
+        icon: Icons.warning_amber,
+      ),
+    ];
   }
 
   // Sección de Consumo del Día
@@ -307,6 +414,10 @@ class AdminApp extends StatelessWidget {
             ),
             SizedBox(height: AppTheme.spacingLG),
 
+            // Tarjetas de consumo
+            _buildDailyConsumptionCards(context, controller, isTablet),
+            SizedBox(height: AppTheme.spacingLG),
+
             // Tabla de consumo
             _buildConsumptionTable(context, controller, isTablet, isDesktop),
           ],
@@ -328,35 +439,39 @@ class AdminApp extends StatelessWidget {
     ];
 
     return Row(
-      children: filterOptions.map((filter) {
-        final isSelected =
-            controller.selectedConsumptionFilter == filter['value'];
-        return Padding(
-          padding: EdgeInsets.only(right: AppTheme.spacingSM),
-          child: FilterChip(
-            label: Text(
-              filter['label']!,
-              style: TextStyle(
-                fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
-                fontWeight: isSelected
-                    ? AppTheme.fontWeightSemibold
-                    : AppTheme.fontWeightNormal,
+      children: [
+        for (final filter in filterOptions)
+          Padding(
+            padding: EdgeInsets.only(right: AppTheme.spacingSM),
+            child: FilterChip(
+              label: Text(
+                filter['label']!,
+                style: TextStyle(
+                  fontSize: isTablet
+                      ? AppTheme.fontSizeSM
+                      : AppTheme.fontSizeXS,
+                  fontWeight:
+                      controller.selectedConsumptionFilter == filter['value']
+                      ? AppTheme.fontWeightSemibold
+                      : AppTheme.fontWeightNormal,
+                ),
+              ),
+              selected: controller.selectedConsumptionFilter == filter['value'],
+              onSelected: (selected) {
+                if (selected) {
+                  controller.setSelectedConsumptionFilter(filter['value']!);
+                }
+              },
+              selectedColor: AppColors.primary,
+              checkmarkColor: Colors.white,
+              labelStyle: TextStyle(
+                color: controller.selectedConsumptionFilter == filter['value']
+                    ? Colors.white
+                    : AppColors.textPrimary,
               ),
             ),
-            selected: isSelected,
-            onSelected: (selected) {
-              if (selected) {
-                controller.setSelectedConsumptionFilter(filter['value']!);
-              }
-            },
-            selectedColor: AppColors.primary,
-            checkmarkColor: Colors.white,
-            labelStyle: TextStyle(
-              color: isSelected ? Colors.white : AppColors.textPrimary,
-            ),
           ),
-        );
-      }).toList(),
+      ],
     );
   }
 
@@ -367,14 +482,14 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
-    final orders = controller.filteredDailyConsumption;
+    final records = _buildConsumptionRecords(controller);
 
-    if (orders.isEmpty) {
+    if (records.isEmpty) {
       return Container(
         padding: EdgeInsets.all(AppTheme.spacingXL),
         child: Center(
           child: Text(
-            'No hay consumo registrado para el filtro seleccionado',
+            'No hay pagos registrados para el filtro seleccionado',
             style: Theme.of(
               context,
             ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
@@ -387,40 +502,31 @@ class AdminApp extends StatelessWidget {
       return SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: DataTable(
-          headingRowColor: WidgetStateProperty.all(
-            AppColors.primary.withValues(alpha: 0.1),
-          ),
+          columnSpacing: 32,
+          horizontalMargin: 16,
+          headingRowHeight: 48,
+          dataRowMinHeight: 52,
+          dataRowMaxHeight: 68,
           columns: [
             DataColumn(
               label: Text(
                 'ID',
                 style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
+                  fontWeight: AppTheme.fontWeightSemibold,
                 ),
               ),
             ),
             DataColumn(
               label: Text(
-                'Tipo',
+                'Origen',
                 style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
-                ),
-              ),
-            ),
-            DataColumn(
-              label: Text(
-                'Mesa/Cliente',
-                style: TextStyle(
                   fontWeight: AppTheme.fontWeightSemibold,
-                  fontSize: isTablet
-                      ? AppTheme.fontSizeSM
-                      : AppTheme.fontSizeXS,
                 ),
               ),
             ),
@@ -428,32 +534,32 @@ class AdminApp extends StatelessWidget {
               label: Text(
                 'Productos',
                 style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
+                  fontWeight: AppTheme.fontWeightSemibold,
                 ),
               ),
             ),
             DataColumn(
               label: Text(
-                'Mesero',
+                'Total',
                 style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
+                  fontWeight: AppTheme.fontWeightSemibold,
                 ),
               ),
             ),
             DataColumn(
               label: Text(
-                'Hora',
+                'Método de pago',
                 style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
+                  fontWeight: AppTheme.fontWeightSemibold,
                 ),
               ),
             ),
@@ -461,20 +567,31 @@ class AdminApp extends StatelessWidget {
               label: Text(
                 'Estado',
                 style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
+                  fontWeight: AppTheme.fontWeightSemibold,
+                ),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'Hora',
+                style: TextStyle(
+                  fontSize: isTablet
+                      ? AppTheme.fontSizeSM
+                      : AppTheme.fontSizeXS,
+                  fontWeight: AppTheme.fontWeightSemibold,
                 ),
               ),
             ),
           ],
-          rows: orders.map((order) {
+          rows: records.map((record) {
             return DataRow(
               cells: [
                 DataCell(
                   Text(
-                    order.id,
+                    record.id,
                     style: TextStyle(
                       fontSize: isTablet
                           ? AppTheme.fontSizeSM
@@ -485,13 +602,13 @@ class AdminApp extends StatelessWidget {
                 DataCell(
                   Chip(
                     label: Text(
-                      order.isTakeaway ? 'Para llevar' : 'Mesa',
+                      record.originLabel,
                       style: TextStyle(
                         fontSize: isTablet ? AppTheme.fontSizeXS : 10,
                         color: Colors.white,
                       ),
                     ),
-                    backgroundColor: order.isTakeaway
+                    backgroundColor: record.isTakeaway
                         ? Colors.blue
                         : Colors.green,
                     padding: EdgeInsets.symmetric(
@@ -501,10 +618,20 @@ class AdminApp extends StatelessWidget {
                   ),
                 ),
                 DataCell(
+                  SizedBox(
+                    width: 240,
+                    child: Text(
+                      record.products.isEmpty
+                          ? 'Sin detalles'
+                          : record.products.join(', '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                DataCell(
                   Text(
-                    order.isTakeaway
-                        ? (order.customerName ?? 'Cliente')
-                        : 'Mesa ${order.tableNumber}',
+                    record.total,
                     style: TextStyle(
                       fontSize: isTablet
                           ? AppTheme.fontSizeSM
@@ -514,22 +641,18 @@ class AdminApp extends StatelessWidget {
                 ),
                 DataCell(
                   Text(
-                    order.items
-                        .map((item) => '${item.quantity}x ${item.name}')
-                        .join(', '),
+                    record.paymentMethod,
                     style: TextStyle(
                       fontSize: isTablet
                           ? AppTheme.fontSizeSM
                           : AppTheme.fontSizeXS,
-                      color: AppColors.textSecondary,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                DataCell(_buildConsumptionStatusChip(record.status, isTablet)),
                 DataCell(
                   Text(
-                    order.waiter,
+                    record.time,
                     style: TextStyle(
                       fontSize: isTablet
                           ? AppTheme.fontSizeSM
@@ -537,17 +660,6 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                 ),
-                DataCell(
-                  Text(
-                    '${order.orderTime.hour.toString().padLeft(2, '0')}:${order.orderTime.minute.toString().padLeft(2, '0')}',
-                    style: TextStyle(
-                      fontSize: isTablet
-                          ? AppTheme.fontSizeSM
-                          : AppTheme.fontSizeXS,
-                    ),
-                  ),
-                ),
-                DataCell(_buildOrderStatusChip(order.status, isTablet)),
               ],
             );
           }).toList(),
@@ -556,7 +668,7 @@ class AdminApp extends StatelessWidget {
     } else {
       // Vista móvil - lista de tarjetas
       return Column(
-        children: orders.map((order) {
+        children: records.map((record) {
           return Card(
             margin: EdgeInsets.only(bottom: AppTheme.spacingMD),
             child: Padding(
@@ -568,12 +680,12 @@ class AdminApp extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        order.id,
+                        record.id,
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: AppTheme.fontWeightBold,
                         ),
                       ),
-                      _buildOrderStatusChip(order.status, isTablet),
+                      _buildConsumptionStatusChip(record.status, isTablet),
                     ],
                   ),
                   SizedBox(height: AppTheme.spacingSM),
@@ -581,37 +693,47 @@ class AdminApp extends StatelessWidget {
                     children: [
                       Chip(
                         label: Text(
-                          order.isTakeaway
-                              ? 'Para llevar'
-                              : 'Mesa ${order.tableNumber}',
+                          record.originLabel,
                           style: TextStyle(
                             fontSize: AppTheme.fontSizeXS,
                             color: Colors.white,
                           ),
                         ),
-                        backgroundColor: order.isTakeaway
+                        backgroundColor: record.isTakeaway
                             ? Colors.blue
                             : Colors.green,
                       ),
                       SizedBox(width: AppTheme.spacingSM),
                       Text(
-                        order.waiter,
+                        record.waiter,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
                   ),
                   SizedBox(height: AppTheme.spacingSM),
                   Text(
-                    order.items
-                        .map((item) => '${item.quantity}x ${item.name}')
-                        .join(', '),
+                    record.products.join(', '),
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.textSecondary,
                     ),
                   ),
                   SizedBox(height: AppTheme.spacingSM),
                   Text(
-                    'Hora: ${order.orderTime.hour.toString().padLeft(2, '0')}:${order.orderTime.minute.toString().padLeft(2, '0')}',
+                    'Total: ${record.total}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingXS),
+                  Text(
+                    'Método de pago: ${record.paymentMethod}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingXS),
+                  Text(
+                    'Hora: ${record.time}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.textSecondary,
                     ),
@@ -626,31 +748,27 @@ class AdminApp extends StatelessWidget {
   }
 
   // Chip de estado de orden
-  Widget _buildOrderStatusChip(String status, bool isTablet) {
+  Widget _buildConsumptionStatusChip(String status, bool isTablet) {
+    final normalized = status.toLowerCase();
     Color color;
-    String text;
 
-    switch (status) {
-      case OrderStatus.pendiente:
-        color = Colors.orange;
-        text = 'Pendiente';
-        break;
-      case OrderStatus.enPreparacion:
-        color = Colors.blue;
-        text = 'En Preparación';
-        break;
-      case OrderStatus.listo:
+    switch (normalized) {
+      case 'cobrado':
         color = Colors.green;
-        text = 'Listo';
+        break;
+      case 'pendiente':
+        color = Colors.orange;
+        break;
+      case 'listo':
+        color = Colors.blue;
         break;
       default:
         color = Colors.grey;
-        text = status;
     }
 
     return Chip(
       label: Text(
-        text,
+        status,
         style: TextStyle(
           fontSize: isTablet ? AppTheme.fontSizeXS : 10,
           color: Colors.white,
@@ -739,6 +857,7 @@ class AdminApp extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.all(AppTheme.spacingMD),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
@@ -779,14 +898,16 @@ class AdminApp extends StatelessWidget {
             ],
             if (table.waiter != null) ...[
               SizedBox(height: AppTheme.spacingXS),
-              Text(
-                table.waiter!,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.textSecondary,
-                  fontSize: isTablet ? AppTheme.fontSizeXS : 10,
+              Flexible(
+                child: Text(
+                  table.waiter!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                    fontSize: isTablet ? AppTheme.fontSizeXS : 10,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ],
           ],
@@ -926,8 +1047,8 @@ class AdminApp extends StatelessWidget {
           ),
         ),
         SizedBox(height: AppTheme.spacingSM),
-        ...items.take(5).map((item) {
-          return Padding(
+        for (final item in items.take(5))
+          Padding(
             padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
             child: Row(
               children: [
@@ -962,8 +1083,7 @@ class AdminApp extends StatelessWidget {
                 ),
               ],
             ),
-          );
-        }).toList(),
+          ),
         if (items.length > 5)
           Padding(
             padding: EdgeInsets.only(top: AppTheme.spacingSM),
@@ -1075,31 +1195,33 @@ class AdminApp extends StatelessWidget {
     return Wrap(
       spacing: AppTheme.spacingSM,
       runSpacing: AppTheme.spacingSM,
-      children: filterOptions.map((filter) {
-        final isSelected = controller.selectedTableArea == filter['value'];
-        return FilterChip(
-          label: Text(
-            filter['label']!,
-            style: TextStyle(
-              fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
-              fontWeight: isSelected
-                  ? AppTheme.fontWeightSemibold
-                  : AppTheme.fontWeightNormal,
+      children: [
+        for (final filter in filterOptions)
+          FilterChip(
+            label: Text(
+              filter['label']!,
+              style: TextStyle(
+                fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
+                fontWeight: controller.selectedTableArea == filter['value']
+                    ? AppTheme.fontWeightSemibold
+                    : AppTheme.fontWeightNormal,
+              ),
+            ),
+            selected: controller.selectedTableArea == filter['value'],
+            onSelected: (selected) {
+              if (selected) {
+                controller.setSelectedTableArea(filter['value']!);
+              }
+            },
+            selectedColor: AppColors.primary,
+            checkmarkColor: Colors.white,
+            labelStyle: TextStyle(
+              color: controller.selectedTableArea == filter['value']
+                  ? Colors.white
+                  : AppColors.textPrimary,
             ),
           ),
-          selected: isSelected,
-          onSelected: (selected) {
-            if (selected) {
-              controller.setSelectedTableArea(filter['value']!);
-            }
-          },
-          selectedColor: AppColors.primary,
-          checkmarkColor: Colors.white,
-          labelStyle: TextStyle(
-            color: isSelected ? Colors.white : AppColors.textPrimary,
-          ),
-        );
-      }).toList(),
+      ],
     );
   }
 
@@ -1134,13 +1256,34 @@ class AdminApp extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = constraints.maxWidth > 600 ? 4 : 2;
+        // Responsivo: más columnas en pantallas grandes
+        int crossAxisCount;
+        double childAspectRatio;
+
+        if (constraints.maxWidth > 1200) {
+          // Desktop grande
+          crossAxisCount = 5;
+          childAspectRatio = 0.75;
+        } else if (constraints.maxWidth > 900) {
+          // Desktop/Tablet grande
+          crossAxisCount = 4;
+          childAspectRatio = 0.72;
+        } else if (constraints.maxWidth > 600) {
+          // Tablet
+          crossAxisCount = 3;
+          childAspectRatio = 0.70;
+        } else {
+          // Mobile
+          crossAxisCount = 2;
+          childAspectRatio = 0.68;
+        }
+
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            childAspectRatio: 0.85,
+            childAspectRatio: childAspectRatio,
             crossAxisSpacing: AppTheme.spacingMD,
             mainAxisSpacing: AppTheme.spacingMD,
           ),
@@ -1166,18 +1309,48 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    final statusColor = TableStatus.getStatusColor(table.status);
+    Color backgroundColor;
+    Color textColor;
+
+    switch (table.status) {
+      case TableStatus.libre:
+        backgroundColor = Colors.green.shade700;
+        textColor = Colors.white;
+        break;
+      case TableStatus.ocupada:
+        backgroundColor = Colors.red.shade700;
+        textColor = Colors.white;
+        break;
+      case TableStatus.reservada:
+        backgroundColor = Colors.yellow.shade700;
+        textColor = Colors.black87;
+        break;
+      case TableStatus.enLimpieza:
+        backgroundColor = Colors.orange.shade700;
+        textColor = Colors.white;
+        break;
+      default:
+        backgroundColor = Colors.grey.shade700;
+        textColor = Colors.white;
+    }
+
     final sectionText = table.section == 'area_principal'
         ? 'Área Principal'
         : table.section == 'area_lateral'
         ? 'Área Lateral'
         : 'Sin sección';
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
+    return Container(
+      decoration: BoxDecoration(
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-        side: BorderSide(color: statusColor.withValues(alpha: 0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: backgroundColor.withValues(alpha: 0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Padding(
         padding: EdgeInsets.all(
@@ -1190,10 +1363,13 @@ class AdminApp extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Mesa ${table.number}',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: AppTheme.fontWeightBold,
+                Expanded(
+                  child: Text(
+                    'Mesa ${table.number}',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: AppTheme.fontWeightBold,
+                      color: textColor,
+                    ),
                   ),
                 ),
                 Row(
@@ -1201,7 +1377,7 @@ class AdminApp extends StatelessWidget {
                   children: [
                     IconButton(
                       icon: Icon(Icons.edit, size: isTablet ? 20 : 18),
-                      color: AppColors.primary,
+                      color: textColor,
                       onPressed: () => _showEditTableModal(
                         context,
                         table,
@@ -1214,7 +1390,7 @@ class AdminApp extends StatelessWidget {
                     SizedBox(width: AppTheme.spacingXS),
                     IconButton(
                       icon: Icon(Icons.delete, size: isTablet ? 20 : 18),
-                      color: Colors.red,
+                      color: textColor,
                       onPressed: () =>
                           _showDeleteTableDialog(context, table, controller),
                       padding: EdgeInsets.zero,
@@ -1227,61 +1403,96 @@ class AdminApp extends StatelessWidget {
             SizedBox(height: AppTheme.spacingSM),
 
             // Sección
-            Chip(
-              label: Text(
-                sectionText,
-                style: TextStyle(
-                  fontSize: isTablet ? AppTheme.fontSizeXS : 10,
-                  color: Colors.white,
-                ),
-              ),
-              backgroundColor: AppColors.secondary,
+            Container(
               padding: EdgeInsets.symmetric(
                 horizontal: AppTheme.spacingSM,
                 vertical: AppTheme.spacingXS,
+              ),
+              decoration: BoxDecoration(
+                color: textColor.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSM),
+              ),
+              child: Text(
+                sectionText,
+                style: TextStyle(
+                  fontSize: isTablet ? AppTheme.fontSizeXS : 10,
+                  color: textColor,
+                  fontWeight: AppTheme.fontWeightSemibold,
+                ),
               ),
             ),
             SizedBox(height: AppTheme.spacingSM),
 
             // Estado con dropdown
-            DropdownButtonFormField<String>(
-              value: table.status,
-              decoration: InputDecoration(
-                labelText: 'Estado',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                ),
-                filled: true,
-                fillColor: statusColor.withValues(alpha: 0.1),
+            Container(
+              decoration: BoxDecoration(
+                color: textColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(AppTheme.radiusMD),
               ),
-              items: [
-                DropdownMenuItem(
-                  value: TableStatus.libre,
-                  child: Text(TableStatus.getStatusText(TableStatus.libre)),
-                ),
-                DropdownMenuItem(
-                  value: TableStatus.ocupada,
-                  child: Text(TableStatus.getStatusText(TableStatus.ocupada)),
-                ),
-                DropdownMenuItem(
-                  value: TableStatus.reservada,
-                  child: Text(TableStatus.getStatusText(TableStatus.reservada)),
-                ),
-                DropdownMenuItem(
-                  value: TableStatus.enLimpieza,
-                  child: Text(
-                    TableStatus.getStatusText(TableStatus.enLimpieza),
+              child: DropdownButtonFormField<String>(
+                initialValue: table.status,
+                decoration: InputDecoration(
+                  labelText: 'Estado',
+                  labelStyle: TextStyle(color: textColor),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    borderSide: BorderSide(
+                      color: textColor.withValues(alpha: 0.3),
+                    ),
                   ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    borderSide: BorderSide(
+                      color: textColor.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    borderSide: BorderSide(color: textColor),
+                  ),
+                  filled: true,
+                  fillColor: Colors.transparent,
                 ),
-              ],
-              onChanged: (newStatus) {
-                if (newStatus != null) {
-                  controller.updateTableStatus(table.id, newStatus);
-                }
-              },
-              style: TextStyle(
-                color: statusColor,
-                fontWeight: AppTheme.fontWeightSemibold,
+                dropdownColor: backgroundColor,
+                items: [
+                  DropdownMenuItem(
+                    value: TableStatus.libre,
+                    child: Text(
+                      TableStatus.getStatusText(TableStatus.libre),
+                      style: TextStyle(color: textColor),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: TableStatus.ocupada,
+                    child: Text(
+                      TableStatus.getStatusText(TableStatus.ocupada),
+                      style: TextStyle(color: textColor),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: TableStatus.reservada,
+                    child: Text(
+                      TableStatus.getStatusText(TableStatus.reservada),
+                      style: TextStyle(color: textColor),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: TableStatus.enLimpieza,
+                    child: Text(
+                      TableStatus.getStatusText(TableStatus.enLimpieza),
+                      style: TextStyle(color: textColor),
+                    ),
+                  ),
+                ],
+                onChanged: (newStatus) {
+                  if (newStatus != null) {
+                    controller.updateTableStatus(table.id, newStatus);
+                  }
+                },
+                style: TextStyle(
+                  color: textColor,
+                  fontWeight: AppTheme.fontWeightSemibold,
+                ),
               ),
             ),
             SizedBox(height: AppTheme.spacingSM),
@@ -1289,17 +1500,29 @@ class AdminApp extends StatelessWidget {
             // Información adicional
             Text(
               '${table.seats} asientos',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: textColor.withValues(alpha: 0.9),
+              ),
             ),
-            if (table.customers != null)
+            if (table.customers != null) ...[
+              SizedBox(height: AppTheme.spacingXS),
               Text(
                 '${table.customers} comensales',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: textColor.withValues(alpha: 0.9),
+                ),
               ),
+            ],
+            if (table.currentTotal != null) ...[
+              SizedBox(height: AppTheme.spacingXS),
+              Text(
+                '\$${table.currentTotal!.toStringAsFixed(2)}',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: textColor,
+                  fontWeight: AppTheme.fontWeightBold,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1370,7 +1593,7 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
-                    value: selectedSection,
+                    initialValue: selectedSection,
                     decoration: const InputDecoration(
                       labelText: 'Sección *',
                       border: OutlineInputBorder(),
@@ -1513,7 +1736,7 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
-                    value: selectedSection,
+                    initialValue: selectedSection,
                     decoration: const InputDecoration(
                       labelText: 'Sección *',
                       border: OutlineInputBorder(),
@@ -1647,7 +1870,7 @@ class AdminApp extends StatelessWidget {
                       icon: const Icon(Icons.add),
                       label: const Text('Agregar Categoría'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.secondary,
+                        backgroundColor: AppColors.primary,
                         foregroundColor: Colors.white,
                       ),
                     ),
@@ -1678,7 +1901,7 @@ class AdminApp extends StatelessWidget {
                     icon: const Icon(Icons.add),
                     label: const Text('Agregar Categoría'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.secondary,
+                      backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                     ),
                   ),
@@ -1740,9 +1963,39 @@ class AdminApp extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              ...controller.getAllCategories().map((category) {
-                final isSelected = controller.selectedMenuCategory == category;
-                return Padding(
+              // Botón "Todos" primero
+              Padding(
+                padding: EdgeInsets.only(right: AppTheme.spacingSM),
+                child: FilterChip(
+                  label: Text(
+                    'Todos',
+                    style: TextStyle(
+                      fontSize: isTablet
+                          ? AppTheme.fontSizeSM
+                          : AppTheme.fontSizeXS,
+                      fontWeight: controller.selectedMenuCategory == 'todos'
+                          ? AppTheme.fontWeightSemibold
+                          : AppTheme.fontWeightNormal,
+                    ),
+                  ),
+                  selected: controller.selectedMenuCategory == 'todos',
+                  onSelected: (selected) {
+                    if (selected) {
+                      controller.setSelectedMenuCategory('todos');
+                    }
+                  },
+                  selectedColor: AppColors.primary,
+                  checkmarkColor: Colors.white,
+                  labelStyle: TextStyle(
+                    color: controller.selectedMenuCategory == 'todos'
+                        ? Colors.white
+                        : AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              // Resto de categorías
+              for (final category in controller.getAllCategories())
+                Padding(
                   padding: EdgeInsets.only(right: AppTheme.spacingSM),
                   child: FilterChip(
                     label: Text(
@@ -1751,25 +2004,36 @@ class AdminApp extends StatelessWidget {
                         fontSize: isTablet
                             ? AppTheme.fontSizeSM
                             : AppTheme.fontSizeXS,
-                        fontWeight: isSelected
+                        fontWeight: controller.selectedMenuCategory == category
                             ? AppTheme.fontWeightSemibold
                             : AppTheme.fontWeightNormal,
                       ),
                     ),
-                    selected: isSelected,
+                    selected: controller.selectedMenuCategory == category,
                     onSelected: (selected) {
                       if (selected) {
                         controller.setSelectedMenuCategory(category);
                       }
                     },
+                    onDeleted: () => _handleMenuCategoryDeletion(
+                      context,
+                      controller,
+                      category,
+                    ),
+                    deleteIcon: Icon(
+                      Icons.close,
+                      size: isTablet ? 16 : 14,
+                      color: AppColors.error,
+                    ),
                     selectedColor: AppColors.primary,
                     checkmarkColor: Colors.white,
                     labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : AppColors.textPrimary,
+                      color: controller.selectedMenuCategory == category
+                          ? Colors.white
+                          : AppColors.textPrimary,
                     ),
                   ),
-                );
-              }).toList(),
+                ),
             ],
           ),
         ),
@@ -1816,7 +2080,7 @@ class AdminApp extends StatelessWidget {
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: isDesktop ? 3 : 2,
-          childAspectRatio: 0.75,
+          childAspectRatio: isDesktop ? 1.25 : 1.1,
           crossAxisSpacing: AppTheme.spacingMD,
           mainAxisSpacing: AppTheme.spacingMD,
         ),
@@ -1875,7 +2139,9 @@ class AdminApp extends StatelessWidget {
                   child: Text(
                     product.name,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: isTablet ? 20 : 18,
                       fontWeight: AppTheme.fontWeightBold,
+                      color: AppColors.textPrimary,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -1919,7 +2185,9 @@ class AdminApp extends StatelessWidget {
               label: Text(
                 product.category,
                 style: TextStyle(
-                  fontSize: isTablet ? AppTheme.fontSizeXS : 10,
+                  fontSize: isTablet
+                      ? AppTheme.fontSizeSM
+                      : AppTheme.fontSizeXS,
                   color: Colors.white,
                 ),
               ),
@@ -1940,25 +2208,28 @@ class AdminApp extends StatelessWidget {
                 children: [
                   Text(
                     'Tamaños:',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: AppTheme.fontWeightMedium,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      color: AppColors.textPrimary,
                     ),
                   ),
-                  ...product.sizes!.map((size) {
-                    return Text(
-                      '  • ${size.name}: \$${size.price.toStringAsFixed(0)}',
+                  const SizedBox(height: 4),
+                  for (final size in product.sizes!)
+                    Text(
+                      '• ${size.name}: \$${size.price.toStringAsFixed(0)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: isTablet ? 13 : 12,
                         color: AppColors.textSecondary,
                       ),
-                    );
-                  }).toList(),
+                    ),
                 ],
               )
             else if (product.price != null)
               Text(
                 'Precio: \$${product.price!.toStringAsFixed(0)}',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: AppTheme.fontWeightSemibold,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontSize: isTablet ? 18 : 16,
+                  fontWeight: AppTheme.fontWeightBold,
                   color: AppColors.primary,
                 ),
               ),
@@ -1967,13 +2238,14 @@ class AdminApp extends StatelessWidget {
             // Descripción
             Text(
               product.description,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppColors.textSecondary,
+                fontSize: isTablet ? 14 : 13,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-            const Spacer(),
+            SizedBox(height: AppTheme.spacingMD),
 
             // Botones de acción
             Row(
@@ -2006,7 +2278,10 @@ class AdminApp extends StatelessWidget {
                     ),
                     child: Text(
                       product.isAvailable ? 'Deshabilitar' : 'Habilitar',
-                      style: const TextStyle(fontSize: 12),
+                      style: TextStyle(
+                        fontSize: isTablet ? 13 : 12,
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
                     ),
                   ),
                 ),
@@ -2128,17 +2403,18 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
-                    value: selectedCategory,
+                    initialValue: selectedCategory,
                     decoration: const InputDecoration(
                       labelText: 'Categoría *',
                       border: OutlineInputBorder(),
                     ),
-                    items: controller.getAllCategories().map((category) {
-                      return DropdownMenuItem(
-                        value: category,
-                        child: Text(category),
-                      );
-                    }).toList(),
+                    items: [
+                      for (final category in controller.getAllCategories())
+                        DropdownMenuItem(
+                          value: category,
+                          child: Text(category),
+                        ),
+                    ],
                     onChanged: (value) {
                       setState(() {
                         selectedCategory = value;
@@ -2328,10 +2604,8 @@ class AdminApp extends StatelessWidget {
           ),
         ),
         SizedBox(height: AppTheme.spacingSM),
-        ...sizes.asMap().entries.map((entry) {
-          final index = entry.key;
-          final size = entry.value;
-          return Padding(
+        for (final entry in sizes.asMap().entries)
+          Padding(
             padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
             child: Row(
               children: [
@@ -2342,9 +2616,12 @@ class AdminApp extends StatelessWidget {
                       border: const OutlineInputBorder(),
                       isDense: true,
                     ),
-                    controller: TextEditingController(text: size.name),
+                    controller: TextEditingController(text: entry.value.name),
                     onChanged: (value) {
-                      sizes[index] = MenuSize(name: value, price: size.price);
+                      sizes[entry.key] = MenuSize(
+                        name: value,
+                        price: entry.value.price,
+                      );
                       onSizesChanged(sizes);
                     },
                   ),
@@ -2352,19 +2629,22 @@ class AdminApp extends StatelessWidget {
                 SizedBox(width: AppTheme.spacingSM),
                 Expanded(
                   child: TextField(
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Precio',
-                      border: const OutlineInputBorder(),
+                      border: OutlineInputBorder(),
                       isDense: true,
                       prefixText: '\$',
                     ),
                     keyboardType: TextInputType.number,
                     controller: TextEditingController(
-                      text: size.price.toStringAsFixed(0),
+                      text: entry.value.price.toStringAsFixed(0),
                     ),
                     onChanged: (value) {
                       final price = double.tryParse(value) ?? 0.0;
-                      sizes[index] = MenuSize(name: size.name, price: price);
+                      sizes[entry.key] = MenuSize(
+                        name: entry.value.name,
+                        price: price,
+                      );
                       onSizesChanged(sizes);
                     },
                   ),
@@ -2372,14 +2652,13 @@ class AdminApp extends StatelessWidget {
                 IconButton(
                   icon: const Icon(Icons.delete, color: Colors.red),
                   onPressed: () {
-                    sizes.removeAt(index);
+                    sizes.removeAt(entry.key);
                     onSizesChanged(sizes);
                   },
                 ),
               ],
             ),
-          );
-        }).toList(),
+          ),
         ElevatedButton.icon(
           onPressed: () {
             sizes.add(MenuSize(name: '', price: 0.0));
@@ -2456,17 +2735,18 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
-                    value: selectedCategory,
+                    initialValue: selectedCategory,
                     decoration: const InputDecoration(
                       labelText: 'Categoría *',
                       border: OutlineInputBorder(),
                     ),
-                    items: controller.getAllCategories().map((category) {
-                      return DropdownMenuItem(
-                        value: category,
-                        child: Text(category),
-                      );
-                    }).toList(),
+                    items: [
+                      for (final category in controller.getAllCategories())
+                        DropdownMenuItem(
+                          value: category,
+                          child: Text(category),
+                        ),
+                    ],
                     onChanged: (value) {
                       setState(() {
                         selectedCategory = value;
@@ -2681,8 +2961,8 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                 if (!showCustomForm && ingredients.isNotEmpty)
-                  ...ingredients.map((ingredient) {
-                    return Card(
+                  for (final ingredient in ingredients)
+                    Card(
                       margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
                       child: ListTile(
                         title: Text(ingredient.name),
@@ -2697,8 +2977,7 @@ class AdminApp extends StatelessWidget {
                           },
                         ),
                       ),
-                    );
-                  }).toList(),
+                    ),
                 if (!showCustomForm) ...[
                   SizedBox(height: AppTheme.spacingMD),
                   ElevatedButton.icon(
@@ -2835,7 +3114,7 @@ class AdminApp extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _buildNavItem(
-                'Dashboard',
+                'Panel de Control',
                 Icons.dashboard,
                 controller.currentView == 'dashboard',
                 isTablet,
@@ -3122,17 +3401,15 @@ class AdminApp extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              ...[
+              for (final category in [
                 'todos',
                 'Carne',
                 'Tortillas',
                 'Condimentos',
                 'Bebidas',
                 'Otros',
-              ].map((category) {
-                final isSelected =
-                    controller.selectedInventoryCategory == category;
-                return Padding(
+              ])
+                Padding(
                   padding: EdgeInsets.only(right: AppTheme.spacingSM),
                   child: FilterChip(
                     label: Text(
@@ -3141,25 +3418,41 @@ class AdminApp extends StatelessWidget {
                         fontSize: isTablet
                             ? AppTheme.fontSizeSM
                             : AppTheme.fontSizeXS,
-                        fontWeight: isSelected
+                        fontWeight:
+                            controller.selectedInventoryCategory == category
                             ? AppTheme.fontWeightSemibold
                             : AppTheme.fontWeightNormal,
                       ),
                     ),
-                    selected: isSelected,
+                    selected: controller.selectedInventoryCategory == category,
                     onSelected: (selected) {
                       if (selected) {
                         controller.setSelectedInventoryCategory(category);
                       }
                     },
+                    onDeleted: category != 'todos'
+                        ? () => _handleInventoryCategoryDeletion(
+                            context,
+                            controller,
+                            category,
+                          )
+                        : null,
+                    deleteIcon: category != 'todos'
+                        ? Icon(
+                            Icons.close,
+                            size: isTablet ? 16 : 14,
+                            color: AppColors.error,
+                          )
+                        : null,
                     selectedColor: AppColors.primary,
                     checkmarkColor: Colors.white,
                     labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : AppColors.textPrimary,
+                      color: controller.selectedInventoryCategory == category
+                          ? Colors.white
+                          : AppColors.textPrimary,
                     ),
                   ),
-                );
-              }).toList(),
+                ),
             ],
           ),
         ),
@@ -3197,12 +3490,13 @@ class AdminApp extends StatelessWidget {
     }
 
     return Column(
-      children: items.map((item) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: AppTheme.spacingMD),
-          child: _buildInventoryItemCard(context, item, controller, isTablet),
-        );
-      }).toList(),
+      children: [
+        for (final item in items)
+          Padding(
+            padding: EdgeInsets.only(bottom: AppTheme.spacingMD),
+            child: _buildInventoryItemCard(context, item, controller, isTablet),
+          ),
+      ],
     );
   }
 
@@ -3477,7 +3771,7 @@ class AdminApp extends StatelessWidget {
                 ),
                 SizedBox(height: AppTheme.spacingMD),
                 DropdownButtonFormField<String>(
-                  value: selectedCategory,
+                  initialValue: selectedCategory,
                   decoration: const InputDecoration(
                     labelText: 'Categoría *',
                     border: OutlineInputBorder(),
@@ -4107,7 +4401,7 @@ class AdminApp extends StatelessWidget {
             // Filtro de roles
             Expanded(
               child: DropdownButtonFormField<String>(
-                value: controller.selectedUserRole,
+                initialValue: controller.selectedUserRole,
                 decoration: const InputDecoration(
                   labelText: 'Todos los roles',
                   border: OutlineInputBorder(),
@@ -4146,7 +4440,7 @@ class AdminApp extends StatelessWidget {
             // Filtro de estados
             Expanded(
               child: DropdownButtonFormField<String>(
-                value: controller.selectedUserStatus,
+                initialValue: controller.selectedUserStatus,
                 decoration: const InputDecoration(
                   labelText: 'Todos los estados',
                   border: OutlineInputBorder(),
@@ -4214,8 +4508,17 @@ class AdminApp extends StatelessWidget {
     }
 
     if (isDesktop || isTablet) {
-      return Card(
-        child: _buildUsersTable(context, users, controller, isTablet),
+      return SizedBox(
+        width: double.infinity,
+        child: Card(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: isDesktop ? 1100 : 900),
+              child: _buildUsersTable(context, users, controller, isTablet),
+            ),
+          ),
+        ),
       );
     } else {
       return Column(
@@ -4236,44 +4539,38 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
+    final dateFormat = DateFormat('d/M/yyyy');
+
+    final headerStyle = TextStyle(fontWeight: AppTheme.fontWeightSemibold);
+
     return DataTable(
+      columnSpacing: 32,
+      horizontalMargin: 16,
+      headingRowHeight: 48,
+      dataRowMinHeight: 52,
+      dataRowMaxHeight: 68,
       columns: [
-        DataColumn(
-          label: Text(
-            'Usuario',
-            style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-          ),
-        ),
-        DataColumn(
-          label: Text(
-            'Nombre',
-            style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-          ),
-        ),
-        DataColumn(
-          label: Text(
-            'Roles',
-            style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-          ),
-        ),
-        DataColumn(
-          label: Text(
-            'Estado',
-            style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-          ),
-        ),
-        DataColumn(
-          label: Text(
-            'Acciones',
-            style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-          ),
-        ),
+        DataColumn(label: Text('Nombre completo', style: headerStyle)),
+        DataColumn(label: Text('Usuario', style: headerStyle)),
+        DataColumn(label: Text('Contraseña', style: headerStyle)),
+        DataColumn(label: Text('Teléfono', style: headerStyle)),
+        DataColumn(label: Text('Roles', style: headerStyle)),
+        DataColumn(label: Text('Estado', style: headerStyle)),
+        DataColumn(label: Text('Fecha de creación', style: headerStyle)),
+        DataColumn(label: Text('Acciones', style: headerStyle), numeric: true),
       ],
       rows: users.map((user) {
         return DataRow(
           cells: [
+            DataCell(
+              Text(
+                user.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
             DataCell(Text(user.username)),
-            DataCell(Text(user.name)),
+            DataCell(Text(user.password.isNotEmpty ? user.password : '—')),
+            DataCell(Text(user.phone?.isNotEmpty == true ? user.phone! : '—')),
             DataCell(
               Wrap(
                 spacing: 4,
@@ -4303,55 +4600,58 @@ class AdminApp extends StatelessWidget {
                     .withValues(alpha: 0.1),
               ),
             ),
+            DataCell(Text(dateFormat.format(user.createdAt))),
             DataCell(
-              PopupMenuButton(
-                icon: const Icon(Icons.more_vert),
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'edit',
-                    child: const Row(
-                      children: [
-                        Icon(Icons.edit, size: 18),
-                        SizedBox(width: 8),
-                        Text('Editar'),
-                      ],
+              Center(
+                child: PopupMenuButton(
+                  icon: const Icon(Icons.more_vert),
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: const Row(
+                        children: [
+                          Icon(Icons.edit, size: 18),
+                          SizedBox(width: 8),
+                          Text('Editar'),
+                        ],
+                      ),
                     ),
-                  ),
-                  PopupMenuItem(
-                    value: 'change_password',
-                    child: const Row(
-                      children: [
-                        Icon(Icons.lock, size: 18),
-                        SizedBox(width: 8),
-                        Text('Cambiar contraseña'),
-                      ],
+                    PopupMenuItem(
+                      value: 'change_password',
+                      child: const Row(
+                        children: [
+                          Icon(Icons.lock, size: 18),
+                          SizedBox(width: 8),
+                          Text('Cambiar contraseña'),
+                        ],
+                      ),
                     ),
-                  ),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete, size: 18, color: Colors.red),
-                        const SizedBox(width: 8),
-                        Text('Eliminar', style: TextStyle(color: Colors.red)),
-                      ],
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete, size: 18, color: Colors.red),
+                          const SizedBox(width: 8),
+                          Text('Eliminar', style: TextStyle(color: Colors.red)),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-                onSelected: (value) {
-                  if (value == 'edit') {
-                    _showEditUserModal(context, user, controller, isTablet);
-                  } else if (value == 'change_password') {
-                    _showChangePasswordModal(
-                      context,
-                      user,
-                      controller,
-                      isTablet,
-                    );
-                  } else if (value == 'delete') {
-                    _showDeleteUserDialog(context, user, controller);
-                  }
-                },
+                  ],
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      _showEditUserModal(context, user, controller, isTablet);
+                    } else if (value == 'change_password') {
+                      _showChangePasswordModal(
+                        context,
+                        user,
+                        controller,
+                        isTablet,
+                      );
+                    } else if (value == 'delete') {
+                      _showDeleteUserDialog(context, user, controller);
+                    }
+                  },
+                ),
               ),
             ),
           ],
@@ -4778,8 +5078,8 @@ class AdminApp extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                   SizedBox(height: AppTheme.spacingSM),
-                  ...UserRole.allRoles.map((role) {
-                    return CheckboxListTile(
+                  for (final role in UserRole.allRoles)
+                    CheckboxListTile(
                       title: Text(UserRole.getRoleText(role)),
                       value: selectedRoles.contains(role),
                       onChanged: (value) {
@@ -4791,8 +5091,7 @@ class AdminApp extends StatelessWidget {
                           }
                         });
                       },
-                    );
-                  }).toList(),
+                    ),
                 ],
               ),
             ),
@@ -4818,6 +5117,7 @@ class AdminApp extends StatelessWidget {
                     id: controller.getNextUserId(),
                     name: nameController.text,
                     username: usernameController.text.toLowerCase(),
+                    password: passwordController.text,
                     phone: phoneController.text.isEmpty
                         ? null
                         : phoneController.text,
@@ -4951,8 +5251,8 @@ class AdminApp extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                   SizedBox(height: AppTheme.spacingSM),
-                  ...UserRole.allRoles.map((role) {
-                    return CheckboxListTile(
+                  for (final role in UserRole.allRoles)
+                    CheckboxListTile(
                       title: Text(UserRole.getRoleText(role)),
                       value: selectedRoles.contains(role),
                       onChanged: (value) {
@@ -4964,8 +5264,7 @@ class AdminApp extends StatelessWidget {
                           }
                         });
                       },
-                    );
-                  }).toList(),
+                    ),
                   SizedBox(height: AppTheme.spacingMD),
                   SwitchListTile(
                     title: const Text('Estado del usuario'),
@@ -5365,6 +5664,8 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    final filteredTickets = controller.filteredTickets;
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(
         isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
@@ -5377,7 +5678,7 @@ class AdminApp extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Gestión de Tickets',
+                'Gestión de Tickets de Cobro',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: AppTheme.fontWeightBold,
                   color: AppColors.textPrimary,
@@ -5402,6 +5703,22 @@ class AdminApp extends StatelessWidget {
               ),
             ],
           ),
+          SizedBox(height: AppTheme.spacingXS),
+          Text(
+            'Control y seguimiento de tickets impresos',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+          ),
+          SizedBox(height: AppTheme.spacingLG),
+
+          // Resumen de tickets
+          _buildTicketSummarySection(
+            context,
+            filteredTickets,
+            isTablet,
+            isDesktop,
+          ),
           SizedBox(height: AppTheme.spacingXL),
 
           // Búsqueda y filtros
@@ -5409,7 +5726,13 @@ class AdminApp extends StatelessWidget {
           SizedBox(height: AppTheme.spacingLG),
 
           // Tabla/Lista de tickets
-          _buildTicketsList(context, controller, isTablet, isDesktop),
+          _buildTicketsList(
+            context,
+            filteredTickets,
+            controller,
+            isTablet,
+            isDesktop,
+          ),
         ],
       ),
     );
@@ -5440,7 +5763,7 @@ class AdminApp extends StatelessWidget {
 
         // Filtro de estados
         DropdownButtonFormField<String>(
-          value: controller.selectedTicketStatus,
+          initialValue: controller.selectedTicketStatus,
           decoration: const InputDecoration(
             labelText: 'Todos los estados',
             border: OutlineInputBorder(),
@@ -5480,12 +5803,11 @@ class AdminApp extends StatelessWidget {
   // Lista de tickets
   Widget _buildTicketsList(
     BuildContext context,
+    List<payment_models.BillModel> tickets,
     AdminController controller,
     bool isTablet,
     bool isDesktop,
   ) {
-    final tickets = controller.filteredTickets;
-
     if (tickets.isEmpty) {
       return Container(
         padding: EdgeInsets.all(AppTheme.spacingXL),
@@ -5533,119 +5855,145 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        columns: [
-          DataColumn(
-            label: Text(
-              'ID',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
+    return Center(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width > 1200
+                ? 1200
+                : MediaQuery.of(context).size.width,
           ),
-          DataColumn(
-            label: Text(
-              'Mesa',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Cuenta ID',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Total',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Estado',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Impreso por',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Fecha/Hora',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Acciones',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-        ],
-        rows: tickets.map((ticket) {
-          return DataRow(
-            cells: [
-              DataCell(Text(ticket.id)),
-              DataCell(Text(ticket.tableNumber?.toString() ?? 'N/A')),
-              DataCell(Text(ticket.id)),
-              DataCell(Text('\$${ticket.total.toStringAsFixed(2)}')),
-              DataCell(
-                Chip(
-                  label: Text(
-                    payment_models.BillStatus.getStatusText(ticket.status),
-                    style: const TextStyle(fontSize: 10, color: Colors.white),
-                  ),
-                  backgroundColor: payment_models.BillStatus.getStatusColor(
-                    ticket.status,
-                  ),
+          child: DataTable(
+            columnSpacing: 24,
+            columns: [
+              DataColumn(
+                label: Text(
+                  'ID',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
                 ),
               ),
-              DataCell(Text(ticket.printedBy ?? 'N/A')),
-              DataCell(Text(_formatDate(ticket.createdAt))),
-              DataCell(
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.visibility, size: 18),
-                      color: AppColors.primary,
-                      onPressed: () =>
-                          _showTicketDetailsModal(context, ticket, isTablet),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                    SizedBox(width: AppTheme.spacingXS),
-                    if (ticket.status != payment_models.BillStatus.printed &&
-                        ticket.status != payment_models.BillStatus.delivered)
-                      IconButton(
-                        icon: const Icon(Icons.print, size: 18),
-                        color: AppColors.primary,
-                        onPressed: () =>
-                            _showPrintTicketDialog(context, ticket, controller),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    SizedBox(width: AppTheme.spacingXS),
-                    if (ticket.status == payment_models.BillStatus.printed &&
-                        ticket.status != payment_models.BillStatus.delivered)
-                      IconButton(
-                        icon: const Icon(Icons.check_circle, size: 18),
-                        color: Colors.green,
-                        onPressed: () =>
-                            _markTicketAsDelivered(context, ticket, controller),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                  ],
+              DataColumn(
+                label: Text(
+                  'Mesa',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Cuenta ID',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Total',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Estado',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Impreso por',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Fecha/Hora',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Acciones',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
                 ),
               ),
             ],
-          );
-        }).toList(),
+            rows: tickets.map((ticket) {
+              return DataRow(
+                cells: [
+                  DataCell(Text(ticket.id)),
+                  DataCell(Text(ticket.tableNumber?.toString() ?? 'N/A')),
+                  DataCell(Text(ticket.id)),
+                  DataCell(Text('\$${ticket.total.toStringAsFixed(2)}')),
+                  DataCell(
+                    Chip(
+                      label: Text(
+                        payment_models.BillStatus.getStatusText(ticket.status),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                        ),
+                      ),
+                      backgroundColor: payment_models.BillStatus.getStatusColor(
+                        ticket.status,
+                      ),
+                    ),
+                  ),
+                  DataCell(Text(ticket.printedBy ?? 'N/A')),
+                  DataCell(Text(_formatDate(ticket.createdAt))),
+                  DataCell(
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.visibility, size: 18),
+                          color: AppColors.primary,
+                          onPressed: () => _showTicketDetailsModal(
+                            context,
+                            ticket,
+                            isTablet,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                        SizedBox(width: AppTheme.spacingXS),
+                        if (ticket.status !=
+                                payment_models.BillStatus.printed &&
+                            ticket.status !=
+                                payment_models.BillStatus.delivered)
+                          IconButton(
+                            icon: const Icon(Icons.print, size: 18),
+                            color: AppColors.primary,
+                            onPressed: () => _showPrintTicketDialog(
+                              context,
+                              ticket,
+                              controller,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        SizedBox(width: AppTheme.spacingXS),
+                        if (ticket.status ==
+                                payment_models.BillStatus.printed &&
+                            ticket.status !=
+                                payment_models.BillStatus.delivered)
+                          IconButton(
+                            icon: const Icon(Icons.check_circle, size: 18),
+                            color: Colors.green,
+                            onPressed: () => _markTicketAsDelivered(
+                              context,
+                              ticket,
+                              controller,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
       ),
     );
   }
@@ -5807,8 +6155,8 @@ class AdminApp extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
               SizedBox(height: AppTheme.spacingSM),
-              ...ticket.items.map((item) {
-                return Padding(
+              for (final item in ticket.items)
+                Padding(
                   padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -5817,8 +6165,7 @@ class AdminApp extends StatelessWidget {
                       Text('\$${item.total.toStringAsFixed(2)}'),
                     ],
                   ),
-                );
-              }).toList(),
+                ),
             ],
           ),
         ),
@@ -5985,32 +6332,34 @@ class AdminApp extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              ...['hoy', 'ayer', 'semana', 'mes', 'personalizado'].map((
-                period,
-              ) {
-                final isSelected = controller.selectedCashClosePeriod == period;
-                final labels = {
-                  'hoy': 'Hoy',
-                  'ayer': 'Ayer',
-                  'semana': 'Última semana',
-                  'mes': 'Mes actual',
-                  'personalizado': 'Rango personalizado',
-                };
-                return Padding(
+              for (final period in [
+                'hoy',
+                'ayer',
+                'semana',
+                'mes',
+                'personalizado',
+              ])
+                Padding(
                   padding: EdgeInsets.only(right: AppTheme.spacingSM),
                   child: FilterChip(
                     label: Text(
-                      labels[period]!,
+                      const {
+                        'hoy': 'Hoy',
+                        'ayer': 'Ayer',
+                        'semana': 'Última semana',
+                        'mes': 'Mes actual',
+                        'personalizado': 'Rango personalizado',
+                      }[period]!,
                       style: TextStyle(
                         fontSize: isTablet
                             ? AppTheme.fontSizeSM
                             : AppTheme.fontSizeXS,
-                        fontWeight: isSelected
+                        fontWeight: controller.selectedCashClosePeriod == period
                             ? AppTheme.fontWeightSemibold
                             : AppTheme.fontWeightNormal,
                       ),
                     ),
-                    selected: isSelected,
+                    selected: controller.selectedCashClosePeriod == period,
                     onSelected: (selected) {
                       if (selected) {
                         controller.setSelectedCashClosePeriod(period);
@@ -6019,11 +6368,12 @@ class AdminApp extends StatelessWidget {
                     selectedColor: AppColors.primary,
                     checkmarkColor: Colors.white,
                     labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : AppColors.textPrimary,
+                      color: controller.selectedCashClosePeriod == period
+                          ? Colors.white
+                          : AppColors.textPrimary,
                     ),
                   ),
-                );
-              }).toList(),
+                ),
             ],
           ),
         ),
@@ -6524,8 +6874,8 @@ class AdminApp extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                   SizedBox(height: AppTheme.spacingSM),
-                  ...closure.auditLog.map((log) {
-                    return Padding(
+                  for (final log in closure.auditLog)
+                    Padding(
                       padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6553,8 +6903,7 @@ class AdminApp extends StatelessWidget {
                           ),
                         ],
                       ),
-                    );
-                  }).toList(),
+                    ),
                 ],
 
                 // Botones de acción si está pendiente
@@ -6767,7 +7116,7 @@ class AdminApp extends StatelessWidget {
             SizedBox(width: AppTheme.spacingMD),
             Expanded(
               child: DropdownButtonFormField<String>(
-                value: controller.selectedCashCloseStatus,
+                initialValue: controller.selectedCashCloseStatus,
                 decoration: const InputDecoration(
                   labelText: 'Estado',
                   border: OutlineInputBorder(),
@@ -6885,7 +7234,7 @@ class AdminApp extends StatelessWidget {
                 ),
                 SizedBox(height: AppTheme.spacingXS),
                 Text(
-                  '✓ ${verifiedCount} | ⚠ ${clarificationCount} | ⏳ ${pendingCount}',
+                  '✓ $verifiedCount | ⚠ $clarificationCount | ⏳ $pendingCount',
                   style: TextStyle(
                     fontSize: AppTheme.fontSizeXS,
                     color: AppColors.textSecondary,
@@ -7206,43 +7555,36 @@ class AdminApp extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
               SizedBox(height: AppTheme.spacingSM),
-              ...closure.auditLog.map((log) {
-                return Padding(
+              for (final log in closure.auditLog)
+                Padding(
                   padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
-                  child: Column(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (log.action == 'enviado')
-                        Text(
-                          'Cierre enviado por: ${log.usuario}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      if (log.action == 'aclaracion_solicitada')
-                        Text(
-                          'Aclaración solicitada por: ${log.usuario}\nRazón: ${log.mensaje}',
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(color: Colors.orange),
-                        ),
-                      if (log.action == 'verificado' ||
-                          log.action == 'aprobado')
-                        Text(
-                          'Verificado por: ${log.usuario}',
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(color: Colors.green),
-                        ),
-                      Text(
-                        _formatDate(log.timestamp),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                          fontSize: AppTheme.fontSizeXS,
+                      Icon(Icons.circle, size: 8, color: AppColors.primary),
+                      SizedBox(width: AppTheme.spacingSM),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${log.usuario}: ${log.mensaje}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            Text(
+                              _formatDate(log.timestamp),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: AppColors.textSecondary,
+                                    fontSize: AppTheme.fontSizeXS,
+                                  ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                );
-              }).toList(),
+                ),
 
               // Botones de acción si requiere aclaración
               if (closure.estado == CashCloseStatus.clarification ||
@@ -7885,8 +8227,8 @@ class AdminApp extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        ...orders.map(
-          (order) => Card(
+        for (final order in orders)
+          Card(
             margin: EdgeInsets.only(bottom: isTablet ? 20.0 : 16.0),
             elevation: 2,
             shape: RoundedRectangleBorder(
@@ -7954,10 +8296,386 @@ class AdminApp extends StatelessWidget {
               ),
             ),
           ),
-        ),
       ],
     );
   }
+
+  Widget _buildDailyConsumptionCards(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final cards = _getDailyConsumptionCards(controller);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = AppTheme.spacingMD;
+        const targetWidth = 210.0;
+        final maxWidth = constraints.maxWidth;
+        final crossAxisCount = (maxWidth / (targetWidth + spacing))
+            .floor()
+            .clamp(1, 5);
+        final itemWidth =
+            (maxWidth -
+                spacing * (crossAxisCount > 1 ? crossAxisCount - 1 : 0)) /
+            crossAxisCount;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: cards
+              .map(
+                (card) => SizedBox(
+                  width: itemWidth,
+                  child: _SummaryCard(card: card, isTablet: isTablet),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+
+  List<_SummaryCardData> _getDailyConsumptionCards(AdminController controller) {
+    final localSales = controller.todayLocalSales;
+    final takeawaySales = controller.todayTakeawaySales;
+    final cashSales = controller.todayCashSales;
+    final pendingTotal = controller.pendingCollectionsTotal;
+    final totalNet = controller.todayTotalSales;
+
+    return [
+      _SummaryCardData(
+        title: 'Ventas en Local',
+        value: controller.formatCurrency(localSales),
+        subtitle:
+            '${controller.todayLocalOrdersCount} ${controller.todayLocalOrdersCount == 1 ? 'orden' : 'órdenes'}',
+        color: AppColors.success,
+        icon: Icons.storefront,
+      ),
+      _SummaryCardData(
+        title: 'Ventas Para llevar',
+        value: controller.formatCurrency(takeawaySales),
+        subtitle:
+            '${controller.todayTakeawayOrdersCount} ${controller.todayTakeawayOrdersCount == 1 ? 'pedido' : 'pedidos'}',
+        color: AppColors.info,
+        icon: Icons.delivery_dining,
+      ),
+      _SummaryCardData(
+        title: 'Ventas Efectivo',
+        value: controller.formatCurrency(cashSales),
+        subtitle: 'Incluye pagos mixtos',
+        color: AppColors.primary,
+        icon: Icons.payments,
+      ),
+      _SummaryCardData(
+        title: 'Por cobrar',
+        value: controller.formatCurrency(pendingTotal),
+        subtitle:
+            '${controller.pendingCollectionsCount} ${controller.pendingCollectionsCount == 1 ? 'ticket' : 'tickets'} pendientes',
+        color: AppColors.error,
+        icon: Icons.pending_actions,
+      ),
+      _SummaryCardData(
+        title: 'Total Neto',
+        value: controller.formatCurrency(totalNet),
+        subtitle: 'Incluye efectivo y tarjeta',
+        color: AppColors.info,
+        icon: Icons.analytics,
+      ),
+    ];
+  }
+
+  List<_ConsumptionRecord> _buildConsumptionRecords(
+    AdminController controller,
+  ) {
+    final payments = controller.filteredDailyPayments;
+    if (payments.isEmpty) {
+      return [];
+    }
+
+    return payments.map((payment) {
+      final isTakeaway = payment.tableNumber == null;
+      final originLabel = isTakeaway
+          ? 'Para llevar'
+          : 'Mesa ${payment.tableNumber}';
+      final products = <String>[];
+      if ((payment.notes ?? '').isNotEmpty) {
+        products.add(payment.notes!);
+      }
+
+      return _ConsumptionRecord(
+        id: payment.billId,
+        originType: isTakeaway ? 'para_llevar' : 'mesa',
+        originLabel: originLabel,
+        products: products,
+        total: controller.formatCurrency(payment.totalAmount),
+        paymentMethod: payment_models.PaymentType.getTypeText(payment.type),
+        status: payment.voucherPrinted == true ? 'Cobrado' : 'Por imprimir',
+        time: DateFormat('HH:mm').format(payment.timestamp),
+        waiter: payment.cashierName,
+      );
+    }).toList();
+  }
+
+  void _handleMenuCategoryDeletion(
+    BuildContext context,
+    AdminController controller,
+    String category,
+  ) {
+    final isCustom = controller.isCustomCategory(category);
+    final hasProducts = controller.categoryHasProducts(category);
+    final deleted = controller.deleteCustomCategory(category);
+
+    String message;
+    Color backgroundColor;
+
+    if (deleted) {
+      message = 'Categoría "$category" eliminada.';
+      backgroundColor = AppColors.success;
+    } else {
+      if (!isCustom) {
+        message =
+            'La categoría "$category" es predeterminada y no se puede eliminar.';
+      } else if (hasProducts) {
+        message =
+            'No puedes eliminar la categoría "$category" porque tiene productos asociados.';
+      } else {
+        message = 'No fue posible eliminar la categoría "$category".';
+      }
+      backgroundColor = AppColors.error;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _handleInventoryCategoryDeletion(
+    BuildContext context,
+    AdminController controller,
+    String category,
+  ) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Por ahora la categoría "$category" es predeterminada y no se puede eliminar.',
+        ),
+        backgroundColor: AppColors.error,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildTicketSummarySection(
+    BuildContext context,
+    List<payment_models.BillModel> tickets,
+    bool isTablet,
+    bool isDesktop,
+  ) {
+    final currencyFormat = NumberFormat.currency(
+      locale: 'es_MX',
+      symbol: r'$',
+      decimalDigits: 0,
+    );
+    final totalTickets = tickets.length;
+    final totalAmount = tickets.fold<double>(
+      0.0,
+      (sum, ticket) => sum + ticket.total,
+    );
+    final pendingCount = tickets
+        .where((ticket) => ticket.status == payment_models.BillStatus.pending)
+        .length;
+    final printedCount = tickets
+        .where(
+          (ticket) =>
+              ticket.status == payment_models.BillStatus.printed ||
+              ticket.isPrinted,
+        )
+        .length;
+
+    final cards = [
+      _SummaryCardData(
+        title: 'Total Tickets',
+        value: '$totalTickets',
+        subtitle: 'En el sistema',
+        color: AppColors.primary,
+        icon: Icons.receipt_long,
+      ),
+      _SummaryCardData(
+        title: 'Valor Total',
+        value: currencyFormat.format(totalAmount),
+        subtitle: 'Suma de todos los tickets',
+        color: AppColors.success,
+        icon: Icons.attach_money,
+      ),
+      _SummaryCardData(
+        title: 'Pendientes',
+        value: '$pendingCount',
+        subtitle: 'Por imprimir',
+        color: AppColors.warning,
+        icon: Icons.schedule,
+      ),
+      _SummaryCardData(
+        title: 'Impresos',
+        value: '$printedCount',
+        subtitle: 'Listos para entrega',
+        color: AppColors.info,
+        icon: Icons.print,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = AppTheme.spacingMD;
+        final targetWidth = isDesktop ? 220.0 : 200.0;
+        final maxWidth = constraints.maxWidth;
+        final crossAxisCount = (maxWidth / (targetWidth + spacing))
+            .floor()
+            .clamp(1, 4);
+        final itemWidth =
+            (maxWidth -
+                spacing * (crossAxisCount > 1 ? crossAxisCount - 1 : 0)) /
+            crossAxisCount;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: cards
+              .map(
+                (card) => SizedBox(
+                  width: itemWidth,
+                  child: _SummaryCard(card: card, isTablet: isTablet),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _SummaryCardData {
+  final String title;
+  final String value;
+  final String subtitle;
+  final Color color;
+  final IconData icon;
+
+  const _SummaryCardData({
+    required this.title,
+    required this.value,
+    required this.subtitle,
+    required this.color,
+    required this.icon,
+  });
+}
+
+class _SummaryCard extends StatelessWidget {
+  final _SummaryCardData card;
+  final bool isTablet;
+
+  const _SummaryCard({required this.card, required this.isTablet});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(
+        isTablet ? AppTheme.spacingLG : AppTheme.spacingMD,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+        border: Border.all(color: card.color.withValues(alpha: 0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: card.color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(card.icon, color: card.color),
+              ),
+              const SizedBox(width: AppTheme.spacingSM),
+              Expanded(
+                child: Text(
+                  card.title,
+                  style: TextStyle(
+                    fontSize: isTablet
+                        ? AppTheme.fontSizeSM
+                        : AppTheme.fontSizeXS,
+                    fontWeight: AppTheme.fontWeightSemibold,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: AppTheme.spacingSM),
+          Text(
+            card.value,
+            style: TextStyle(
+              fontSize: isTablet ? AppTheme.fontSize3XL : AppTheme.fontSize2XL,
+              fontWeight: AppTheme.fontWeightBold,
+              color: card.color,
+            ),
+          ),
+          if (card.subtitle.isNotEmpty) ...[
+            SizedBox(height: AppTheme.spacingXS),
+            Text(
+              card.subtitle,
+              style: TextStyle(
+                fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ConsumptionRecord {
+  final String id;
+  final String originType;
+  final String originLabel;
+  final List<String> products;
+  final String total;
+  final String paymentMethod;
+  final String status;
+  final String time;
+  final String waiter;
+
+  const _ConsumptionRecord({
+    required this.id,
+    required this.originType,
+    required this.originLabel,
+    required this.products,
+    required this.total,
+    required this.paymentMethod,
+    required this.status,
+    required this.time,
+    required this.waiter,
+  });
+
+  bool get isTakeaway => originType == 'para_llevar';
 }
 
 // Widget separado para el formulario de ingrediente
@@ -8012,7 +8730,7 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
           SizedBox(height: AppTheme.spacingMD),
           if (!isCustom)
             DropdownButtonFormField<String>(
-              value: selectedSuggested,
+              initialValue: selectedSuggested,
               decoration: const InputDecoration(
                 labelText: 'Ingrediente sugerido',
                 border: OutlineInputBorder(),

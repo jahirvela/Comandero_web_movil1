@@ -107,6 +107,38 @@ class _StaffManagementViewState extends State<StaffManagementView> {
     },
   ];
 
+  final List<String> availableRoles = [
+    'Chef Principal',
+    'Cocinera',
+    'Ayudante de cocina',
+    'Bartender',
+    'Encargado de estación',
+  ];
+
+  final List<String> availableStations = [
+    'Estación Tacos',
+    'Estación Consomes',
+    'Estación Bebidas',
+    'Estación Carnes',
+    'Estación Salsas',
+  ];
+
+  final List<String> availableShifts = ['Mañana', 'Tarde', 'Noche'];
+
+  final List<String> specialtiesCatalog = [
+    'Tacos',
+    'Barbacoa',
+    'Salsas',
+    'Quesadillas',
+    'Consomes',
+    'Caldos',
+    'Bebidas',
+    'Licuados',
+    'Carnes',
+    'Asados',
+    'Postres',
+  ];
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -997,27 +1029,332 @@ class _StaffManagementViewState extends State<StaffManagementView> {
   }
 
   void _showAddStaffDialog(BuildContext context) {
-    showDialog(
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    String selectedRole = availableRoles.first;
+    String selectedStation = availableStations.first;
+    String selectedShift = availableShifts.first;
+    TimeOfDay? startTime;
+    TimeOfDay? endTime;
+    final Set<String> selectedSpecialties = {};
+    bool valid = false;
+
+    Future<void> pickTime({
+      required bool isStart,
+      required void Function(void Function()) setModalState,
+    }) async {
+      final initial = isStart
+          ? startTime ?? const TimeOfDay(hour: 8, minute: 0)
+          : endTime ?? const TimeOfDay(hour: 16, minute: 0);
+      final result = await showTimePicker(
+        context: context,
+        initialTime: initial,
+      );
+      if (result != null) {
+        setModalState(() {
+          if (isStart) {
+            startTime = result;
+          } else {
+            endTime = result;
+          }
+        });
+      }
+    }
+
+    showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Agregar Personal'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('• Nombre completo'),
-            Text('• Rol y estación'),
-            Text('• Turno y horarios'),
-            Text('• Especialidades'),
-            Text('• Información de contacto'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            valid =
+                nameController.text.trim().isNotEmpty &&
+                phoneController.text.trim().isNotEmpty &&
+                startTime != null &&
+                endTime != null;
+
+            return AlertDialog(
+              title: const Text('Agregar Personal'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre completo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setModalState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: phoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Teléfono de contacto *',
+                        hintText: '+52 55 0000 0000',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setModalState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: selectedRole,
+                            decoration: const InputDecoration(
+                              labelText: 'Rol',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: [
+                              for (final role in availableRoles)
+                                DropdownMenuItem(
+                                  value: role,
+                                  child: Text(role),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setModalState(() => selectedRole = value);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: selectedStation,
+                            decoration: const InputDecoration(
+                              labelText: 'Estación',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: [
+                              for (final station in availableStations)
+                                DropdownMenuItem(
+                                  value: station,
+                                  child: Text(station),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setModalState(() => selectedStation = value);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: selectedShift,
+                            decoration: const InputDecoration(
+                              labelText: 'Turno',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: [
+                              for (final shift in availableShifts)
+                                DropdownMenuItem(
+                                  value: shift,
+                                  child: Text(shift),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setModalState(() => selectedShift = value);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Horario *',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: () => pickTime(
+                                        isStart: true,
+                                        setModalState: setModalState,
+                                      ),
+                                      child: Text(
+                                        startTime != null
+                                            ? _formatTimeOfDay(startTime!)
+                                            : 'Inicio',
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: () => pickTime(
+                                        isStart: false,
+                                        setModalState: setModalState,
+                                      ),
+                                      child: Text(
+                                        endTime != null
+                                            ? _formatTimeOfDay(endTime!)
+                                            : 'Fin',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Especialidades',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: specialtiesCatalog
+                          .map(
+                            (specialty) => FilterChip(
+                              label: Text(specialty),
+                              selected: selectedSpecialties.contains(specialty),
+                              onSelected: (value) {
+                                setModalState(() {
+                                  if (value) {
+                                    selectedSpecialties.add(specialty);
+                                  } else {
+                                    selectedSpecialties.remove(specialty);
+                                  }
+                                });
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  onPressed: valid
+                      ? () {
+                          final newStaff = {
+                            'id': _generateStaffId(nameController.text),
+                            'name': nameController.text.trim(),
+                            'role': selectedRole,
+                            'station': selectedStation,
+                            'shift': selectedShift,
+                            'status': 'Activo',
+                            'startTime': _formatTimeOfDay(startTime!),
+                            'endTime': _formatTimeOfDay(endTime!),
+                            'ordersCompleted': 0,
+                            'efficiency': 100,
+                            'avatar': _getAvatarForRole(selectedRole),
+                            'phone': phoneController.text.trim(),
+                            'email': '',
+                            'experience': 'Nuevo ingreso',
+                            'specialties': selectedSpecialties.isNotEmpty
+                                ? selectedSpecialties.toList()
+                                : [
+                                    selectedStation.replaceFirst(
+                                      'Estación ',
+                                      '',
+                                    ),
+                                  ],
+                            'color': _getStationColor(selectedStation),
+                          };
+
+                          setState(() {
+                            staff.add(newStaff);
+                          });
+
+                          Navigator.pop(dialogContext);
+                          ScaffoldMessenger.of(this.context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Personal agregado: ${newStaff['name']}',
+                              ),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        }
+                      : null,
+                  child: const Text('Agregar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      nameController.dispose();
+      phoneController.dispose();
+    });
+  }
+
+  String _generateStaffId(String name) {
+    final base = name.trim().toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9]+'),
+      '_',
     );
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    return '${base}_$timestamp';
+  }
+
+  String _formatTimeOfDay(TimeOfDay time) {
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  String _getAvatarForRole(String role) {
+    switch (role) {
+      case 'Chef Principal':
+        return '👨‍🍳';
+      case 'Bartender':
+        return '🍹';
+      case 'Ayudante de cocina':
+        return '🧑‍🍳';
+      case 'Encargado de estación':
+        return '🧑‍🔧';
+      default:
+        return '👩‍🍳';
+    }
+  }
+
+  Color _getStationColor(String station) {
+    switch (station) {
+      case 'Estación Tacos':
+        return AppColors.primary;
+      case 'Estación Consomes':
+        return AppColors.info;
+      case 'Estación Bebidas':
+        return AppColors.warning;
+      case 'Estación Carnes':
+        return AppColors.error;
+      case 'Estación Salsas':
+        return AppColors.success;
+      default:
+        return AppColors.primary;
+    }
   }
 }

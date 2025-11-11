@@ -2,8 +2,18 @@ import 'package:flutter/material.dart';
 import '../models/admin_model.dart';
 import '../models/order_model.dart';
 import '../models/payment_model.dart' as payment_models;
+import '../services/payment_repository.dart';
 
 class AdminController extends ChangeNotifier {
+  AdminController({
+    required PaymentRepository paymentRepository,
+  }) : _paymentRepository = paymentRepository {
+    _paymentRepository.addListener(_handlePaymentsChanged);
+    _initializeData();
+  }
+
+  final PaymentRepository _paymentRepository;
+
   // Estado de usuarios
   List<AdminUser> _users = [];
 
@@ -199,10 +209,6 @@ class AdminController extends ChangeNotifier {
     }).toList();
   }
 
-  AdminController() {
-    _initializeData();
-  }
-
   void _initializeData() {
     // Inicializar usuarios de ejemplo
     _users = [
@@ -210,6 +216,7 @@ class AdminController extends ChangeNotifier {
         id: 'user_001',
         name: 'María González',
         username: 'admin',
+        password: 'Admin2024*Sec',
         phone: '55 1234 5678',
         roles: [UserRole.admin],
         isActive: true,
@@ -221,6 +228,7 @@ class AdminController extends ChangeNotifier {
         id: 'user_002',
         name: 'Juan Martínez',
         username: 'mesero',
+        password: 'Cmx2024#Pass',
         phone: '55 2345 6789',
         roles: [UserRole.mesero],
         isActive: true,
@@ -232,6 +240,7 @@ class AdminController extends ChangeNotifier {
         id: 'user_003',
         name: 'Carlos López',
         username: 'cocina',
+        password: 'Chef2024!Mx',
         phone: '55 3456 7890',
         roles: [UserRole.cocinero],
         isActive: true,
@@ -243,6 +252,7 @@ class AdminController extends ChangeNotifier {
         id: 'user_004',
         name: 'Ana Rodríguez',
         username: 'cajero',
+        password: 'Cajero#2024',
         phone: '55 4567 8901',
         roles: [UserRole.cajero],
         isActive: true,
@@ -254,6 +264,7 @@ class AdminController extends ChangeNotifier {
         id: 'user_005',
         name: 'Roberto Silva',
         username: 'capitan',
+        password: 'Capitan2024\$',
         phone: '55 5678 9012',
         roles: [UserRole.capitan],
         isActive: true,
@@ -691,6 +702,105 @@ class AdminController extends ChangeNotifier {
     notifyListeners();
   }
 
+  List<payment_models.PaymentModel> get payments =>
+      _paymentRepository.payments;
+
+  List<payment_models.PaymentModel> get todayPayments {
+    final now = DateTime.now();
+    return payments.where((payment) {
+      final timestamp = payment.timestamp;
+      return timestamp.year == now.year &&
+          timestamp.month == now.month &&
+          timestamp.day == now.day;
+    }).toList();
+  }
+
+  List<payment_models.PaymentModel> get filteredDailyPayments {
+    final payments = todayPayments;
+    switch (_selectedConsumptionFilter) {
+      case 'para_llevar':
+        return payments.where((payment) => payment.tableNumber == null).toList();
+      case 'mesas':
+        return payments.where((payment) => payment.tableNumber != null).toList();
+      default:
+        return payments;
+    }
+  }
+
+  double get todayTotalSales {
+    return todayPayments.fold(
+      0.0,
+      (sum, payment) => sum + payment.totalAmount,
+    );
+  }
+
+  double get todayCardSales {
+    return todayPayments.fold(0.0, (sum, payment) {
+      if (payment.type == payment_models.PaymentType.card) {
+        return sum + payment.totalAmount;
+      }
+      if (payment.type == payment_models.PaymentType.mixed) {
+        final cashPortion = payment.cashApplied ?? 0;
+        return sum + (payment.totalAmount - cashPortion);
+      }
+      return sum;
+    });
+  }
+
+  double get todayCashSales {
+    return todayPayments.fold(0.0, (sum, payment) {
+      if (payment.type == payment_models.PaymentType.cash) {
+        return sum + payment.totalAmount;
+      }
+      if (payment.type == payment_models.PaymentType.mixed) {
+        return sum + (payment.cashApplied ?? 0);
+      }
+      return sum;
+    });
+  }
+
+  double get todayLocalSales {
+    return todayPayments
+        .where((payment) => payment.tableNumber != null)
+        .fold(0.0, (sum, payment) => sum + payment.totalAmount);
+  }
+
+  int get todayLocalOrdersCount {
+    return todayPayments.where((payment) => payment.tableNumber != null).length;
+  }
+
+  double get todayTakeawaySales {
+    return todayPayments
+        .where((payment) => payment.tableNumber == null)
+        .fold(0.0, (sum, payment) => sum + payment.totalAmount);
+  }
+
+  int get todayTakeawayOrdersCount {
+    return todayPayments.where((payment) => payment.tableNumber == null).length;
+  }
+
+  double get pendingCollectionsTotal {
+    return _tickets
+        .where((ticket) => ticket.status == payment_models.BillStatus.pending)
+        .fold(0.0, (sum, ticket) => sum + ticket.total);
+  }
+
+  int get pendingCollectionsCount {
+    return _tickets
+        .where((ticket) => ticket.status == payment_models.BillStatus.pending)
+        .length;
+  }
+
+  void _handlePaymentsChanged() {
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _paymentRepository.removeListener(_handlePaymentsChanged);
+    super.dispose();
+  }
+
   // Cambiar filtro de rol de usuario
   void setSelectedUserRole(String role) {
     _selectedUserRole = role;
@@ -1069,7 +1179,7 @@ class AdminController extends ChangeNotifier {
 
   // Paginación de usuarios
   int _currentUserPage = 1;
-  int _usersPerPage = 10;
+  final int _usersPerPage = 10;
 
   int get currentUserPage => _currentUserPage;
   int get usersPerPage => _usersPerPage;
@@ -1474,12 +1584,30 @@ class AdminController extends ChangeNotifier {
     }
   }
 
-  void deleteCustomCategory(String categoryName) {
-    // Solo permitir eliminar si no hay productos usando esta categoría
-    if (!_menuItems.any((item) => item.category == categoryName)) {
-      _customCategories.remove(categoryName);
-      notifyListeners();
+  bool deleteCustomCategory(String categoryName) {
+    if (!canDeleteCategory(categoryName)) {
+      return false;
     }
+
+    _customCategories.remove(categoryName);
+    if (_selectedMenuCategory == categoryName) {
+      _selectedMenuCategory = 'todos';
+    }
+    notifyListeners();
+    return true;
+  }
+
+  bool canDeleteCategory(String categoryName) {
+    return _customCategories.contains(categoryName) &&
+        !_menuItems.any((item) => item.category == categoryName);
+  }
+
+  bool isCustomCategory(String categoryName) {
+    return _customCategories.contains(categoryName);
+  }
+
+  bool categoryHasProducts(String categoryName) {
+    return _menuItems.any((item) => item.category == categoryName);
   }
 
   // Obtener todas las categorías (predeterminadas + personalizadas)

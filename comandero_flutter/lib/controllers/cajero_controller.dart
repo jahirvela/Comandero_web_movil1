@@ -1,7 +1,22 @@
 import 'package:flutter/material.dart';
 import '../models/payment_model.dart';
+import '../services/payment_repository.dart';
+import '../services/bill_repository.dart';
 
 class CajeroController extends ChangeNotifier {
+  CajeroController({
+    required PaymentRepository paymentRepository,
+    required BillRepository billRepository,
+  })  : _paymentRepository = paymentRepository,
+        _billRepository = billRepository {
+    _paymentRepository.addListener(_handlePaymentsChanged);
+    _billRepository.addListener(_handleBillsChanged);
+    _initializeData();
+  }
+
+  final PaymentRepository _paymentRepository;
+  final BillRepository _billRepository;
+
   // Estado de las facturas
   List<BillModel> _bills = [];
 
@@ -57,129 +72,9 @@ class CajeroController extends ChangeNotifier {
     }).toList();
   }
 
-  CajeroController() {
-    _initializeData();
-  }
-
   void _initializeData() {
-    // Inicializar facturas de ejemplo
-    _bills = [
-      BillModel(
-        id: 'BILL-001',
-        tableNumber: 5,
-        items: [
-          BillItem(
-            name: 'Taco de Barbacoa',
-            quantity: 3,
-            price: 22.0,
-            total: 66.0,
-          ),
-          BillItem(
-            name: 'Consomé Grande',
-            quantity: 1,
-            price: 35.0,
-            total: 35.0,
-          ),
-          BillItem(
-            name: 'Agua de Horchata',
-            quantity: 2,
-            price: 18.0,
-            total: 36.0,
-          ),
-        ],
-        subtotal: 137.0,
-        tax: 0.0,
-        discount: 0.0,
-        total: 137.0,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 226)),
-        waiterName: 'Mesero',
-      ),
-      BillModel(
-        id: 'BILL-002',
-        tableNumber: 3,
-        items: [
-          BillItem(name: 'Mix Barbacoa', quantity: 1, price: 95.0, total: 95.0),
-          BillItem(
-            name: 'Taco de Carnitas',
-            quantity: 2,
-            price: 22.0,
-            total: 44.0,
-          ),
-        ],
-        subtotal: 139.0,
-        tax: 0.0,
-        discount: 6.95,
-        total: 132.05,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 236)),
-        waiterName: 'Mesero',
-        waiterNotes: 'Separar cuenta para dos personas',
-        isPrinted: true,
-        printedBy: 'Ana Rodríguez',
-        requestedByWaiter: true,
-      ),
-      BillModel(
-        id: 'BILL-003',
-        tableNumber: null,
-        items: [
-          BillItem(
-            name: 'Quesadilla de Barbacoa',
-            quantity: 2,
-            price: 40.0,
-            total: 80.0,
-          ),
-          BillItem(name: 'Refresco', quantity: 2, price: 12.0, total: 24.0),
-        ],
-        subtotal: 104.0,
-        tax: 0.0,
-        discount: 0.0,
-        total: 104.0,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 211)),
-        isTakeaway: true,
-        customerName: 'Jahir',
-        customerPhone: '55 1234 5678',
-        waiterName: 'Mesero',
-      ),
-      BillModel(
-        id: 'BILL-004',
-        tableNumber: 7,
-        items: [
-          BillItem(name: 'Barbacoa por Kilo', quantity: 1, price: 180.0, total: 180.0),
-          BillItem(name: 'Tortillas', quantity: 1, price: 12.0, total: 12.0),
-          BillItem(name: 'Consomé Mediano', quantity: 2, price: 25.0, total: 50.0),
-        ],
-        subtotal: 242.0,
-        tax: 0.0,
-        discount: 0.0,
-        total: 242.0,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 206)),
-        waiterName: 'Mesero',
-        waiterNotes: 'Cliente solicita factura',
-        requestedByWaiter: true,
-      ),
-    ];
-
-    // Inicializar pagos de ejemplo
-    _payments = [
-      PaymentModel(
-        id: 'PAY-001',
-        type: PaymentType.cash,
-        totalAmount: 159.0,
-        cashReceived: 200.0,
-        tipAmount: 20.0,
-        tipDelivered: true,
-        cashApplied: 180.0,
-        change: 21.0,
-        notes: 'Pago en efectivo con propina',
-        tableNumber: 5,
-        billId: 'BILL-001',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 25)),
-        cashierName: 'Juan Martínez',
-      ),
-    ];
+    _bills = _billRepository.pendingBills;
+    _payments = List.from(_paymentRepository.payments);
 
     // Inicializar cierres de caja de ejemplo
     _cashClosures = [
@@ -255,49 +150,67 @@ class CajeroController extends ChangeNotifier {
 
   // Procesar pago
   void processPayment(PaymentModel payment) {
-    _payments.add(payment);
-
-    // Actualizar estado de la factura y removerla de la lista (ya está pagada)
-    _bills = _bills.where((bill) => bill.id != payment.billId).toList();
+    _paymentRepository.addPayment(payment);
+    _billRepository.removeBill(payment.billId);
 
     notifyListeners();
   }
 
   // Marcar factura como impresa
-  void markBillAsPrinted(String billId, String printedBy) {
-    _bills = _bills.map((bill) {
-      if (bill.id == billId) {
-        return bill.copyWith(
-          isPrinted: true,
-          printedBy: printedBy,
-        );
-      }
-      return bill;
-    }).toList();
+  void markBillAsPrinted(
+    String billId,
+    String printedBy, {
+    String? paymentId,
+  }) {
+    _billRepository.updateBill(
+      billId,
+      (bill) => bill.copyWith(
+        isPrinted: true,
+        printedBy: printedBy,
+      ),
+    );
+
+    if (paymentId != null) {
+      _paymentRepository.markAsPrinted(paymentId);
+    }
+
     notifyListeners();
   }
 
   // Agregar nueva factura
   void addBill(BillModel bill) {
-    _bills.insert(0, bill);
-    notifyListeners();
+    _billRepository.addBill(bill);
   }
 
   // Cancelar factura
   void cancelBill(String billId) {
-    _bills = _bills.map((bill) {
-      if (bill.id == billId) {
-        return bill.copyWith(status: BillStatus.cancelled);
-      }
-      return bill;
-    }).toList();
-    notifyListeners();
+    _billRepository.updateBill(
+      billId,
+      (bill) => bill.copyWith(status: BillStatus.cancelled),
+    );
   }
 
   // Enviar cierre de caja
   void sendCashClose(CashCloseModel cashClose) {
     _cashClosures.insert(0, cashClose);
     notifyListeners();
+  }
+
+  void _handlePaymentsChanged() {
+    _payments = List.from(_paymentRepository.payments);
+    notifyListeners();
+  }
+
+  void _handleBillsChanged() {
+    _bills = _billRepository.pendingBills;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _paymentRepository.removeListener(_handlePaymentsChanged);
+    _billRepository.removeListener(_handleBillsChanged);
+    super.dispose();
   }
 
   // Obtener estadísticas

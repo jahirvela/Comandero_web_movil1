@@ -233,204 +233,92 @@ class _MenuViewState extends State<MenuView> {
         final isTablet = constraints.maxWidth > 600;
         final isDesktop = constraints.maxWidth > 900;
 
-        return Scaffold(
-          backgroundColor: AppColors.background,
-          body: Column(
-            children: [
-              // Header con barra naranja
-              _buildHeader(context, isTablet),
-
-              // Contenido principal
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Barra de búsqueda
-                      _buildSearchBar(isTablet),
-                      const SizedBox(height: 16),
-
-                      // Filtros de categoría
-                      _buildCategoryFilters(isTablet),
-                      const SizedBox(height: 16),
-
-                      // Especialidad del día
-                      _buildSpecialtyCard(isTablet),
-                      const SizedBox(height: 24),
-
-                      // Grid de productos
-                      _buildProductsGrid(isTablet, isDesktop),
-                      const SizedBox(height: 24),
-
-                      // Mensaje de disponibilidad
-                      _buildAvailabilityMessage(isTablet),
-                    ],
-                  ),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                isTablet ? 24.0 : 16.0,
+                isTablet ? 24.0 : 16.0,
+                isTablet ? 24.0 : 16.0,
+                isTablet ? 12.0 : 8.0,
+              ),
+              child: _buildHeader(context, isTablet),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isTablet ? 24.0 : 16.0,
+                  vertical: isTablet ? 8.0 : 8.0,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildSearchBar(isTablet),
+                    const SizedBox(height: 16),
+                    _buildCategoryFilters(isTablet),
+                    const SizedBox(height: 16),
+                    _buildSpecialtyCard(isTablet),
+                    const SizedBox(height: 24),
+                    _buildProductsGrid(
+                      constraints.maxWidth,
+                      isTablet,
+                      isDesktop,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildAvailabilityMessage(isTablet),
+                  ],
                 ),
               ),
-            ],
-          ),
-          // Botón flotante de estado
-          floatingActionButton: _buildFloatingStatusButton(isTablet),
+            ),
+          ],
         );
       },
     );
   }
 
   Widget _buildHeader(BuildContext context, bool isTablet) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.primary,
-        boxShadow: [
-          BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
-        ],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-          child: Row(
+    final controller = context.watch<MeseroController>();
+    final tableText = controller.selectedTable != null
+        ? 'Mesa ${controller.selectedTable!.number} • Atendiendo'
+        : 'Mesero';
+
+    return Row(
+      children: [
+        IconButton(
+          onPressed: () {
+            controller.setCurrentView('table');
+          },
+          icon: const Icon(Icons.arrow_back),
+          style: IconButton.styleFrom(
+            backgroundColor: AppColors.secondary,
+            foregroundColor: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Botón de regreso
-              IconButton(
-                onPressed: () {
-                  context.read<MeseroController>().setCurrentView('table');
-                },
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white.withValues(alpha: 0.1),
+              Text(
+                'Comandix',
+                style: TextStyle(
+                  fontSize: isTablet ? 24.0 : 20.0,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
                 ),
               ),
-              const SizedBox(width: 16),
-
-              // Logo y título
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Comandix',
-                      style: TextStyle(
-                        fontSize: isTablet ? 24.0 : 20.0,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      'Juan Martínez • Mesero',
-                      style: TextStyle(
-                        fontSize: isTablet ? 16.0 : 14.0,
-                        color: Colors.white.withValues(alpha: 0.8),
-                      ),
-                    ),
-                  ],
+              Text(
+                tableText,
+                style: TextStyle(
+                  fontSize: isTablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
                 ),
-              ),
-
-              // Iconos de acción
-              Row(
-                children: [
-                  // Notificaciones
-                  Stack(
-                    children: [
-                      IconButton(
-                        onPressed: () {
-                          // TODO: Implementar notificaciones
-                        },
-                        icon: const Icon(
-                          Icons.notifications_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Positioned(
-                        right: 8,
-                        top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: AppColors.error,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 20,
-                            minHeight: 20,
-                          ),
-                          child: const Text(
-                            '1',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  // Carrito
-                  Stack(
-                    children: [
-                      IconButton(
-                        onPressed: () {
-                          context.read<MeseroController>().setCurrentView(
-                            'cart',
-                          );
-                        },
-                        icon: const Icon(
-                          Icons.shopping_cart_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Consumer<MeseroController>(
-                        builder: (context, controller, child) {
-                          final cartItems = controller.totalCartItems;
-                          if (cartItems > 0) {
-                            return Positioned(
-                              right: 8,
-                              top: 8,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warning,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                constraints: const BoxConstraints(
-                                  minWidth: 20,
-                                  minHeight: 20,
-                                ),
-                                child: Text(
-                                  '$cartItems',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            );
-                          }
-                          return const SizedBox.shrink();
-                        },
-                      ),
-                    ],
-                  ),
-
-                  // Salir
-                  IconButton(
-                    onPressed: () {
-                      // TODO: Implementar logout
-                    },
-                    icon: const Icon(Icons.logout, color: Colors.white),
-                  ),
-                ],
               ),
             ],
           ),
         ),
-      ),
+      ],
     );
   }
 
@@ -565,18 +453,31 @@ class _MenuViewState extends State<MenuView> {
     );
   }
 
-  Widget _buildProductsGrid(bool isTablet, bool isDesktop) {
+  Widget _buildProductsGrid(double maxWidth, bool isTablet, bool isDesktop) {
     final items = filteredItems;
-    final crossAxisCount = isDesktop ? 4 : (isTablet ? 3 : 2);
+    final horizontalPadding = isTablet ? 48.0 : 32.0;
+    final availableWidth = (maxWidth - horizontalPadding).clamp(
+      240.0,
+      maxWidth,
+    );
+    final targetWidth = isDesktop
+        ? 220.0
+        : isTablet
+        ? 200.0
+        : 160.0;
+    final crossAxisCount = (availableWidth / targetWidth).floor().clamp(
+      1,
+      isDesktop ? 6 : 4,
+    );
 
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,
-        crossAxisSpacing: isTablet ? 16.0 : 12.0,
-        mainAxisSpacing: isTablet ? 16.0 : 12.0,
-        childAspectRatio: 0.75,
+        crossAxisSpacing: isTablet ? 12.0 : 10.0,
+        mainAxisSpacing: isTablet ? 12.0 : 10.0,
+        childAspectRatio: isTablet ? 0.62 : 0.6,
       ),
       itemCount: items.length,
       itemBuilder: (context, index) {
@@ -586,199 +487,126 @@ class _MenuViewState extends State<MenuView> {
   }
 
   Widget _buildProductCard(Map<String, dynamic> item, bool isTablet) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.border),
-      ),
-      child: InkWell(
-        onTap: () {
-          _addToCart(item);
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Imagen del producto (placeholder)
-              Container(
-                height: isTablet ? 120.0 : 100.0,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: AppColors.secondary,
-                  borderRadius: BorderRadius.circular(8),
-                  image: DecorationImage(
-                    image: AssetImage(
-                      'assets/ui_reference/${item['image']}.png',
-                    ),
-                    fit: BoxFit.cover,
-                    onError: (exception, stackTrace) {
-                      // Si no existe la imagen, mostrar icono por defecto
-                    },
-                  ),
-                ),
-                child: item['image'] == null
-                    ? Icon(
-                        Icons.restaurant,
-                        size: isTablet ? 40.0 : 32.0,
-                        color: AppColors.textSecondary.withValues(alpha: 0.3),
-                      )
-                    : null,
-              ),
-              const SizedBox(height: 8),
-
-              // Nombre del producto
-              Text(
-                item['name'],
-                style: TextStyle(
-                  fontSize: isTablet ? 16.0 : 14.0,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-
-              // Descripción
-              Text(
-                item['description'],
-                style: TextStyle(
-                  fontSize: isTablet ? 12.0 : 10.0,
-                  color: AppColors.textSecondary,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 8),
-
-              // Precio y etiquetas
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '\$${item['price']}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 18.0 : 16.0,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      if (item['hot'] == true) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.error.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: AppColors.error.withValues(alpha: 0.3),
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.local_fire_department,
-                                size: isTablet ? 12.0 : 10.0,
-                                color: AppColors.error,
-                              ),
-                              const SizedBox(width: 2),
-                              Text(
-                                'Picante',
-                                style: TextStyle(
-                                  fontSize: isTablet ? 10.0 : 8.0,
-                                  color: AppColors.error,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                      if (item['specialty'] == true) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.warning.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: AppColors.warning.withValues(alpha: 0.3),
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.star,
-                                size: isTablet ? 12.0 : 10.0,
-                                color: AppColors.warning,
-                              ),
-                              const SizedBox(width: 2),
-                              Text(
-                                'Especialidad',
-                                style: TextStyle(
-                                  fontSize: isTablet ? 10.0 : 8.0,
-                                  color: AppColors.warning,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                      if (item['sizes'] == true) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.info.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: AppColors.info.withValues(alpha: 0.3),
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.straighten,
-                                size: isTablet ? 12.0 : 10.0,
-                                color: AppColors.info,
-                              ),
-                              const SizedBox(width: 2),
-                              Text(
-                                'Tamaños',
-                                style: TextStyle(
-                                  fontSize: isTablet ? 10.0 : 8.0,
-                                  color: AppColors.info,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ],
+    return InkWell(
+      onTap: () => _addToCart(item),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: AppColors.borderFocus.withValues(alpha: 0.35),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
+        padding: EdgeInsets.all(isTablet ? 18.0 : 14.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    item['name'],
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '\$${item['price']}',
+                  style: TextStyle(
+                    fontSize: isTablet ? 18.0 : 16.0,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              item['description'],
+              style: TextStyle(
+                fontSize: isTablet ? 13.0 : 11.0,
+                color: AppColors.textSecondary,
+                height: 1.35,
+              ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (item['hot'] == true)
+                  _buildChip(
+                    label: 'Picante',
+                    color: AppColors.error,
+                    icon: Icons.local_fire_department,
+                    isTablet: isTablet,
+                  ),
+                if (item['specialty'] == true)
+                  _buildChip(
+                    label: 'Especialidad',
+                    color: AppColors.warning,
+                    icon: Icons.star,
+                    isTablet: isTablet,
+                  ),
+                if (item['sizes'] == true)
+                  _buildChip(
+                    label: 'Tamaños',
+                    color: AppColors.info,
+                    icon: Icons.straighten,
+                    isTablet: isTablet,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChip({
+    required String label,
+    required Color color,
+    required IconData icon,
+    required bool isTablet,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: isTablet ? 12.0 : 10.0, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTablet ? 11.0 : 9.5,
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -812,27 +640,9 @@ class _MenuViewState extends State<MenuView> {
     );
   }
 
-  Widget _buildFloatingStatusButton(bool isTablet) {
-    return Container(
-      margin: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-      child: FloatingActionButton.extended(
-        onPressed: () {
-          // TODO: Implementar cambio de estado del puesto
-        },
-        backgroundColor: AppColors.success,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.check_circle),
-        label: Text(
-          isTablet ? 'Puesto Abierto' : 'Abierto',
-          style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
-        ),
-      ),
-    );
-  }
-
   void _addToCart(Map<String, dynamic> item) async {
     final controller = context.read<MeseroController>();
-    
+
     // Verificar que hay una mesa seleccionada
     if (controller.selectedTable == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -847,7 +657,7 @@ class _MenuViewState extends State<MenuView> {
 
     // Abrir modal de modificadores
     final result = await ProductModifierModal.show(context, item);
-    
+
     if (result != null && mounted) {
       // Crear ProductModel desde el item
       final product = ProductModel(
@@ -878,18 +688,12 @@ class _MenuViewState extends State<MenuView> {
       // Mostrar confirmación
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${item['name']} agregado al pedido'),
+          content: Text('Producto agregado: ${item['name']}'),
           backgroundColor: AppColors.success,
-          duration: const Duration(seconds: 2),
         ),
       );
 
-      // Regresar a la vista de mesa después de agregar
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) {
-          controller.setCurrentView('table');
-        }
-      });
+      controller.setCurrentView('table');
     }
   }
 

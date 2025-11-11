@@ -334,11 +334,13 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                       // Categoría
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: _selectedCategory,
+                          initialValue: _selectedCategory,
                           onChanged: (value) {
-                            setState(() {
-                              _selectedCategory = value!;
-                            });
+                            if (value != null) {
+                              setState(() {
+                                _selectedCategory = value;
+                              });
+                            }
                           },
                           decoration: InputDecoration(
                             labelText: 'Categoría',
@@ -355,12 +357,12 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                               value: 'todas',
                               child: Text('Todas las categorías'),
                             ),
-                            ...controller.getInventoryCategories().map(
-                              (category) => DropdownMenuItem(
+                            for (final category
+                                in controller.getInventoryCategories())
+                              DropdownMenuItem(
                                 value: category,
                                 child: Text(category),
                               ),
-                            ),
                           ],
                         ),
                       ),
@@ -369,11 +371,13 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                       // Ordenar
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: _sortBy,
+                          initialValue: _sortBy,
                           onChanged: (value) {
-                            setState(() {
-                              _sortBy = value!;
-                            });
+                            if (value != null) {
+                              setState(() {
+                                _sortBy = value;
+                              });
+                            }
                           },
                           decoration: InputDecoration(
                             labelText: 'Ordenar por',
@@ -466,11 +470,13 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                           // Categoría
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: _selectedCategory,
+                              initialValue: _selectedCategory,
                               onChanged: (value) {
-                                setState(() {
-                                  _selectedCategory = value!;
-                                });
+                                if (value != null) {
+                                  setState(() {
+                                    _selectedCategory = value;
+                                  });
+                                }
                               },
                               decoration: InputDecoration(
                                 labelText: 'Categoría',
@@ -483,12 +489,12 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                                   value: 'todas',
                                   child: Text('Todas'),
                                 ),
-                                ...controller.getInventoryCategories().map(
-                                  (category) => DropdownMenuItem(
+                                for (final category
+                                    in controller.getInventoryCategories())
+                                  DropdownMenuItem(
                                     value: category,
                                     child: Text(category),
                                   ),
-                                ),
                               ],
                             ),
                           ),
@@ -497,11 +503,13 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                           // Ordenar
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: _sortBy,
+                              initialValue: _sortBy,
                               onChanged: (value) {
-                                setState(() {
-                                  _sortBy = value!;
-                                });
+                                if (value != null) {
+                                  setState(() {
+                                    _sortBy = value;
+                                  });
+                                }
                               },
                               decoration: InputDecoration(
                                 labelText: 'Ordenar',

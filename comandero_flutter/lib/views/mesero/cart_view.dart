@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
+import '../../models/product_model.dart';
 import '../../utils/app_colors.dart';
 
 class CartView extends StatefulWidget {
@@ -210,7 +211,7 @@ class _CartViewState extends State<CartView> {
     );
   }
 
-  Widget _buildOrderItems(List cart, bool isTablet) {
+  Widget _buildOrderItems(List<CartItem> cart, bool isTablet) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -238,7 +239,13 @@ class _CartViewState extends State<CartView> {
     );
   }
 
-  Widget _buildCartItem(dynamic item, bool isTablet) {
+  Widget _buildCartItem(CartItem item, bool isTablet) {
+    final product = item.product;
+    final quantity = (item.customizations['quantity'] as int?) ?? 1;
+    final kitchenNotes = (item.customizations['kitchenNotes'] as String?) ?? '';
+    final extras =
+        (item.customizations['extras'] as List<dynamic>?) ?? const [];
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
@@ -255,7 +262,7 @@ class _CartViewState extends State<CartView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  item['name'] ?? 'Producto',
+                  product.name,
                   style: TextStyle(
                     fontSize: isTablet ? 16.0 : 14.0,
                     fontWeight: FontWeight.w600,
@@ -264,13 +271,13 @@ class _CartViewState extends State<CartView> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Cantidad: ${item['quantity'] ?? 1}',
+                  'Cantidad: $quantity',
                   style: TextStyle(
                     fontSize: isTablet ? 14.0 : 12.0,
                     color: AppColors.textSecondary,
                   ),
                 ),
-                if (item['notes'] != null && item['notes'].isNotEmpty) ...[
+                if (kitchenNotes.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -285,13 +292,44 @@ class _CartViewState extends State<CartView> {
                       ),
                     ),
                     child: Text(
-                      'Nota: ${item['notes']}',
+                      'Nota: $kitchenNotes',
                       style: TextStyle(
                         fontSize: isTablet ? 12.0 : 10.0,
                         color: AppColors.warning,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
+                  ),
+                ],
+                if (extras.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: extras
+                        .map<Widget>(
+                          (extra) => Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.info.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: AppColors.info.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Text(
+                              extra.toString(),
+                              style: TextStyle(
+                                fontSize: isTablet ? 11.0 : 9.0,
+                                color: AppColors.info,
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
               ],
@@ -302,7 +340,7 @@ class _CartViewState extends State<CartView> {
           Column(
             children: [
               Text(
-                '\$${item['price']?.toStringAsFixed(0) ?? '0'}',
+                '\$${product.price.toStringAsFixed(0)}',
                 style: TextStyle(
                   fontSize: isTablet ? 18.0 : 16.0,
                   fontWeight: FontWeight.bold,
@@ -312,7 +350,7 @@ class _CartViewState extends State<CartView> {
               const SizedBox(height: 8),
               IconButton(
                 onPressed: () {
-                  // TODO: Implementar eliminar del carrito
+                  context.read<MeseroController>().removeFromCart(item.id);
                 },
                 icon: const Icon(Icons.delete_outline),
                 color: AppColors.error,
@@ -628,7 +666,9 @@ class _CartViewState extends State<CartView> {
                 setState(() {
                   tipAmount = double.tryParse(value) ?? 0.0;
                   // Calcular porcentaje equivalente
-                  final subtotal = context.read<MeseroController>().calculateTotal();
+                  final subtotal = context
+                      .read<MeseroController>()
+                      .calculateTotal();
                   if (subtotal > 0) {
                     tipPercentage = (tipAmount / subtotal) * 100;
                   }
@@ -663,14 +703,9 @@ class _CartViewState extends State<CartView> {
         style: ElevatedButton.styleFrom(
           backgroundColor: isSelected ? AppColors.primary : AppColors.secondary,
           foregroundColor: isSelected ? Colors.white : AppColors.textPrimary,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
-        child: Text(
-          label,
-          style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
-        ),
+        child: Text(label, style: TextStyle(fontSize: isTablet ? 14.0 : 12.0)),
       ),
     );
   }
@@ -798,11 +833,7 @@ class _CartViewState extends State<CartView> {
           height: isTablet ? 56.0 : 48.0,
           child: ElevatedButton.icon(
             onPressed: () {
-              _showSendToKitchenConfirmation(
-                context,
-                controller,
-                isTablet,
-              );
+              _showSendToKitchenConfirmation(context, controller, isTablet);
             },
             icon: const Icon(Icons.send),
             label: Text(
@@ -879,7 +910,7 @@ class _CartViewState extends State<CartView> {
           ),
           TextButton(
             onPressed: () {
-              // TODO: Implementar limpiar carrito
+              controller.clearCart();
               Navigator.pop(context);
             },
             child: const Text('Limpiar'),
@@ -896,7 +927,7 @@ class _CartViewState extends State<CartView> {
   ) {
     final cart = controller.getCurrentCart();
     final table = controller.selectedTable;
-    
+
     if (cart.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -909,11 +940,9 @@ class _CartViewState extends State<CartView> {
 
     showDialog(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             Icon(
@@ -997,12 +1026,12 @@ class _CartViewState extends State<CartView> {
                   customerName: isTakeaway ? customerName : null,
                   customerPhone: isTakeaway ? customerPhone : null,
                 );
-                
+
                 Navigator.of(dialogContext).pop();
-                
+
                 // Regresar a la vista de mesa
                 controller.setCurrentView('table');
-                
+
                 // Mostrar confirmación
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -1015,9 +1044,7 @@ class _CartViewState extends State<CartView> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.success,
                 foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(
-                  vertical: isTablet ? 16.0 : 14.0,
-                ),
+                padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),

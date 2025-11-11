@@ -14,7 +14,6 @@ class UsersReportsWebView extends StatefulWidget {
 class _UsersReportsWebViewState extends State<UsersReportsWebView>
     with TickerProviderStateMixin {
   late TabController _tabController;
-  String _selectedPeriod = 'hoy';
   String _selectedUserType = 'todos';
   String _searchQuery = '';
   bool _showInactiveUsers = false;
@@ -64,246 +63,206 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
   }
 
   Widget _buildHeader(AdminController controller) {
-    final stats = controller.dashboardStats;
-
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.people_alt, color: AppColors.primary, size: 28),
-              const SizedBox(width: 12),
-              Text(
-                'Gestión de Usuarios y Reportes',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          // Estadísticas principales
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Total Usuarios',
-                  controller.users.length.toString(),
-                  Icons.people,
-                  Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Usuarios Activos',
-                  controller.users.where((u) => u.isActive).length.toString(),
-                  Icons.person,
-                  Colors.green,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Ventas Hoy',
-                  '\$${stats.todaySales.toStringAsFixed(2)}',
-                  Icons.trending_up,
-                  Colors.orange,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Crecimiento',
-                  '${stats.salesGrowth.toStringAsFixed(1)}%',
-                  Icons.show_chart,
-                  Colors.purple,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 32, color: color),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(title, style: TextStyle(fontSize: 14, color: color)),
-        ],
-      ),
-    );
+    // No mostrar header aquí, se mostrará en controls
+    return const SizedBox.shrink();
   }
 
   Widget _buildControlsSection(AdminController controller) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.border)),
-      ),
-      child: Column(
-        children: [
-          // Tabs
-          TabBar(
-            controller: _tabController,
-            labelColor: AppColors.primary,
-            unselectedLabelColor: AppColors.textSecondary,
-            indicatorColor: AppColors.primary,
-            tabs: const [
-              Tab(text: 'Usuarios', icon: Icon(Icons.people)),
-              Tab(text: 'Reportes', icon: Icon(Icons.analytics)),
-              Tab(text: 'Análisis', icon: Icon(Icons.bar_chart)),
-            ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isDesktop = constraints.maxWidth > 1200;
+        final isTablet = constraints.maxWidth > 800;
+
+        return Container(
+          padding: EdgeInsets.all(isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0)),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: AppColors.border)),
           ),
-          const SizedBox(height: 20),
-
-          // Filtros y controles
-          Row(
+          child: Column(
             children: [
-              // Filtro de período
-              Expanded(
-                flex: 2,
-                child: DropdownButtonFormField<String>(
-                  value: _selectedPeriod,
-                  decoration: InputDecoration(
-                    labelText: 'Período',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Gestión de Usuarios',
+                          style: TextStyle(
+                            fontSize: isDesktop
+                                ? 24.0
+                                : (isTablet ? 20.0 : 18.0),
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          'Administra los usuarios y sus permisos en el sistema',
+                          style: TextStyle(
+                            fontSize: isDesktop
+                                ? 14.0
+                                : (isTablet ? 12.0 : 10.0),
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'hoy', child: Text('Hoy')),
-                    DropdownMenuItem(
-                      value: 'semana',
-                      child: Text('Esta Semana'),
+                  ElevatedButton.icon(
+                    onPressed: () => _showAddUserDialog(controller),
+                    icon: Icon(
+                      Icons.add,
+                      size: isDesktop ? 20.0 : (isTablet ? 18.0 : 16.0),
                     ),
-                    DropdownMenuItem(value: 'mes', child: Text('Este Mes')),
-                    DropdownMenuItem(value: 'año', child: Text('Este Año')),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedPeriod = value!;
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(width: 16),
-
-              // Filtro de tipo de usuario
-              Expanded(
-                flex: 2,
-                child: DropdownButtonFormField<String>(
-                  value: _selectedUserType,
-                  decoration: InputDecoration(
-                    labelText: 'Tipo de Usuario',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                    label: Text('Nuevo Usuario'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade700,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0),
+                        vertical: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                      ),
                     ),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'todos', child: Text('Todos')),
-                    DropdownMenuItem(
-                      value: 'admin',
-                      child: Text('Administradores'),
-                    ),
-                    DropdownMenuItem(value: 'mesero', child: Text('Meseros')),
-                    DropdownMenuItem(
-                      value: 'cocinero',
-                      child: Text('Cocineros'),
-                    ),
-                    DropdownMenuItem(value: 'cajero', child: Text('Cajeros')),
-                    DropdownMenuItem(
-                      value: 'capitan',
-                      child: Text('Capitanes'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedUserType = value!;
-                    });
-                  },
-                ),
+                ],
               ),
-              const SizedBox(width: 16),
+              const SizedBox(height: 20),
 
-              // Búsqueda
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  decoration: InputDecoration(
-                    labelText: 'Buscar usuarios...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  onChanged: (value) {
-                    setState(() {
-                      _searchQuery = value;
-                    });
-                  },
-                ),
+              // Tabs
+              TabBar(
+                controller: _tabController,
+                labelColor: AppColors.primary,
+                unselectedLabelColor: AppColors.textSecondary,
+                indicatorColor: AppColors.primary,
+                tabs: const [
+                  Tab(text: 'Usuarios', icon: Icon(Icons.people)),
+                  Tab(text: 'Reportes', icon: Icon(Icons.analytics)),
+                  Tab(text: 'Análisis', icon: Icon(Icons.bar_chart)),
+                ],
               ),
-              const SizedBox(width: 16),
+              const SizedBox(height: 20),
 
-              // Mostrar usuarios inactivos
+              // Filtros y controles
               Row(
                 children: [
-                  Checkbox(
-                    value: _showInactiveUsers,
-                    onChanged: (value) {
-                      setState(() {
-                        _showInactiveUsers = value!;
-                      });
-                    },
+                  // Búsqueda
+                  Expanded(
+                    flex: 3,
+                    child: TextField(
+                      decoration: InputDecoration(
+                        labelText: 'Buscar por nombre o usuario...',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                        });
+                      },
+                    ),
                   ),
-                  const Text('Mostrar inactivos'),
+                  const SizedBox(width: 16),
+
+                  // Filtro de roles
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedUserType,
+                      decoration: InputDecoration(
+                        labelText: 'Todos los roles',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'todos',
+                          child: Text('Todos los roles'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'admin',
+                          child: Text('Administradores'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'mesero',
+                          child: Text('Meseros'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'cocinero',
+                          child: Text('Cocineros'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'cajero',
+                          child: Text('Cajeros'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'capitan',
+                          child: Text('Capitanes'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedUserType = value!;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+
+                  // Filtro de estados
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _showInactiveUsers
+                          ? 'inactivos'
+                          : 'activos',
+                      decoration: InputDecoration(
+                        labelText: 'Todos los estados',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'todos',
+                          child: Text('Todos los estados'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'activos',
+                          child: Text('Activos'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'inactivos',
+                          child: Text('Inactivos'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == 'todos') {
+                            _showInactiveUsers = true;
+                          } else {
+                            _showInactiveUsers = value == 'inactivos';
+                          }
+                        });
+                      },
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -435,127 +394,249 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
   }
 
   Widget _buildUsersTable(AdminController controller, List<AdminUser> users) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        children: [
-          // Header de la tabla
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.1),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.people, color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Lista de Usuarios (${users.length})',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isDesktop = constraints.maxWidth > 1200;
+        final isTablet = constraints.maxWidth > 800;
 
-          // Tabla
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('Usuario')),
-                DataColumn(label: Text('Rol')),
-                DataColumn(label: Text('Estado')),
-                DataColumn(label: Text('Último Acceso')),
-                DataColumn(label: Text('Acciones')),
-              ],
-              rows: users
-                  .map((user) => _buildUserRow(controller, user))
-                  .toList(),
-            ),
+        return Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
           ),
-        ],
-      ),
-    );
-  }
-
-  DataRow _buildUserRow(AdminController controller, AdminUser user) {
-    return DataRow(
-      cells: [
-        DataCell(
-          Row(
+          child: Column(
             children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: _getRoleColor(
-                  user.roles.isNotEmpty ? user.roles.first : '',
-                ).withValues(alpha: 0.2),
-                child: Icon(
-                  _getRoleIcon(user.roles.isNotEmpty ? user.roles.first : ''),
-                  size: 16,
-                  color: _getRoleColor(
-                    user.roles.isNotEmpty ? user.roles.first : '',
+              // Header de la tabla
+              Container(
+                padding: EdgeInsets.all(
+                  isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0),
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(12),
+                    topRight: Radius.circular(12),
                   ),
                 ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.people,
+                      color: AppColors.primary,
+                      size: isDesktop ? 20.0 : (isTablet ? 18.0 : 16.0),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Lista de Usuarios (${users.length})',
+                      style: TextStyle(
+                        fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    user.name,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    user.username,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
+
+              // Tabla
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: constraints.maxWidth > 1200
+                          ? 1200
+                          : constraints.maxWidth,
+                    ),
+                    child: DataTable(
+                      columnSpacing: 24,
+                      columns: [
+                        DataColumn(
+                          label: Text(
+                            'Nombre completo',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Usuario',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Contraseña',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Teléfono',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Roles',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Estado',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Fecha de creación',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            '',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isDesktop
+                                  ? 14.0
+                                  : (isTablet ? 12.0 : 10.0),
+                            ),
+                          ),
+                        ),
+                      ],
+                      rows: users
+                          .map(
+                            (user) => _buildUserRow(
+                              controller,
+                              user,
+                              isTablet,
+                              isDesktop,
+                            ),
+                          )
+                          .toList(),
                     ),
                   ),
-                ],
+                ),
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  DataRow _buildUserRow(
+    AdminController controller,
+    AdminUser user,
+    bool isTablet,
+    bool isDesktop,
+  ) {
+    String formatDate(DateTime date) {
+      return '${date.day}/${date.month}/${date.year}';
+    }
+
+    return DataRow(
+      cells: [
+        DataCell(
+          Text(
+            user.name,
+            style: TextStyle(
+              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
         DataCell(
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: _getRoleColor(
-                user.roles.isNotEmpty ? user.roles.first : '',
-              ).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: _getRoleColor(
-                  user.roles.isNotEmpty ? user.roles.first : '',
-                ).withValues(alpha: 0.3),
-              ),
+          Text(
+            user.username,
+            style: TextStyle(
+              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              color: AppColors.textSecondary,
             ),
-            child: Text(
-              user.roles.isNotEmpty
-                  ? user.roles.first.toUpperCase()
-                  : 'SIN ROL',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: _getRoleColor(
-                  user.roles.isNotEmpty ? user.roles.first : '',
+          ),
+        ),
+        DataCell(
+          Text(
+            user.password,
+            style: TextStyle(
+              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              color: AppColors.textSecondary,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            user.phone ?? '-',
+            style: TextStyle(
+              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+        DataCell(
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: user.roles.map((role) {
+              final roleColor = _getRoleColor(role);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: roleColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: roleColor.withValues(alpha: 0.5),
+                    width: 1.5,
+                  ),
                 ),
-              ),
-            ),
+                child: Text(
+                  role.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: isDesktop ? 11.0 : (isTablet ? 10.0 : 9.0),
+                    fontWeight: FontWeight.w600,
+                    color: roleColor,
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ),
         DataCell(
@@ -563,49 +644,70 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: user.isActive
-                  ? Colors.green.withValues(alpha: 0.1)
-                  : Colors.red.withValues(alpha: 0.1),
+                  ? Colors.green.shade700.withValues(alpha: 0.15)
+                  : Colors.red.shade700.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: user.isActive
-                    ? Colors.green.withValues(alpha: 0.3)
-                    : Colors.red.withValues(alpha: 0.3),
+                    ? Colors.green.shade700.withValues(alpha: 0.5)
+                    : Colors.red.shade700.withValues(alpha: 0.5),
+                width: 1.5,
               ),
             ),
             child: Text(
               user.isActive ? 'ACTIVO' : 'INACTIVO',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: isDesktop ? 11.0 : (isTablet ? 10.0 : 9.0),
                 fontWeight: FontWeight.w600,
-                color: user.isActive ? Colors.green : Colors.red,
+                color: user.isActive
+                    ? Colors.green.shade700
+                    : Colors.red.shade700,
               ),
             ),
           ),
         ),
         DataCell(
           Text(
-            _formatDateTime(user.lastLogin ?? user.createdAt),
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            formatDate(user.createdAt),
+            style: TextStyle(
+              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              color: AppColors.textSecondary,
+            ),
           ),
         ),
         DataCell(
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                onPressed: () => _showEditUserDialog(controller, user),
-                icon: const Icon(Icons.edit, size: 16),
-                color: Colors.blue,
+          PopupMenuButton<String>(
+            icon: Icon(
+              Icons.more_vert,
+              size: isDesktop ? 20.0 : (isTablet ? 18.0 : 16.0),
+            ),
+            onSelected: (value) {
+              if (value == 'edit') {
+                _showEditUserDialog(controller, user);
+              } else if (value == 'delete') {
+                _showDeleteUserConfirmation(controller, user);
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'edit',
+                child: Row(
+                  children: [
+                    Icon(Icons.edit, size: 16, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Editar'),
+                  ],
+                ),
               ),
-              IconButton(
-                onPressed: () => _showUserDetails(controller, user),
-                icon: const Icon(Icons.visibility, size: 16),
-                color: Colors.green,
-              ),
-              IconButton(
-                onPressed: () => _showDeleteUserConfirmation(controller, user),
-                icon: const Icon(Icons.delete, size: 16),
-                color: Colors.red,
+              const PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete, size: 16, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Eliminar'),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1106,7 +1208,9 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
           .where(
             (user) =>
                 user.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-                user.username.toLowerCase().contains(_searchQuery.toLowerCase()),
+                user.username.toLowerCase().contains(
+                  _searchQuery.toLowerCase(),
+                ),
           )
           .toList();
     }
@@ -1148,39 +1252,18 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
   Color _getRoleColor(String role) {
     switch (role) {
       case 'admin':
-        return Colors.red;
+        return Colors.red.shade700;
       case 'mesero':
-        return Colors.orange;
+        return Colors.blue.shade700;
       case 'cocinero':
-        return Colors.green;
+        return Colors.orange.shade700;
       case 'cajero':
-        return Colors.blue;
+        return Colors.green.shade700;
       case 'capitan':
-        return Colors.purple;
+        return Colors.purple.shade700;
       default:
-        return Colors.grey;
+        return Colors.grey.shade700;
     }
-  }
-
-  IconData _getRoleIcon(String role) {
-    switch (role) {
-      case 'admin':
-        return Icons.admin_panel_settings;
-      case 'mesero':
-        return Icons.person;
-      case 'cocinero':
-        return Icons.restaurant_menu;
-      case 'cajero':
-        return Icons.calculate;
-      case 'capitan':
-        return Icons.military_tech;
-      default:
-        return Icons.person;
-    }
-  }
-
-  String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
   // Métodos de diálogos y acciones
@@ -1206,22 +1289,6 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
       builder: (context) => AlertDialog(
         title: const Text('Editar Usuario'),
         content: Text('Editar usuario: ${user.name}'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showUserDetails(AdminController controller, AdminUser user) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Detalles del Usuario'),
-        content: Text('Detalles de: ${user.name}'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),

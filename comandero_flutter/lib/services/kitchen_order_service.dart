@@ -79,6 +79,30 @@ class KitchenOrderService {
     _cocineroController!.addOrder(order);
   }
 
+  void sendAlertToKitchen({
+    required String tableNumber,
+    required String orderId,
+    required String alertType,
+    required String reason,
+    String? details,
+    String priority = 'Normal',
+  }) {
+    if (_cocineroController == null) return;
+
+    final alert = KitchenAlert(
+      id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
+      tableNumber: tableNumber,
+      orderId: orderId,
+      type: alertType,
+      reason: reason,
+      details: details,
+      priority: priority,
+      timestamp: DateTime.now(),
+    );
+
+    _cocineroController!.addAlert(alert);
+  }
+
   // Notificar cuando pedido está listo (de Cocinero a Mesero)
   void notifyOrderReady({
     required String orderId,

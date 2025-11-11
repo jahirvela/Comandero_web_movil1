@@ -1,10 +1,11 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../models/payment_model.dart';
+
 import '../../controllers/cajero_controller.dart';
+import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
 
-/// Modal para registrar el comprobante de pago con tarjeta
+/// Modal para registrar el comprobante de pago con tarjeta.
 class CardVoucherModal extends StatefulWidget {
   final BillModel bill;
   final String cardMethod; // 'debito' o 'credito'
@@ -46,12 +47,14 @@ class CardVoucherModal extends StatefulWidget {
 }
 
 class _CardVoucherModalState extends State<CardVoucherModal> {
+  final _formKey = GlobalKey<FormState>();
   final _transactionIdController = TextEditingController();
   final _authorizationCodeController = TextEditingController();
   final _last4DigitsController = TextEditingController();
   final _notesController = TextEditingController();
-  bool _voucherPrinted = false;
   DateTime _selectedDateTime = DateTime.now();
+  bool _voucherPrinted = false;
+  bool _submitted = false;
 
   @override
   void dispose() {
@@ -65,365 +68,413 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      child: Container(
-        width: widget.isTablet ? 600 : double.infinity,
-        padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(8),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.receipt, color: Colors.white),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Registrar comprobante',
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 20.0 : 18.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isSmallScreen = constraints.maxWidth < 420;
+          final paddingValue = widget.isTablet
+              ? 24.0
+              : (isSmallScreen ? 12.0 : 20.0);
 
-              // Resumen del pago
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.brown.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.brown,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        widget.cardMethod == 'debito'
-                            ? 'Tarjeta de debito'
-                            : 'Tarjeta de crÃ©dito',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 12.0 : 10.0,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      widget.terminal,
-                      style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Total cobrado: ${widget.controller.formatCurrency(widget.bill.total)}',
-                      style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // MÃ©todo y Terminal
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'MÃ©todo',
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 12.0 : 10.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.cardMethod == 'debito'
-                              ? 'Tarjeta de debito'
-                              : 'Tarjeta de crÃ©dito',
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 14.0 : 12.0,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Terminal',
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 12.0 : 10.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.terminal,
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 14.0 : 12.0,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Fecha y hora
-              Text(
-                'Fecha y hora',
-                style: TextStyle(
-                  fontSize: widget.isTablet ? 16.0 : 14.0,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              InkWell(
-                onTap: () async {
-                  final date = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedDateTime,
-                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                    lastDate: DateTime.now().add(const Duration(days: 1)),
-                  );
-                  if (date != null) {
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: TimeOfDay.fromDateTime(_selectedDateTime),
-                    );
-                    if (time != null) {
-                      setState(() {
-                        _selectedDateTime = DateTime(
-                          date.year,
-                          date.month,
-                          date.day,
-                          time.hour,
-                          time.minute,
-                        );
-                      });
-                    }
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppColors.border),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.9,
+              minWidth: widget.isTablet ? 560 : 0,
+            ),
+            child: Padding(
+              padding: EdgeInsets.all(paddingValue),
+              child: Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.calendar_today, size: 20),
-                      const SizedBox(width: 8),
-                      Text(
-                        DateFormat('dd/MM/yyyy hh:mm a', 'es').format(_selectedDateTime),
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 14.0 : 12.0,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
+                      _buildHeader(),
+                      const SizedBox(height: 16),
+                      _buildSummaryCard(),
+                      const SizedBox(height: 16),
+                      _buildMetadataRow(),
+                      const SizedBox(height: 24),
+                      _buildDateTimePicker(),
+                      const SizedBox(height: 16),
+                      _buildTransactionField(),
+                      const SizedBox(height: 16),
+                      _buildAuthorizationField(),
+                      const SizedBox(height: 16),
+                      _buildLastDigitsField(),
+                      const SizedBox(height: 16),
+                      _buildVoucherCheckbox(),
+                      if (!_voucherPrinted) ...[
+                        const SizedBox(height: 12),
+                        _buildVoucherReminder(),
+                      ],
+                      const SizedBox(height: 16),
+                      _buildNotesField(),
+                      const SizedBox(height: 24),
+                      _buildActions(),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-
-              // ID de transacciÃ³n (requerido)
-              TextFormField(
-                controller: _transactionIdController,
-                decoration: InputDecoration(
-                  labelText: 'ID de transacciÃ³n (voucher) *',
-                  hintText: 'Ej: 123456789012',
-                  prefixIcon: const Icon(Icons.receipt_long),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  errorText: _transactionIdController.text.isEmpty &&
-                          _transactionIdController.text.isNotEmpty
-                      ? 'Campo requerido'
-                      : null,
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              if (_transactionIdController.text.isEmpty &&
-                  _transactionIdController.text.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    'Campo requerido',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.error,
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 16),
-
-              // CÃ³digo de autorizaciÃ³n (opcional)
-              TextFormField(
-                controller: _authorizationCodeController,
-                decoration: InputDecoration(
-                  labelText: 'CÃ³digo de autorizaciÃ³n (opcional)',
-                  hintText: 'Ej: 123456',
-                  prefixIcon: const Icon(Icons.vpn_key),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Ãšltimos 4 dÃ­gitos (opcional)
-              TextFormField(
-                controller: _last4DigitsController,
-                decoration: InputDecoration(
-                  labelText: 'Ãšltimos 4 dÃ­gitos (opcional)',
-                  hintText: '1234',
-                  prefixIcon: const Icon(Icons.credit_card),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                keyboardType: TextInputType.number,
-                maxLength: 4,
-              ),
-              const SizedBox(height: 16),
-
-              // Checkbox ticket impreso
-              CheckboxListTile(
-                title: const Text('Ticket impreso (voucher entregado al cliente)'),
-                value: _voucherPrinted,
-                onChanged: (value) {
-                  setState(() {
-                    _voucherPrinted = value ?? false;
-                  });
-                },
-                contentPadding: EdgeInsets.zero,
-              ),
-              
-              // Nota informativa
-              if (!_voucherPrinted)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Se recomienda imprimir el voucher para el cliente',
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 12.0 : 10.0,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 16),
-
-              // Notas/Comentarios
-              TextFormField(
-                controller: _notesController,
-                decoration: InputDecoration(
-                  labelText: 'Notas / Comentarios',
-                  hintText: 'Ej: Cliente aprobÃ³ en terminal; voucher TX...',
-                  prefixIcon: const Icon(Icons.note),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 24),
-
-              // Botones
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancelar'),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _transactionIdController.text.trim().isNotEmpty
-                          ? _confirmPayment
-                          : null,
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text('Confirmar pago'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.success,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  void _confirmPayment() {
-    if (_transactionIdController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('El ID de transacciÃ³n es requerido')),
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E88E5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.receipt_long, color: Colors.white),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Registrar comprobante',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: widget.isTablet ? 20 : 18,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close, color: Colors.white),
+            tooltip: 'Cerrar',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryCard() {
+    final badgeText = widget.cardMethod == 'debito'
+        ? 'Tarjeta de débito'
+        : 'Tarjeta de crédito';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFCC80)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF8D6E63),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              badgeText,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: widget.isTablet ? 13 : 11,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            widget.terminal,
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: widget.isTablet ? 14 : 12,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            'Total cobrado:',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: widget.isTablet ? 13 : 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            widget.controller.formatCurrency(widget.bill.total),
+            style: TextStyle(
+              color: AppColors.primary,
+              fontSize: widget.isTablet ? 16 : 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetadataRow() {
+    final methodLabel = widget.cardMethod == 'debito'
+        ? 'Tarjeta de débito'
+        : 'Tarjeta de crédito';
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Método',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: widget.isTablet ? 13 : 11,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                methodLabel,
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: widget.isTablet ? 15 : 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Terminal',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: widget.isTablet ? 13 : 11,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.terminal,
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: widget.isTablet ? 15 : 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDateTimePicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Fecha y hora',
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: widget.isTablet ? 16 : 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        InkWell(
+          onTap: _selectDateTime,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_today, size: 20),
+                const SizedBox(width: 10),
+                Text(
+                  DateFormat(
+                    'dd/MM/yyyy hh:mm a',
+                    'es',
+                  ).format(_selectedDateTime),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: widget.isTablet ? 14 : 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTransactionField() {
+    return TextFormField(
+      controller: _transactionIdController,
+      decoration: InputDecoration(
+        labelText: 'ID de transacción (voucher) *',
+        hintText: 'Ej: 123456789012',
+        prefixIcon: const Icon(Icons.receipt_long),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      onChanged: (_) => setState(() {}),
+      validator: (value) {
+        if (_submitted && (value == null || value.trim().isEmpty)) {
+          return 'Campo requerido';
+        }
+        return null;
+      },
+    );
+  }
+
+  Widget _buildAuthorizationField() {
+    return TextFormField(
+      controller: _authorizationCodeController,
+      decoration: InputDecoration(
+        labelText: 'Código de autorización (opcional)',
+        hintText: 'Ej: 123456',
+        prefixIcon: const Icon(Icons.vpn_key),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _buildLastDigitsField() {
+    return TextFormField(
+      controller: _last4DigitsController,
+      keyboardType: TextInputType.number,
+      maxLength: 4,
+      decoration: InputDecoration(
+        counterText: '',
+        labelText: 'Últimos 4 dígitos (opcional)',
+        hintText: '1234',
+        prefixIcon: const Icon(Icons.credit_card),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _buildVoucherCheckbox() {
+    return CheckboxListTile(
+      value: _voucherPrinted,
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Ticket impreso (voucher entregado al cliente)'),
+      onChanged: (value) {
+        setState(() => _voucherPrinted = value ?? false);
+      },
+    );
+  }
+
+  Widget _buildVoucherReminder() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, color: Colors.orange, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Se recomienda imprimir el voucher para el cliente.',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: widget.isTablet ? 13 : 11,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotesField() {
+    return TextFormField(
+      controller: _notesController,
+      maxLines: 3,
+      decoration: InputDecoration(
+        labelText: 'Notas / Comentarios',
+        hintText: 'Ej: Cliente aprobó en terminal; voucher TX...',
+        prefixIcon: const Icon(Icons.notes),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _buildActions() {
+    final isReady = _transactionIdController.text.trim().isNotEmpty;
+
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: isReady ? _confirmPayment : null,
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Confirmar pago'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.success,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: AppColors.success.withValues(alpha: 0.3),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _selectDateTime() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _selectedDateTime,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+
+    if (!mounted) return;
+    if (date == null) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_selectedDateTime),
+    );
+
+    if (!mounted) return;
+    if (time == null) return;
+
+    setState(() {
+      _selectedDateTime = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
       );
+    });
+  }
+
+  void _confirmPayment() {
+    setState(() => _submitted = true);
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
 
@@ -454,99 +505,138 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     widget.controller.processPayment(payment);
     Navigator.of(context).pop();
 
-    // Mostrar modal de Ã©xito
     _showSuccessModal(payment);
   }
 
   void _showSuccessModal(PaymentModel payment) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        content: Column(
+      barrierDismissible: false,
+      builder: (_) => _CardPaymentSuccessDialog(
+        payment: payment,
+        controller: widget.controller,
+        isTablet: widget.isTablet,
+      ),
+    );
+  }
+}
+
+class _CardPaymentSuccessDialog extends StatelessWidget {
+  final PaymentModel payment;
+  final CajeroController controller;
+  final bool isTablet;
+
+  const _CardPaymentSuccessDialog({
+    required this.payment,
+    required this.controller,
+    required this.isTablet,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.success,
-                borderRadius: BorderRadius.circular(8),
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+                tooltip: 'Cerrar',
               ),
-              child: Column(
-                children: [
-                  const Icon(
-                    Icons.check_circle,
-                    color: Colors.white,
-                    size: 48,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Â¡Pago procesado exitosamente!',
-                    style: TextStyle(
-                      fontSize: widget.isTablet ? 18.0 : 16.0,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'El pago con tarjeta ha sido registrado correctamente',
-                    style: TextStyle(
-                      fontSize: widget.isTablet ? 12.0 : 10.0,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+            ),
+            const SizedBox(height: 4),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.check_circle,
+                  color: AppColors.success,
+                  size: isTablet ? 64 : 56,
+                ),
               ),
             ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.success.withOpacity(0.3)),
+            Text(
+              '¡Pago procesado exitosamente!',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: isTablet ? 20 : 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
-              child: Column(
-                children: [
-                  _buildDetailRow('MÃ©todo:', payment.cardMethod == 'debito'
-                      ? 'Tarjeta de debito'
-                      : 'Tarjeta de crÃ©dito'),
-                  _buildDetailRow('Terminal:', payment.terminal ?? ''),
-                  _buildDetailRow('ID de transacciÃ³n:', payment.transactionId ?? ''),
-                  const Divider(),
-                  _buildDetailRow('Total:', widget.controller.formatCurrency(payment.totalAmount)),
-                  _buildDetailRow('Orden:', payment.billId),
-                  _buildDetailRow(
-                    'Fecha:',
-                    payment.cardPaymentDate != null
-                        ? DateFormat('d/M/yyyy, hh:mm:ss a', 'es')
-                            .format(payment.cardPaymentDate!)
-                        : DateFormat('d/M/yyyy, hh:mm:ss a', 'es')
-                            .format(DateTime.now()),
-                  ),
-                ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'El pago con tarjeta ha sido registrado correctamente.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: isTablet ? 14 : 12,
+                color: AppColors.textSecondary,
               ),
+            ),
+            const SizedBox(height: 20),
+            _buildSuccessSummary(context),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => _handlePrint(context),
+              icon: const Icon(Icons.print),
+              label: const Text('Imprimir comprobante'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
             ),
           ],
         ),
-        actions: [
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.of(context).pop();
-              // TODO: Implementar impresiÃ³n de comprobante
-            },
-            icon: const Icon(Icons.print),
-            label: const Text('Imprimir comprobante'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-            ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessSummary(BuildContext context) {
+    final methodLabel = payment.cardMethod == 'debito'
+        ? 'Tarjeta de débito'
+        : 'Tarjeta de crédito';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.success.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.success.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildDetailRow('Método', methodLabel),
+          _buildDetailRow('Terminal', payment.terminal ?? ''),
+          _buildDetailRow('ID de transacción', payment.transactionId ?? ''),
+          const Divider(height: 20),
+          _buildDetailRow(
+            'Total',
+            controller.formatCurrency(payment.totalAmount),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cerrar'),
+          _buildDetailRow('Orden', payment.billId),
+          _buildDetailRow(
+            'Fecha',
+            DateFormat(
+              'dd/MM/yyyy hh:mm a',
+              'es',
+            ).format(payment.cardPaymentDate ?? DateTime.now()),
           ),
         ],
       ),
@@ -559,25 +649,67 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: widget.isTablet ? 12.0 : 10.0,
-              color: AppColors.textSecondary,
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: isTablet ? 14 : 12,
+              ),
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: widget.isTablet ? 12.0 : 10.0,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w600,
+                fontSize: isTablet ? 14 : 12,
+              ),
             ),
           ),
         ],
       ),
     );
   }
+
+  Future<void> _handlePrint(BuildContext context) async {
+    final shouldPrint =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Imprimir comprobante'),
+            content: Text(
+              '¿Deseas imprimir el comprobante?\nCajero: ${payment.cashierName}',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Imprimir'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!context.mounted) return;
+    if (!shouldPrint) return;
+
+    controller.markBillAsPrinted(
+      payment.billId,
+      payment.cashierName,
+      paymentId: payment.id,
+    );
+    Navigator.of(context).pop();
+  }
 }
-
-

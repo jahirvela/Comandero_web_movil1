@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/table_model.dart';
 import '../models/product_model.dart';
+import '../models/payment_model.dart';
 import '../services/kitchen_order_service.dart';
+import '../services/bill_repository.dart';
 
 class MeseroController extends ChangeNotifier {
+  final BillRepository _billRepository;
+
   // Estado de las mesas
   List<TableModel> _tables = [];
   TableModel? _selectedTable;
@@ -14,6 +18,9 @@ class MeseroController extends ChangeNotifier {
   // Historial de pedidos por mesa (pedidos enviados a cocina)
   final Map<String, List<Map<String, dynamic>>> _tableOrderHistory = {};
 
+  // Notificaciones pendientes
+  final List<Map<String, dynamic>> _pendingNotifications = [];
+
   // Estado de la vista actual
   String _currentView = 'floor';
 
@@ -21,6 +28,7 @@ class MeseroController extends ChangeNotifier {
   List<TableModel> get tables => _tables;
   TableModel? get selectedTable => _selectedTable;
   String get currentView => _currentView;
+  List<Map<String, dynamic>> get pendingNotifications => _pendingNotifications;
 
   // Obtener carrito de la mesa actual
   List<CartItem> getCurrentCart() {
@@ -33,7 +41,8 @@ class MeseroController extends ChangeNotifier {
     return _tableOrders.values.fold(0, (total, items) => total + items.length);
   }
 
-  MeseroController() {
+  MeseroController({required BillRepository billRepository})
+      : _billRepository = billRepository {
     _initializeTables();
   }
 
@@ -230,14 +239,19 @@ class MeseroController extends ChangeNotifier {
 
   // Actualizar número de comensales en una mesa
   void updateTableCustomers(int tableId, int customers) {
+    final updatedCustomers = customers > 0 ? customers : null;
+
     _tables = _tables.map((table) {
       if (table.id == tableId) {
-        return table.copyWith(
-          customers: customers > 0 ? customers : null,
-        );
+        return table.copyWith(customers: updatedCustomers);
       }
       return table;
     }).toList();
+
+    if (_selectedTable != null && _selectedTable!.id == tableId) {
+      _selectedTable = _selectedTable!.copyWith(customers: updatedCustomers);
+    }
+
     notifyListeners();
   }
 
@@ -249,6 +263,39 @@ class MeseroController extends ChangeNotifier {
   // Limpiar historial de una mesa
   void clearTableHistory(int tableId) {
     _tableOrderHistory[tableId.toString()] = [];
+    notifyListeners();
+  }
+
+  void closeTable(int tableId) {
+    final tableKey = tableId.toString();
+    _tableOrders[tableKey] = [];
+    _tableOrderHistory[tableKey] = [];
+
+    final selectedTable = _tables.firstWhere(
+      (table) => table.id == tableId,
+      orElse: () => _selectedTable ?? _tables.first,
+    );
+    _billRepository.removeBillsForTable(selectedTable.number);
+
+    _tables = _tables.map((tableEntry) {
+      if (tableEntry.id == tableId) {
+        return tableEntry.copyWith(
+          status: TableStatus.libre,
+          customers: null,
+          orderValue: null,
+        );
+      }
+      return tableEntry;
+    }).toList();
+
+    if (_selectedTable != null && _selectedTable!.id == tableId) {
+      _selectedTable = _selectedTable!.copyWith(
+        status: TableStatus.libre,
+        customers: null,
+        orderValue: null,
+      );
+    }
+
     notifyListeners();
   }
 
@@ -286,14 +333,45 @@ class MeseroController extends ChangeNotifier {
     final cart = _tableOrders[tableId.toString()] ?? [];
     if (cart.isEmpty) return;
 
+    final selectedTable = _tables.firstWhere(
+      (table) => table.id == tableId,
+      orElse: () => _selectedTable ?? _tables.first,
+    );
     final total = cart.fold(0.0, (sum, item) => sum + item.product.price);
-    
+
+    final billItems = cart.map((item) {
+      final quantity = item.customizations['quantity'] as int? ?? 1;
+      final price = item.product.price;
+      return BillItem(
+        name: item.product.name,
+        quantity: quantity,
+        price: price,
+        total: price * quantity,
+      );
+    }).toList();
+
+    final bill = BillModel(
+      id: 'BILL-${DateTime.now().millisecondsSinceEpoch}',
+      tableNumber: selectedTable.number,
+      items: billItems,
+      subtotal: total,
+      tax: 0.0,
+      total: total,
+      discount: 0.0,
+      status: BillStatus.pending,
+      createdAt: DateTime.now(),
+      waiterName: 'Mesero',
+      requestedByWaiter: true,
+    );
+
+    _billRepository.addBill(bill);
+
     // Actualizar valor de orden en la mesa
-    _tables = _tables.map((table) {
-      if (table.id == tableId) {
-        return table.copyWith(orderValue: total);
+    _tables = _tables.map((tableEntry) {
+      if (tableEntry.id == tableId) {
+        return tableEntry.copyWith(orderValue: total);
       }
-      return table;
+      return tableEntry;
     }).toList();
 
     // Agregar al historial como "Enviado al Cajero"
@@ -305,7 +383,8 @@ class MeseroController extends ChangeNotifier {
         return '${qty}x ${item.product.name}';
       }).toList(),
       'status': 'Enviado al Cajero',
-      'time': '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+      'time':
+          '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
       'date': DateTime.now().toString(),
       'total': total,
     };
@@ -329,10 +408,11 @@ class MeseroController extends ChangeNotifier {
     if (currentCart.isEmpty) return;
 
     final tableId = _selectedTable!.id.toString();
-    
+
     // Crear ID de orden único
-    final orderId = 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
-    
+    final orderId =
+        'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+
     // Crear pedido para historial
     final order = {
       'id': orderId,
@@ -341,7 +421,8 @@ class MeseroController extends ChangeNotifier {
         return '${qty}x ${item.product.name}';
       }).toList(),
       'status': 'Enviado',
-      'time': '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+      'time':
+          '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
       'date': DateTime.now().toString(),
       'isTakeaway': isTakeaway,
       'customerName': customerName,
@@ -359,7 +440,8 @@ class MeseroController extends ChangeNotifier {
       orderId: orderId,
       cartItems: currentCart,
       tableNumber: isTakeaway ? null : _selectedTable!.number,
-      waiterName: 'Mesero', // TODO: Obtener del AuthController cuando esté disponible
+      waiterName:
+          'Mesero', // TODO: Obtener del AuthController cuando esté disponible
       isTakeaway: isTakeaway,
       customerName: customerName,
       customerPhone: customerPhone,
@@ -383,5 +465,27 @@ class MeseroController extends ChangeNotifier {
         }
       }
     });
+  }
+
+  // Métodos de notificaciones
+  void addNotification(String title, String message) {
+    _pendingNotifications.add({
+      'title': title,
+      'message': message,
+      'timestamp': DateTime.now(),
+    });
+    notifyListeners();
+  }
+
+  void removeNotification(int index) {
+    if (index >= 0 && index < _pendingNotifications.length) {
+      _pendingNotifications.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  void clearAllNotifications() {
+    _pendingNotifications.clear();
+    notifyListeners();
   }
 }

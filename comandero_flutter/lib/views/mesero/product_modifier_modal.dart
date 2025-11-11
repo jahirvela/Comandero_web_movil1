@@ -7,10 +7,7 @@ import '../../utils/app_theme.dart';
 class ProductModifierModal extends StatefulWidget {
   final Map<String, dynamic> product;
 
-  const ProductModifierModal({
-    super.key,
-    required this.product,
-  });
+  const ProductModifierModal({super.key, required this.product});
 
   @override
   State<ProductModifierModal> createState() => _ProductModifierModalState();
@@ -35,7 +32,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   final Map<String, bool> selectedExtras = {};
   final Map<String, double> extraPrices = {};
   String kitchenNotes = '';
-  
+
   // Estimación de tiempo según el producto
   String get estimatedTime {
     final category = widget.product['category'] as String?;
@@ -59,7 +56,9 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
     final name = widget.product['name'] as String?;
 
     // Inicializar salsas según el tipo de producto
-    if (category == 'Tacos' || category == 'Platos Especiales' || category == 'Salsas') {
+    if (category == 'Tacos' ||
+        category == 'Platos Especiales' ||
+        category == 'Salsas') {
       selectedSauce = 'Salsa roja (picante)';
     }
 
@@ -90,7 +89,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
 
   double get totalPrice {
     double basePrice = (widget.product['price'] as num).toDouble();
-    
+
     // Aplicar precio según tamaño si es consomé
     if (widget.product['category'] == 'Consomes' && selectedSize != null) {
       if (selectedSize == 'Chico') {
@@ -137,7 +136,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
           children: [
             // Header
             _buildHeader(context, isTablet),
-            
+
             // Contenido scrolleable
             Expanded(
               child: SingleChildScrollView(
@@ -148,43 +147,46 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                     // Producto info
                     _buildProductInfo(isTablet),
                     SizedBox(height: AppTheme.spacingXL),
-                    
+
                     // Cantidad
                     _buildQuantitySection(isTablet),
                     SizedBox(height: AppTheme.spacingLG),
-                    
+
                     // Tamaño (solo para consomés)
                     if (category == 'Consomes') ...[
                       _buildSizeSection(isTablet),
                       SizedBox(height: AppTheme.spacingLG),
                     ],
-                    
+
                     // Temperatura/Hielo (solo para bebidas)
                     if (category == 'Bebidas') ...[
                       _buildTemperatureSection(isTablet),
                       SizedBox(height: AppTheme.spacingLG),
                     ],
-                    
+
                     // Ingredientes extra (para tacos y platos especiales)
-                    if ((category == 'Tacos' || category == 'Platos Especiales') &&
+                    if ((category == 'Tacos' ||
+                            category == 'Platos Especiales') &&
                         extraPrices.isNotEmpty) ...[
                       _buildExtrasSection(isTablet),
                       SizedBox(height: AppTheme.spacingLG),
                     ],
-                    
+
                     // Salsas (para tacos, platos especiales)
-                    if (category == 'Tacos' || category == 'Platos Especiales' || category == 'Salsas') ...[
+                    if (category == 'Tacos' ||
+                        category == 'Platos Especiales' ||
+                        category == 'Salsas') ...[
                       _buildSaucesSection(isTablet, category),
                       SizedBox(height: AppTheme.spacingLG),
                     ],
-                    
+
                     // Notas para cocina
                     _buildKitchenNotesSection(isTablet),
                   ],
                 ),
               ),
             ),
-            
+
             // Footer con total y botón
             _buildFooter(context, isTablet),
           ],
@@ -280,7 +282,8 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                           color: AppColors.textSecondary,
                         ),
                       ),
-                      if (widget.product['category'] == 'Consomes' && selectedSize != null) ...[
+                      if (widget.product['category'] == 'Consomes' &&
+                          selectedSize != null) ...[
                         SizedBox(height: AppTheme.spacingSM),
                         Text(
                           'Tamaño seleccionado: $selectedSize',
@@ -435,8 +438,14 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   Widget _buildSizeSection(bool isTablet) {
     final sizes = [
       {'name': 'Chico', 'price': (widget.product['price'] as num).toDouble()},
-      {'name': 'Mediano', 'price': (widget.product['price'] as num).toDouble() + 10},
-      {'name': 'Grande', 'price': (widget.product['price'] as num).toDouble() + 20},
+      {
+        'name': 'Mediano',
+        'price': (widget.product['price'] as num).toDouble() + 10,
+      },
+      {
+        'name': 'Grande',
+        'price': (widget.product['price'] as num).toDouble() + 20,
+      },
     ];
 
     return Card(
@@ -459,22 +468,28 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
               ),
             ),
             SizedBox(height: AppTheme.spacingMD),
-            ...sizes.map((size) {
-              final price = (size['price'] as num?)?.toDouble() ?? 0.0;
-              return RadioListTile<String>(
-                title: Text('\$${price.toStringAsFixed(0)}'),
-                value: size['name'] as String,
-                groupValue: selectedSize,
-                onChanged: (value) {
-                  setState(() {
-                    selectedSize = value;
-                  });
-                },
-                activeColor: AppColors.primary,
+            for (final size in sizes)
+              ListTile(
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-              );
-            }),
+                title: Text(
+                  '${size['name']} - \$${((size['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}',
+                ),
+                trailing: Icon(
+                  selectedSize == size['name']
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  color: selectedSize == size['name']
+                      ? AppColors.primary
+                      : AppColors.border,
+                  size: 20,
+                ),
+                onTap: () {
+                  setState(() {
+                    selectedSize = size['name'] as String;
+                  });
+                },
+              ),
           ],
         ),
       ),
@@ -502,30 +517,28 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
               ),
             ),
             SizedBox(height: AppTheme.spacingMD),
-            RadioListTile<String>(
-              title: const Text('¿Con hielo? (Fría)'),
-              value: '¿Con hielo? (Fría)',
-              groupValue: selectedTemperature,
-              onChanged: (value) {
-                setState(() {
-                  selectedTemperature = value;
-                });
-              },
-              activeColor: AppColors.primary,
-              contentPadding: EdgeInsets.zero,
-            ),
-            RadioListTile<String>(
-              title: const Text('Sin hielo (Al tiempo)'),
-              value: 'Sin hielo (Al tiempo)',
-              groupValue: selectedTemperature,
-              onChanged: (value) {
-                setState(() {
-                  selectedTemperature = value;
-                });
-              },
-              activeColor: AppColors.primary,
-              contentPadding: EdgeInsets.zero,
-            ),
+            for (final option in const [
+              '¿Con hielo? (Fría)',
+              'Sin hielo (Al tiempo)',
+            ])
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(option),
+                trailing: Icon(
+                  selectedTemperature == option
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  color: selectedTemperature == option
+                      ? AppColors.primary
+                      : AppColors.border,
+                  size: 20,
+                ),
+                onTap: () {
+                  setState(() {
+                    selectedTemperature = option;
+                  });
+                },
+              ),
           ],
         ),
       ),
@@ -558,7 +571,9 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
             ...extraPrices.entries.map((entry) {
               final isSelected = selectedExtras[entry.key] ?? false;
               return CheckboxListTile(
-                title: Text('${entry.key} +\$${entry.value.toStringAsFixed(0)}'),
+                title: Text(
+                  '${entry.key} +\$${entry.value.toStringAsFixed(0)}',
+                ),
                 value: isSelected,
                 onChanged: (value) {
                   setState(() {
@@ -578,10 +593,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
 
   Widget _buildSaucesSection(bool isTablet, String? category) {
     final sauces = category == 'Salsas'
-        ? [
-            'Salsa roja (picante)',
-            'Salsa verde (medio)',
-          ]
+        ? ['Salsa roja (picante)', 'Salsa verde (medio)']
         : [
             'Salsa roja (picante)',
             'Salsa verde (medio)',
@@ -609,21 +621,26 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
               ),
             ),
             SizedBox(height: AppTheme.spacingMD),
-            ...sauces.map((sauce) {
-              return RadioListTile<String>(
-                title: Text(sauce),
-                value: sauce,
-                groupValue: selectedSauce,
-                onChanged: (value) {
-                  setState(() {
-                    selectedSauce = value;
-                  });
-                },
-                activeColor: AppColors.primary,
+            for (final sauce in sauces)
+              ListTile(
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-              );
-            }),
+                title: Text(sauce),
+                trailing: Icon(
+                  selectedSauce == sauce
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  color: selectedSauce == sauce
+                      ? AppColors.primary
+                      : AppColors.border,
+                  size: 20,
+                ),
+                onTap: () {
+                  setState(() {
+                    selectedSauce = sauce;
+                  });
+                },
+              ),
           ],
         ),
       ),
@@ -756,9 +773,9 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                   'extraPrices': selectedExtras.entries
                       .where((e) => e.value)
                       .map((e) {
-                            final price = extraPrices[e.key] ?? 0.0;
-                            return {'name': e.key, 'price': price};
-                          })
+                        final price = extraPrices[e.key] ?? 0.0;
+                        return {'name': e.key, 'price': price};
+                      })
                       .toList(),
                   'kitchenNotes': kitchenNotes,
                   'totalPrice': totalPrice,
@@ -786,4 +803,3 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
     );
   }
 }
-

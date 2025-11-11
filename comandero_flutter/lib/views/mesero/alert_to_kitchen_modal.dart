@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
+import '../../services/kitchen_order_service.dart';
 
 class AlertToKitchenModal extends StatefulWidget {
   final String tableNumber;
@@ -128,16 +129,19 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
             const SizedBox(height: 8),
 
             DropdownButtonFormField<String>(
-              value: selectedAlertType.isEmpty ? null : selectedAlertType,
+              initialValue: selectedAlertType.isEmpty
+                  ? null
+                  : selectedAlertType,
               decoration: InputDecoration(
                 hintText: 'Selecciona el tipo de alerta',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              items: alertTypes.map((type) {
-                return DropdownMenuItem(value: type, child: Text(type));
-              }).toList(),
+              items: [
+                for (final type in alertTypes)
+                  DropdownMenuItem(value: type, child: Text(type)),
+              ],
               onChanged: (value) {
                 setState(() {
                   selectedAlertType = value ?? '';
@@ -158,16 +162,17 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
             const SizedBox(height: 8),
 
             DropdownButtonFormField<String>(
-              value: selectedReason.isEmpty ? null : selectedReason,
+              initialValue: selectedReason.isEmpty ? null : selectedReason,
               decoration: InputDecoration(
                 hintText: 'Selecciona el motivo',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              items: reasons.map((reason) {
-                return DropdownMenuItem(value: reason, child: Text(reason));
-              }).toList(),
+              items: [
+                for (final reason in reasons)
+                  DropdownMenuItem(value: reason, child: Text(reason)),
+              ],
               onChanged: (value) {
                 setState(() {
                   selectedReason = value ?? '';
@@ -214,32 +219,37 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
             ),
             const SizedBox(height: 8),
 
-            Row(
+            Wrap(
+              spacing: 12,
               children: [
-                Expanded(
-                  child: RadioListTile<String>(
-                    title: const Text('Normal'),
-                    value: 'Normal',
-                    groupValue: priority,
-                    onChanged: (value) {
-                      setState(() {
-                        priority = value ?? 'Normal';
-                      });
-                    },
-                    activeColor: AppColors.primary,
+                ChoiceChip(
+                  label: const Text('Normal'),
+                  selected: priority == 'Normal',
+                  onSelected: (selected) {
+                    if (!selected) return;
+                    setState(() => priority = 'Normal');
+                  },
+                  selectedColor: AppColors.primary.withValues(alpha: 0.2),
+                  labelStyle: TextStyle(
+                    color: priority == 'Normal'
+                        ? AppColors.primary
+                        : AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                Expanded(
-                  child: RadioListTile<String>(
-                    title: const Text('Urgente'),
-                    value: 'Urgente',
-                    groupValue: priority,
-                    onChanged: (value) {
-                      setState(() {
-                        priority = value ?? 'Normal';
-                      });
-                    },
-                    activeColor: AppColors.error,
+                ChoiceChip(
+                  label: const Text('Urgente'),
+                  selected: priority == 'Urgente',
+                  onSelected: (selected) {
+                    if (!selected) return;
+                    setState(() => priority = 'Urgente');
+                  },
+                  selectedColor: AppColors.error.withValues(alpha: 0.2),
+                  labelStyle: TextStyle(
+                    color: priority == 'Urgente'
+                        ? AppColors.error
+                        : AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
@@ -269,17 +279,11 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
                     onPressed: _canSendAlert() ? _sendAlert : null,
                     icon: Icon(
                       Icons.warning_amber_rounded,
-                      color: priority == 'Urgente'
-                          ? Colors.white
-                          : AppColors.warning,
+                      color: Colors.white,
                     ),
                     label: Text(
                       'Enviar alerta',
-                      style: TextStyle(
-                        color: priority == 'Urgente'
-                            ? Colors.white
-                            : AppColors.warning,
-                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: priority == 'Urgente'
@@ -308,22 +312,14 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
   void _sendAlert() {
     if (!_canSendAlert()) return;
 
-    // TODO: Implementar envío de alerta a cocina
-    // Datos de la alerta (preparado para integración con backend)
-    // ignore: unused_local_variable
-    final alertData = {
-      'tableNumber': widget.tableNumber,
-      'orderId': widget.orderId,
-      'alertType': selectedAlertType,
-      'reason': selectedReason,
-      'details': additionalDetails,
-      'priority': priority,
-      'timestamp': DateTime.now(),
-    };
-
-    // TODO: Enviar alertData a cocina a través del controller o backend
-    // Por ahora solo se muestra una notificación local
-    // La variable alertData se usará cuando se conecte con el backend
+    KitchenOrderService().sendAlertToKitchen(
+      tableNumber: widget.tableNumber,
+      orderId: widget.orderId,
+      alertType: selectedAlertType,
+      reason: selectedReason,
+      details: additionalDetails.isNotEmpty ? additionalDetails : null,
+      priority: priority,
+    );
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

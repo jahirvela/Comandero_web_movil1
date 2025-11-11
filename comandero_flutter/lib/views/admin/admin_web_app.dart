@@ -6,7 +6,10 @@ import 'package:intl/intl.dart';
 import '../../controllers/admin_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/admin_model.dart';
+import '../../models/order_model.dart';
+import '../../services/payment_repository.dart';
 import '../../utils/app_colors.dart';
+import '../../widgets/logout_button.dart';
 import 'web/inventory_web_view.dart';
 import 'web/cash_closures_web_view.dart';
 import 'web/real_time_sales_web_view.dart';
@@ -27,21 +30,27 @@ class _AdminWebAppState extends State<AdminWebApp> {
     // Guard: Verificar que estamos en web y el usuario es admin
     if (!kIsWeb) {
       return const Scaffold(
-        body: Center(
-          child: Text('Este panel solo está disponible en web'),
-        ),
+        body: Center(child: Text('Este panel solo está disponible en web')),
       );
     }
 
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => AdminController())],
+      providers: [
+        ChangeNotifierProvider(
+          create: (context) => AdminController(
+            paymentRepository: context.read<PaymentRepository>(),
+          ),
+        ),
+      ],
       child: Consumer2<AdminController, AuthController>(
         builder: (context, adminController, authController, child) {
           // Verificar que el usuario es admin
           if (authController.userRole != 'admin') {
             return const Scaffold(
               body: Center(
-                child: Text('Acceso denegado. Solo administradores pueden acceder.'),
+                child: Text(
+                  'Acceso denegado. Solo administradores pueden acceder.',
+                ),
               ),
             );
           }
@@ -185,7 +194,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
     bool isDesktop,
   ) {
     final menuItems = [
-      {'id': 'dashboard', 'name': 'Dashboard', 'icon': Icons.dashboard},
+      {'id': 'dashboard', 'name': 'Panel de Control', 'icon': Icons.dashboard},
       {'id': 'inventory', 'name': 'Inventario', 'icon': Icons.inventory},
       {
         'id': 'cash_closures',
@@ -330,31 +339,15 @@ class _AdminWebAppState extends State<AdminWebApp> {
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton.icon(
+            child: LogoutButton(
+              isTablet: isTablet || isDesktop,
+              label: 'Cerrar sesión',
               onPressed: () async {
                 await authController.logout();
                 if (context.mounted) {
                   Navigator.of(context).pushReplacementNamed('/login');
                 }
               },
-              icon: Icon(
-                Icons.logout,
-                size: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
-              ),
-              label: Text(
-                'Cerrar Sesión',
-                style: TextStyle(
-                  fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(
-                  horizontal: isDesktop ? 16.0 : (isTablet ? 12.0 : 8.0),
-                  vertical: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
-                ),
-              ),
             ),
           ),
         ],
@@ -399,45 +392,232 @@ class _AdminWebAppState extends State<AdminWebApp> {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Text(
-            'Panel de Administración',
-            style: TextStyle(
-              fontSize: isDesktop ? 24.0 : (isTablet ? 20.0 : 18.0),
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.green.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Si el ancho es muy pequeño, apilar elementos verticalmente
+          if (constraints.maxWidth < 600) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.circle,
-                  size: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
-                  color: Colors.green,
+                Row(
+                  children: [
+                    Container(
+                      width: 36.0,
+                      height: 36.0,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFDC2626), Color(0xFFB91C1C)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.admin_panel_settings,
+                        size: 18.0,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Panel de Control',
+                            style: TextStyle(
+                              fontSize: 18.0,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            'Resumen general',
+                            style: TextStyle(
+                              fontSize: 10.0,
+                              color: AppColors.textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  'Sistema Activo',
-                  style: TextStyle(
-                    fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
-                    fontWeight: FontWeight.w600,
-                    color: Colors.green,
-                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.red.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.person,
+                              size: 12.0,
+                              color: Colors.red.shade700,
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                'Acceso Total',
+                                style: TextStyle(
+                                  fontSize: 10.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.red.shade700,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: LogoutButton(
+                        isTablet: true,
+                        label: 'Cerrar sesión',
+                        onPressed: () async {
+                          final authController = Provider.of<AuthController>(
+                            context,
+                            listen: false,
+                          );
+                          await authController.logout();
+                          if (context.mounted) {
+                            Navigator.of(
+                              context,
+                            ).pushReplacementNamed('/login');
+                          }
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ),
-        ],
+            );
+          }
+
+          // Layout horizontal para pantallas más grandes
+          return Row(
+            children: [
+              Container(
+                width: isDesktop ? 48.0 : (isTablet ? 40.0 : 36.0),
+                height: isDesktop ? 48.0 : (isTablet ? 40.0 : 36.0),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFDC2626), Color(0xFFB91C1C)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.admin_panel_settings,
+                  size: isDesktop ? 24.0 : (isTablet ? 20.0 : 18.0),
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Panel de Control',
+                      style: TextStyle(
+                        fontSize: isDesktop ? 24.0 : (isTablet ? 20.0 : 18.0),
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Resumen general del puesto de barbacoa',
+                      style: TextStyle(
+                        fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                        color: AppColors.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.red.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.person,
+                        size: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
+                        color: Colors.red.shade700,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          'Acceso Total',
+                          style: TextStyle(
+                            fontSize: isDesktop
+                                ? 14.0
+                                : (isTablet ? 12.0 : 10.0),
+                            fontWeight: FontWeight.w600,
+                            color: Colors.red.shade700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: LogoutButton(
+                    isTablet: isTablet || isDesktop,
+                    label: 'Cerrar sesión',
+                    onPressed: () async {
+                      final authController = Provider.of<AuthController>(
+                        context,
+                        listen: false,
+                      );
+                      await authController.logout();
+                      if (context.mounted) {
+                        Navigator.of(context).pushReplacementNamed('/login');
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -455,8 +635,13 @@ class _AdminWebAppState extends State<AdminWebApp> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Dashboard stats
-              _buildDashboardStats(adminController, isTablet, isDesktop),
+              // Consumo del Día
+              _buildDailyConsumptionSection(
+                context,
+                adminController,
+                isTablet,
+                isDesktop,
+              ),
               const SizedBox(height: 24),
 
               // Quick actions
@@ -496,8 +681,13 @@ class _AdminWebAppState extends State<AdminWebApp> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Dashboard stats
-              _buildDashboardStats(adminController, isTablet, isDesktop),
+              // Consumo del Día
+              _buildDailyConsumptionSection(
+                context,
+                adminController,
+                isTablet,
+                isDesktop,
+              ),
               const SizedBox(height: 24),
 
               // Quick actions
@@ -526,12 +716,62 @@ class _AdminWebAppState extends State<AdminWebApp> {
     }
   }
 
-  Widget _buildDashboardStats(
+  double _calculateOrderTotal(OrderModel order, AdminController controller) {
+    return order.items.fold(0.0, (sum, item) {
+      // Buscar el precio del producto en el menú
+      final menuItem = controller.menuItems.firstWhere(
+        (menuItem) => menuItem.name == item.name,
+        orElse: () => MenuItem(
+          id: '',
+          name: item.name,
+          category: MenuCategory.tacos,
+          description: '',
+          price: 0.0,
+          isAvailable: true,
+          ingredients: [],
+          allergens: [],
+          preparationTime: 0,
+          createdAt: DateTime.now(),
+        ),
+      );
+
+      double price = menuItem.price ?? 0.0;
+      // Si tiene tamaños, usar el precio del primer tamaño o el precio base
+      if (menuItem.hasSizes &&
+          menuItem.sizes != null &&
+          menuItem.sizes!.isNotEmpty) {
+        price = menuItem.sizes!.first.price;
+      }
+
+      return sum + (price * item.quantity);
+    });
+  }
+
+  Widget _buildDailyConsumptionSection(
+    BuildContext context,
     AdminController controller,
     bool isTablet,
     bool isDesktop,
   ) {
-    final stats = controller.dashboardStats;
+    final filteredOrders = controller.filteredDailyConsumption;
+    final localSales = filteredOrders
+        .where((o) => !o.isTakeaway && o.tableNumber != null)
+        .fold(0.0, (sum, o) => sum + _calculateOrderTotal(o, controller));
+    final takeawaySales = filteredOrders
+        .where((o) => o.isTakeaway)
+        .fold(0.0, (sum, o) => sum + _calculateOrderTotal(o, controller));
+    final cashSales = filteredOrders.fold(
+      0.0,
+      (sum, o) => sum + _calculateOrderTotal(o, controller),
+    );
+    final pendingPayment = filteredOrders
+        .where(
+          (o) =>
+              o.status == OrderStatus.pendiente ||
+              o.status == OrderStatus.enPreparacion,
+        )
+        .fold(0.0, (sum, o) => sum + _calculateOrderTotal(o, controller));
+    final totalNet = cashSales;
 
     return Card(
       elevation: 2,
@@ -545,15 +785,10 @@ class _AdminWebAppState extends State<AdminWebApp> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Icon(
-                  Icons.dashboard,
-                  color: AppColors.primary,
-                  size: isDesktop ? 24.0 : (isTablet ? 20.0 : 18.0),
-                ),
-                const SizedBox(width: 12),
                 Text(
-                  'Resumen del Día',
+                  'Consumo del Día',
                   style: TextStyle(
                     fontSize: isDesktop ? 20.0 : (isTablet ? 18.0 : 16.0),
                     fontWeight: FontWeight.w600,
@@ -563,47 +798,57 @@ class _AdminWebAppState extends State<AdminWebApp> {
               ],
             ),
             const SizedBox(height: 20),
-
+            // Tarjetas de consumo
             LayoutBuilder(
               builder: (context, constraints) {
                 if (constraints.maxWidth > 1000) {
                   return Row(
                     children: [
                       Expanded(
-                        child: _buildStatCard(
-                          'Ventas Hoy',
-                          stats.todaySales,
-                          Colors.green,
+                        child: _buildConsumptionCard(
+                          'Ventas en Local',
+                          '\$${localSales.toStringAsFixed(2)}',
+                          Colors.green.shade700,
                           isTablet,
                           isDesktop,
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Expanded(
-                        child: _buildStatCard(
-                          'Crecimiento',
-                          '${stats.salesGrowth.toStringAsFixed(1)}%',
-                          Colors.blue,
+                        child: _buildConsumptionCard(
+                          'Ventas Para llevar',
+                          '\$${takeawaySales.toStringAsFixed(2)}',
+                          Colors.blue.shade700,
                           isTablet,
                           isDesktop,
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Expanded(
-                        child: _buildStatCard(
-                          'Órdenes',
-                          stats.totalOrders.toDouble(),
-                          Colors.orange,
+                        child: _buildConsumptionCard(
+                          'Ventas Efectivo',
+                          '\$${cashSales.toStringAsFixed(2)}',
+                          Colors.yellow.shade700,
                           isTablet,
                           isDesktop,
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Expanded(
-                        child: _buildStatCard(
-                          'Ticket Promedio',
-                          stats.averageTicket,
-                          AppColors.primary,
+                        child: _buildConsumptionCard(
+                          'Por cobrar',
+                          '\$${pendingPayment.toStringAsFixed(2)}',
+                          Colors.pink.shade700,
+                          isTablet,
+                          isDesktop,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildConsumptionCard(
+                          'Total Neto',
+                          '\$${totalNet.toStringAsFixed(2)}',
+                          Colors.purple.shade700,
                           isTablet,
                           isDesktop,
                         ),
@@ -616,54 +861,126 @@ class _AdminWebAppState extends State<AdminWebApp> {
                       Row(
                         children: [
                           Expanded(
-                            child: _buildStatCard(
-                              'Ventas Hoy',
-                              stats.todaySales,
-                              Colors.green,
+                            child: _buildConsumptionCard(
+                              'Ventas en Local',
+                              '\$${localSales.toStringAsFixed(2)}',
+                              Colors.green.shade700,
                               isTablet,
                               isDesktop,
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 12),
                           Expanded(
-                            child: _buildStatCard(
-                              'Crecimiento',
-                              '${stats.salesGrowth.toStringAsFixed(1)}%',
-                              Colors.blue,
+                            child: _buildConsumptionCard(
+                              'Ventas Para llevar',
+                              '\$${takeawaySales.toStringAsFixed(2)}',
+                              Colors.blue.shade700,
                               isTablet,
                               isDesktop,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
-                            child: _buildStatCard(
-                              'Órdenes',
-                              stats.totalOrders.toDouble(),
-                              Colors.orange,
+                            child: _buildConsumptionCard(
+                              'Ventas Efectivo',
+                              '\$${cashSales.toStringAsFixed(2)}',
+                              Colors.yellow.shade700,
                               isTablet,
                               isDesktop,
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 12),
                           Expanded(
-                            child: _buildStatCard(
-                              'Ticket Promedio',
-                              stats.averageTicket,
-                              AppColors.primary,
+                            child: _buildConsumptionCard(
+                              'Por cobrar',
+                              '\$${pendingPayment.toStringAsFixed(2)}',
+                              Colors.pink.shade700,
                               isTablet,
                               isDesktop,
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      _buildConsumptionCard(
+                        'Total Neto',
+                        '\$${totalNet.toStringAsFixed(2)}',
+                        Colors.purple.shade700,
+                        isTablet,
+                        isDesktop,
                       ),
                     ],
                   );
                 }
               },
+            ),
+            const SizedBox(height: 24),
+            // Filtros
+            Row(
+              children: [
+                Text(
+                  'Mostrar:',
+                  style: TextStyle(
+                    fontSize: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                for (final filter in ['todos', 'para_llevar', 'mesas'])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: controller.selectedConsumptionFilter == filter,
+                      label: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (controller.selectedConsumptionFilter == filter)
+                            const Icon(
+                              Icons.check,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          if (controller.selectedConsumptionFilter == filter)
+                            const SizedBox(width: 4),
+                          Text(
+                            const {
+                              'todos': 'Todos',
+                              'para_llevar': 'Solo para llevar',
+                              'mesas': 'Mesas',
+                            }[filter]!,
+                          ),
+                        ],
+                      ),
+                      onSelected: (selected) {
+                        controller.setSelectedConsumptionFilter(filter);
+                      },
+                      selectedColor: Colors.orange.shade700,
+                      checkmarkColor: Colors.white,
+                      labelStyle: TextStyle(
+                        color: controller.selectedConsumptionFilter == filter
+                            ? Colors.white
+                            : AppColors.textPrimary,
+                        fontWeight:
+                            controller.selectedConsumptionFilter == filter
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            // Tabla de consumo
+            _buildConsumptionTable(
+              filteredOrders,
+              controller,
+              isTablet,
+              isDesktop,
             ),
           ],
         ),
@@ -671,9 +988,9 @@ class _AdminWebAppState extends State<AdminWebApp> {
     );
   }
 
-  Widget _buildStatCard(
+  Widget _buildConsumptionCard(
     String title,
-    dynamic value,
+    String value,
     Color color,
     bool isTablet,
     bool isDesktop,
@@ -681,29 +998,233 @@ class _AdminWebAppState extends State<AdminWebApp> {
     return Container(
       padding: EdgeInsets.all(isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0)),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 2),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            value is String ? value : '\$${value.toStringAsFixed(2)}',
+            title,
             style: TextStyle(
-              fontSize: isDesktop ? 28.0 : (isTablet ? 24.0 : 20.0),
-              fontWeight: FontWeight.bold,
+              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              fontWeight: FontWeight.w600,
               color: color,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            title,
+            value,
             style: TextStyle(
-              fontSize: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
+              fontSize: isDesktop ? 24.0 : (isTablet ? 20.0 : 18.0),
+              fontWeight: FontWeight.bold,
               color: color,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildConsumptionTable(
+    List<OrderModel> orders,
+    AdminController controller,
+    bool isTablet,
+    bool isDesktop,
+  ) {
+    if (orders.isEmpty) {
+      return Container(
+        padding: EdgeInsets.all(isDesktop ? 40.0 : (isTablet ? 30.0 : 20.0)),
+        child: Center(
+          child: Text(
+            'No hay consumo registrado para el filtro seleccionado',
+            style: TextStyle(
+              fontSize: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columnSpacing: isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0),
+        headingRowColor: WidgetStateProperty.all(
+          AppColors.primary.withValues(alpha: 0.1),
+        ),
+        columns: [
+          DataColumn(
+            label: Text(
+              'ID',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Origen',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Productos',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Total',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Método de pago',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Estado',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Hora',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+              ),
+            ),
+          ),
+        ],
+        rows: orders.map((order) {
+          final statusText = order.status == OrderStatus.listo
+              ? 'Cobrado'
+              : order.status == OrderStatus.enPreparacion
+              ? 'En preparación'
+              : 'Pendiente';
+          final statusColor = order.status == OrderStatus.listo
+              ? Colors.green
+              : order.status == OrderStatus.enPreparacion
+              ? Colors.orange
+              : Colors.grey;
+
+          return DataRow(
+            cells: [
+              DataCell(
+                Text(
+                  order.id,
+                  style: TextStyle(
+                    fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                  ),
+                ),
+              ),
+              DataCell(
+                Chip(
+                  label: Text(
+                    order.isTakeaway
+                        ? (order.customerName ?? 'Para llevar')
+                        : 'Mesa ${order.tableNumber}',
+                    style: TextStyle(
+                      fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                      color: Colors.white,
+                    ),
+                  ),
+                  backgroundColor: order.isTakeaway
+                      ? Colors.blue.shade700
+                      : Colors.green.shade700,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isDesktop ? 12.0 : (isTablet ? 8.0 : 6.0),
+                    vertical: isDesktop ? 8.0 : (isTablet ? 6.0 : 4.0),
+                  ),
+                ),
+              ),
+              DataCell(
+                SizedBox(
+                  width: isDesktop ? 200.0 : (isTablet ? 150.0 : 100.0),
+                  child: Text(
+                    order.items
+                        .map((item) => '${item.quantity}x ${item.name}')
+                        .join(', '),
+                    style: TextStyle(
+                      fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                      color: AppColors.textSecondary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              DataCell(
+                Text(
+                  '\$${_calculateOrderTotal(order, controller).toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              DataCell(
+                Text(
+                  'Efectivo',
+                  style: TextStyle(
+                    fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              DataCell(
+                Chip(
+                  label: Text(
+                    statusText,
+                    style: TextStyle(
+                      fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                      color: Colors.white,
+                    ),
+                  ),
+                  backgroundColor: statusColor.shade700,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isDesktop ? 12.0 : (isTablet ? 8.0 : 6.0),
+                    vertical: isDesktop ? 8.0 : (isTablet ? 6.0 : 4.0),
+                  ),
+                ),
+              ),
+              DataCell(
+                Text(
+                  '${order.orderTime.hour.toString().padLeft(2, '0')}:${order.orderTime.minute.toString().padLeft(2, '0')}',
+                  style: TextStyle(
+                    fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
       ),
     );
   }
@@ -1257,9 +1778,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                 ),
               ),
             ],
-            tooltipBehavior: TooltipBehavior(
-              enable: true,
-            ),
+            tooltipBehavior: TooltipBehavior(enable: true),
           ),
         ),
       ],

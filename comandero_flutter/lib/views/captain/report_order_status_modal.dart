@@ -6,7 +6,8 @@ class ReportOrderStatusModal extends StatefulWidget {
   final String orderId;
   final int? tableNumber;
   final bool isTakeaway;
-  final Function(String tipo, String motivo, String? detalles, bool notifyCook) onSend;
+  final Function(String tipo, String motivo, String? detalles, bool notifyCook)
+  onSend;
 
   const ReportOrderStatusModal({
     super.key,
@@ -21,7 +22,13 @@ class ReportOrderStatusModal extends StatefulWidget {
     required String orderId,
     int? tableNumber,
     bool isTakeaway = false,
-    required Function(String tipo, String motivo, String? detalles, bool notifyCook) onSend,
+    required Function(
+      String tipo,
+      String motivo,
+      String? detalles,
+      bool notifyCook,
+    )
+    onSend,
   }) {
     return showDialog(
       context: context,
@@ -45,11 +52,7 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
   bool _notifyCook = true;
 
   // Opciones de Tipo
-  final List<String> _typeOptions = [
-    'Demora',
-    'Cancelación',
-    'Cambio',
-  ];
+  final List<String> _typeOptions = ['Demora', 'Cancelación', 'Cambio'];
 
   // Opciones de Motivo según el Tipo
   List<String> get _reasonOptions {
@@ -102,7 +105,9 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
     widget.onSend(
       _selectedType!,
       _selectedReason!,
-      _detailsController.text.trim().isEmpty ? null : _detailsController.text.trim(),
+      _detailsController.text.trim().isEmpty
+          ? null
+          : _detailsController.text.trim(),
       _notifyCook,
     );
 
@@ -128,9 +133,11 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
           children: [
             // Header
             Container(
-              padding: EdgeInsets.all(isTablet ? AppTheme.spacingXL : AppTheme.spacingLG),
+              padding: EdgeInsets.all(
+                isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+              ),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(AppTheme.radiusLG),
                   topRight: Radius.circular(AppTheme.radiusLG),
@@ -144,18 +151,28 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                       children: [
                         Text(
                           'Reportar estado de orden',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
                                 color: AppColors.textPrimary,
-                                fontSize: isTablet ? AppTheme.fontSizeXL : AppTheme.fontSizeLG,
+                                fontSize: isTablet
+                                    ? AppTheme.fontSizeXL
+                                    : AppTheme.fontSizeLG,
                                 fontWeight: AppTheme.fontWeightBold,
                               ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Orden ${widget.orderId}${widget.tableNumber != null ? ' • Mesa ${widget.tableNumber}' : widget.isTakeaway ? ' • Para llevar' : ''}',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          'Orden ${widget.orderId}${widget.tableNumber != null
+                              ? ' • Mesa ${widget.tableNumber}'
+                              : widget.isTakeaway
+                              ? ' • Para llevar'
+                              : ''}',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
                                 color: AppColors.textSecondary,
-                                fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
+                                fontSize: isTablet
+                                    ? AppTheme.fontSizeSM
+                                    : AppTheme.fontSizeXS,
                               ),
                         ),
                       ],
@@ -172,7 +189,9 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
             // Content
             Flexible(
               child: SingleChildScrollView(
-                padding: EdgeInsets.all(isTablet ? AppTheme.spacingXL : AppTheme.spacingLG),
+                padding: EdgeInsets.all(
+                  isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -180,30 +199,33 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                     Text(
                       'Tipo',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: AppColors.textPrimary,
-                              fontSize: isTablet ? AppTheme.fontSizeBase : AppTheme.fontSizeSM,
-                            fontWeight: AppTheme.fontWeightSemibold,
-                          ),
+                        color: AppColors.textPrimary,
+                        fontSize: isTablet
+                            ? AppTheme.fontSizeBase
+                            : AppTheme.fontSizeSM,
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      value: _selectedType,
+                      initialValue: _selectedType,
                       decoration: InputDecoration(
                         hintText: 'Seleccionar tipo',
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
                         ),
                       ),
-                      items: _typeOptions.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          child: Text(type),
-                        );
-                      }).toList(),
+                      items: [
+                        for (final type in _typeOptions)
+                          DropdownMenuItem(value: type, child: Text(type)),
+                      ],
                       onChanged: (value) {
                         setState(() {
                           _selectedType = value;
-                          _selectedReason = null; // Reset motivo al cambiar tipo
+                          _selectedReason =
+                              null; // Reset motivo al cambiar tipo
                         });
                       },
                     ),
@@ -213,27 +235,33 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                     if (_selectedType != null) ...[
                       Text(
                         'Motivo',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
                               color: AppColors.textPrimary,
-                              fontSize: isTablet ? AppTheme.fontSizeBase : AppTheme.fontSizeSM,
+                              fontSize: isTablet
+                                  ? AppTheme.fontSizeBase
+                                  : AppTheme.fontSizeSM,
                               fontWeight: AppTheme.fontWeightSemibold,
                             ),
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: _selectedReason,
+                        initialValue: _selectedReason,
                         decoration: InputDecoration(
                           hintText: 'Seleccionar motivo',
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusMD,
+                            ),
                           ),
                         ),
-                        items: reasons.map((reason) {
-                          return DropdownMenuItem(
-                            value: reason,
-                            child: Text(reason),
-                          );
-                        }).toList(),
+                        items: [
+                          for (final reason in reasons)
+                            DropdownMenuItem(
+                              value: reason,
+                              child: Text(reason),
+                            ),
+                        ],
                         onChanged: (value) {
                           setState(() {
                             _selectedReason = value;
@@ -247,10 +275,12 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                     Text(
                       'Detalles (opcional)',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: AppColors.textPrimary,
-                              fontSize: isTablet ? AppTheme.fontSizeBase : AppTheme.fontSizeSM,
-                            fontWeight: AppTheme.fontWeightSemibold,
-                          ),
+                        color: AppColors.textPrimary,
+                        fontSize: isTablet
+                            ? AppTheme.fontSizeBase
+                            : AppTheme.fontSizeSM,
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -259,7 +289,9 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                       decoration: InputDecoration(
                         hintText: 'Agregar detalles adicionales...',
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
                         ),
                       ),
                     ),
@@ -276,9 +308,11 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                       title: Text(
                         'Notificar al cocinero',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontSize: isTablet ? AppTheme.fontSizeBase : AppTheme.fontSizeSM,
-                              fontWeight: AppTheme.fontWeightMedium,
-                            ),
+                          fontSize: isTablet
+                              ? AppTheme.fontSizeBase
+                              : AppTheme.fontSizeSM,
+                          fontWeight: AppTheme.fontWeightMedium,
+                        ),
                       ),
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
@@ -287,18 +321,20 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                     Container(
                       padding: EdgeInsets.all(AppTheme.spacingMD),
                       decoration: BoxDecoration(
-                        color: AppColors.secondary.withOpacity(0.1),
+                        color: AppColors.secondary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(AppTheme.radiusMD),
                         border: Border.all(
-                          color: AppColors.secondary.withOpacity(0.3),
+                          color: AppColors.secondary.withValues(alpha: 0.3),
                         ),
                       ),
                       child: Text(
                         'La notificación llegará a Cocina y aparecerá en KDS con prioridad. Esta acción quedará registrada.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                              fontSize: isTablet ? AppTheme.fontSizeXS : AppTheme.fontSizeXS,
-                            ),
+                          color: AppColors.textSecondary,
+                          fontSize: isTablet
+                              ? AppTheme.fontSizeXS
+                              : AppTheme.fontSizeXS,
+                        ),
                       ),
                     ),
                   ],
@@ -308,16 +344,16 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
 
             // Footer con botones
             Container(
-              padding: EdgeInsets.all(isTablet ? AppTheme.spacingXL : AppTheme.spacingLG),
+              padding: EdgeInsets.all(
+                isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+              ),
               decoration: BoxDecoration(
                 color: AppColors.surface,
                 borderRadius: BorderRadius.only(
                   bottomLeft: Radius.circular(AppTheme.radiusLG),
                   bottomRight: Radius.circular(AppTheme.radiusLG),
                 ),
-                border: Border(
-                  top: BorderSide(color: AppColors.border),
-                ),
+                border: Border(top: BorderSide(color: AppColors.border)),
               ),
               child: Row(
                 children: [
@@ -326,16 +362,22 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                       onPressed: () => Navigator.of(context).pop(),
                       style: OutlinedButton.styleFrom(
                         padding: EdgeInsets.symmetric(
-                          vertical: isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                          vertical: isTablet
+                              ? AppTheme.spacingMD
+                              : AppTheme.spacingSM,
                         ),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
                         ),
                       ),
                       child: Text(
                         'Cancelar',
                         style: TextStyle(
-                              fontSize: isTablet ? AppTheme.fontSizeBase : AppTheme.fontSizeSM,
+                          fontSize: isTablet
+                              ? AppTheme.fontSizeBase
+                              : AppTheme.fontSizeSM,
                         ),
                       ),
                     ),
@@ -348,16 +390,22 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                         backgroundColor: Colors.orange,
                         foregroundColor: Colors.white,
                         padding: EdgeInsets.symmetric(
-                          vertical: isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                          vertical: isTablet
+                              ? AppTheme.spacingMD
+                              : AppTheme.spacingSM,
                         ),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
                         ),
                       ),
                       child: Text(
                         'Enviar notificación',
                         style: TextStyle(
-                              fontSize: isTablet ? AppTheme.fontSizeBase : AppTheme.fontSizeSM,
+                          fontSize: isTablet
+                              ? AppTheme.fontSizeBase
+                              : AppTheme.fontSizeSM,
                           fontWeight: AppTheme.fontWeightSemibold,
                         ),
                       ),
@@ -372,4 +420,3 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
     );
   }
 }
-
