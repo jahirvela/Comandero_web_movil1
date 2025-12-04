@@ -313,6 +313,8 @@ export const crearCierreCaja = async (
   // Convertir fecha a string usando zona CDMX
   const fechaStr = getDateOnlyMx(input.fecha) ?? (input.fecha instanceof Date ? input.fecha.toISOString().split('T')[0] : String(input.fecha).split('T')[0]);
 
+  // IMPORTANTE: Usar INSERT ... ON DUPLICATE KEY UPDATE para manejar cierres duplicados
+  // Si ya existe un cierre para esa fecha, actualizarlo en lugar de fallar
   const [result] = await pool.execute<ResultSetHeader>(
     `
     INSERT INTO caja_cierre (
@@ -323,7 +325,8 @@ export const crearCierreCaja = async (
       total_efectivo,
       total_tarjeta,
       creado_por_usuario_id,
-      notas
+      notas,
+      estado
     )
     VALUES (
       :fecha,
@@ -333,8 +336,17 @@ export const crearCierreCaja = async (
       :totalEfectivo,
       :totalTarjeta,
       :usuarioId,
-      :notas
+      :notas,
+      'pending'
     )
+    ON DUPLICATE KEY UPDATE
+      efectivo_final = VALUES(efectivo_final),
+      total_pagos = VALUES(total_pagos),
+      total_efectivo = VALUES(total_efectivo),
+      total_tarjeta = VALUES(total_tarjeta),
+      notas = VALUES(notas),
+      estado = 'pending',
+      creado_por_usuario_id = VALUES(creado_por_usuario_id)
     `,
     {
       fecha: fechaStr,
@@ -348,7 +360,25 @@ export const crearCierreCaja = async (
     }
   );
 
-  // Obtener el cierre creado
+  // Obtener el ID del cierre (puede ser insertId si es nuevo, o el ID existente si se actualizó)
+  let cierreId: number;
+  if (result.insertId > 0) {
+    // Es un nuevo registro
+    cierreId = result.insertId;
+  } else {
+    // Es una actualización, obtener el ID del cierre existente por fecha
+    const [existingRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM caja_cierre WHERE fecha = :fecha`,
+      { fecha: fechaStr }
+    );
+    if (existingRows.length > 0) {
+      cierreId = existingRows[0].id;
+    } else {
+      throw new Error('No se pudo obtener el ID del cierre');
+    }
+  }
+
+  // Obtener el cierre creado/actualizado
   const [rows] = await pool.query<RowDataPacket[]>(
     `
     SELECT 
@@ -365,7 +395,7 @@ export const crearCierreCaja = async (
     FROM caja_cierre
     WHERE id = :id
     `,
-    { id: result.insertId }
+    { id: cierreId }
   );
 
   const row = rows[0];

@@ -113,10 +113,16 @@ class CierresService {
           'totalEfectivo': cierre.efectivo,
           'totalTarjeta': cierre.tarjeta,
           'notas': cierre.notaCajero ?? '',
+          'notaCajero': cierre.notaCajero,
+          'otrosIngresos': cierre.otrosIngresos ?? 0.0,
+          'otrosIngresosTexto': cierre.otrosIngresosTexto,
+          'efectivoContado': cierre.efectivoContado,
+          'totalDeclarado': cierre.totalDeclarado,
         },
       );
 
-      if (response.statusCode == 201) {
+      // Aceptar tanto 201 (creado) como 200 (actualizado)
+      if (response.statusCode == 201 || response.statusCode == 200) {
         final data = response.data['data'] as Map<String, dynamic>?;
         if (data != null) {
           // Mapear la respuesta del backend al modelo
@@ -128,6 +134,12 @@ class CierresService {
       return cierre;
     } catch (e) {
       print('Error al crear cierre de caja: $e');
+      // Si es un error 409 (conflicto), intentar obtener el cierre existente
+      if (e.toString().contains('409') || e.toString().contains('Conflict')) {
+        print('⚠️ Cierre duplicado detectado, el backend debería haberlo actualizado');
+        // El backend ahora maneja esto con ON DUPLICATE KEY UPDATE
+        // Si llegamos aquí, es porque hubo un error inesperado
+      }
       rethrow;
     }
   }
@@ -187,8 +199,8 @@ class CierresService {
     final propinasEfectivo = totalPropinas * 0.5; // Aproximación
     final propinasTarjeta = totalPropinas * 0.5; // Aproximación
     
-    // Determinar período
-    final now = DateTime.now();
+    // Determinar período usando hora CDMX
+    final now = date_utils.AppDateUtils.now();
     String periodo;
     if (fecha.year == now.year && fecha.month == now.month && fecha.day == now.day) {
       periodo = 'Hoy';
@@ -197,7 +209,7 @@ class CierresService {
       if (fecha.year == ayer.year && fecha.month == ayer.month && fecha.day == ayer.day) {
         periodo = 'Ayer';
       } else {
-        periodo = '${fecha.day}/${fecha.month}/${fecha.year}';
+        periodo = date_utils.AppDateUtils.formatDate(fecha);
       }
     }
 

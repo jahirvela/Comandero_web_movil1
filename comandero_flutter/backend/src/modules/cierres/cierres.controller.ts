@@ -49,7 +49,15 @@ export const crearCierreCajaHandler = async (req: Request, res: Response, next: 
     const cierre = await crearNuevoCierreCaja(parsed.data, usuarioId);
 
     // Emitir evento de Socket.IO para notificar a administradores y otros clientes
+    // IMPORTANTE: Emitir tanto created como updated para asegurar que todos los clientes se actualicen
     emitCashClosureCreated({
+      ...cierre,
+      usuario: usuarioNombre,
+      creadoPorNombre: usuarioNombre,
+    });
+    
+    // También emitir updated por si fue una actualización de un cierre existente
+    emitCashClosureUpdated({
       ...cierre,
       usuario: usuarioNombre,
       creadoPorNombre: usuarioNombre,

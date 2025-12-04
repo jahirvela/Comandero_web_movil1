@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../controllers/admin_controller.dart';
 import '../../../models/admin_model.dart';
 import '../../../utils/app_colors.dart';
+import '../../../utils/date_utils.dart' as date_utils;
 
 class CashClosuresWebView extends StatefulWidget {
   const CashClosuresWebView({super.key});
@@ -752,7 +753,7 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                '${closure.fecha.day}/${closure.fecha.month}/${closure.fecha.year}',
+                date_utils.AppDateUtils.formatDate(closure.fecha),
                 style: TextStyle(
                   fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                   fontWeight: FontWeight.w500,
@@ -760,7 +761,7 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                 ),
               ),
               Text(
-                '${closure.fecha.hour.toString().padLeft(2, '0')}:${closure.fecha.minute.toString().padLeft(2, '0')}',
+                date_utils.AppDateUtils.formatTime(closure.fecha),
                 style: TextStyle(
                   fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
                   color: AppColors.textSecondary,
@@ -970,7 +971,8 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
 
     // Agrupar por día
     for (final closure in closures) {
-      final dayKey = '${closure.fecha.day}/${closure.fecha.month}';
+      // Usar formato de fecha CDMX para agrupar
+      final dayKey = date_utils.AppDateUtils.formatDate(closure.fecha).substring(0, 5); // dd/MM
       dailyTotals[dayKey] = (dailyTotals[dayKey] ?? 0) + closure.totalNeto;
     }
 
@@ -1303,7 +1305,7 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                             ),
                           ),
                           Text(
-                            'ID: ${closure.id} • ${closure.fecha.day}/${closure.fecha.month}/${closure.fecha.year}',
+                            'ID: ${closure.id} • ${date_utils.AppDateUtils.formatDate(closure.fecha)}',
                             style: TextStyle(
                               fontSize: isDesktop
                                   ? 14.0
@@ -1331,75 +1333,210 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Estado y usuario
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
+                      // Información básica del cierre
+                      Container(
+                        padding: EdgeInsets.all(isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0)),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Cierre de caja: ${closure.id}',
+                                        style: TextStyle(
+                                          fontSize: isDesktop
+                                              ? 14.0
+                                              : (isTablet ? 13.0 : 12.0),
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Usuario: ${closure.usuario}',
+                                        style: TextStyle(
+                                          fontSize: isDesktop
+                                              ? 13.0
+                                              : (isTablet ? 12.0 : 11.0),
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: closure.estado == CashCloseStatus.approved
+                                            ? Colors.green.shade100
+                                            : closure.estado == CashCloseStatus.pending
+                                            ? Colors.orange.shade100
+                                            : closure.estado == CashCloseStatus.clarification
+                                            ? Colors.yellow.shade100
+                                            : Colors.red.shade100,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color:
+                                              closure.estado == CashCloseStatus.approved
+                                              ? Colors.green.shade700
+                                              : closure.estado == CashCloseStatus.pending
+                                              ? Colors.orange.shade700
+                                              : closure.estado == CashCloseStatus.clarification
+                                              ? Colors.yellow.shade700
+                                              : Colors.red.shade700,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        closure.estado == CashCloseStatus.approved
+                                            ? 'Aprobado'
+                                            : closure.estado == CashCloseStatus.pending
+                                            ? 'Pendiente'
+                                            : closure.estado == CashCloseStatus.clarification
+                                            ? 'Aclaración'
+                                            : 'Rechazado',
+                                        style: TextStyle(
+                                          fontSize: isDesktop
+                                              ? 12.0
+                                              : (isTablet ? 11.0 : 10.0),
+                                          fontWeight: FontWeight.w600,
+                                          color:
+                                              closure.estado == CashCloseStatus.approved
+                                              ? Colors.green.shade700
+                                              : closure.estado == CashCloseStatus.pending
+                                              ? Colors.orange.shade700
+                                              : closure.estado == CashCloseStatus.clarification
+                                              ? Colors.yellow.shade700
+                                              : Colors.red.shade700,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Período: ${closure.periodo}',
+                                      style: TextStyle(
+                                        fontSize: isDesktop
+                                            ? 12.0
+                                            : (isTablet ? 11.0 : 10.0),
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                            decoration: BoxDecoration(
-                              color: closure.estado == CashCloseStatus.approved
-                                  ? Colors.green.shade100
-                                  : closure.estado == CashCloseStatus.pending
-                                  ? Colors.orange.shade100
-                                  : Colors.red.shade100,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color:
-                                    closure.estado == CashCloseStatus.approved
-                                    ? Colors.green.shade700
-                                    : closure.estado == CashCloseStatus.pending
-                                    ? Colors.orange.shade700
-                                    : Colors.red.shade700,
-                              ),
-                            ),
-                            child: Text(
-                              closure.estado == CashCloseStatus.approved
-                                  ? 'Aprobado'
-                                  : closure.estado == CashCloseStatus.pending
-                                  ? 'Pendiente'
-                                  : 'Rechazado',
+                            const SizedBox(height: 8),
+                            Divider(color: Colors.grey.shade300),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Fecha: ${date_utils.AppDateUtils.formatDateTime(closure.fecha)}',
                               style: TextStyle(
                                 fontSize: isDesktop
-                                    ? 14.0
-                                    : (isTablet ? 12.0 : 10.0),
-                                fontWeight: FontWeight.w600,
-                                color:
-                                    closure.estado == CashCloseStatus.approved
-                                    ? Colors.green.shade700
-                                    : closure.estado == CashCloseStatus.pending
-                                    ? Colors.orange.shade700
-                                    : Colors.red.shade700,
+                                    ? 13.0
+                                    : (isTablet ? 12.0 : 11.0),
+                                color: AppColors.textSecondary,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            'Usuario: ${closure.usuario}',
-                            style: TextStyle(
-                              fontSize: isDesktop
-                                  ? 14.0
-                                  : (isTablet ? 12.0 : 10.0),
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            'Período: ${closure.periodo}',
-                            style: TextStyle(
-                              fontSize: isDesktop
-                                  ? 14.0
-                                  : (isTablet ? 12.0 : 10.0),
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 32),
 
-                      // Cards de resumen
+                      // Sección: Información del Total Neto
+                      Container(
+                        padding: EdgeInsets.all(isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0)),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.orange.shade100,
+                              Colors.orange.shade50,
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.orange.shade300,
+                            width: 2,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Total Neto',
+                                        style: TextStyle(
+                                          fontSize: isDesktop
+                                              ? 18.0
+                                              : (isTablet ? 16.0 : 14.0),
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.orange.shade900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
+                                        style: TextStyle(
+                                          fontSize: isDesktop
+                                              ? 12.0
+                                              : (isTablet ? 11.0 : 10.0),
+                                          color: Colors.orange.shade800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Text(
+                                  '\$${closure.totalNeto.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: isDesktop
+                                        ? 32.0
+                                        : (isTablet ? 28.0 : 24.0),
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+
+                      // Sección: Resumen de Pagos
+                      Text(
+                        'Resumen de Pagos',
+                        style: TextStyle(
+                          fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
                       LayoutBuilder(
                         builder: (context, constraints) {
                           if (constraints.maxWidth > 600) {
@@ -1426,28 +1563,19 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                                     isDesktop,
                                   ),
                                 ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: _buildSummaryCard(
-                                    'Otros Ingresos',
-                                    closure.otrosIngresos,
-                                    Colors.purple,
-                                    Icons.more_horiz,
-                                    isTablet,
-                                    isDesktop,
+                                if (closure.otrosIngresos > 0) ...[
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildSummaryCard(
+                                      'Otros Ingresos',
+                                      closure.otrosIngresos,
+                                      Colors.purple,
+                                      Icons.more_horiz,
+                                      isTablet,
+                                      isDesktop,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: _buildSummaryCard(
-                                    'Total Declarado',
-                                    closure.totalDeclarado,
-                                    Colors.orange,
-                                    Icons.calculate,
-                                    isTablet,
-                                    isDesktop,
-                                  ),
-                                ),
+                                ],
                               ],
                             );
                           } else {
@@ -1478,84 +1606,161 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _buildSummaryCard(
-                                        'Otros',
-                                        closure.otrosIngresos,
-                                        Colors.purple,
-                                        Icons.more_horiz,
-                                        isTablet,
-                                        isDesktop,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: _buildSummaryCard(
-                                        'Total',
-                                        closure.totalDeclarado,
-                                        Colors.orange,
-                                        Icons.calculate,
-                                        isTablet,
-                                        isDesktop,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                if (closure.otrosIngresos > 0) ...[
+                                  const SizedBox(height: 12),
+                                  _buildSummaryCard(
+                                    'Otros Ingresos',
+                                    closure.otrosIngresos,
+                                    Colors.purple,
+                                    Icons.more_horiz,
+                                    isTablet,
+                                    isDesktop,
+                                  ),
+                                ],
                               ],
                             );
                           }
                         },
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 32),
 
-                      // Información adicional si existe en el modelo
-                      // (Nota: Estos campos pueden no estar disponibles en el modelo actual)
-
-                      // Total neto destacado
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.orange.shade100,
-                              Colors.orange.shade50,
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.orange.shade300,
-                            width: 2,
+                      // Sección: Propinas
+                      if (closure.propinasTarjeta > 0 || closure.propinasEfectivo > 0) ...[
+                        Text(
+                          'Propinas',
+                          style: TextStyle(
+                            fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        const SizedBox(height: 16),
+                        Row(
                           children: [
-                            Text(
-                              'Total Neto:',
-                              style: TextStyle(
-                                fontSize: isDesktop
-                                    ? 20.0
-                                    : (isTablet ? 18.0 : 16.0),
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade900,
+                            Expanded(
+                              child: _buildSummaryCard(
+                                'Propinas Tarjeta',
+                                closure.propinasTarjeta,
+                                Colors.purple.shade300,
+                                Icons.credit_card,
+                                isTablet,
+                                isDesktop,
                               ),
                             ),
-                            Text(
-                              '\$${closure.totalNeto.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                fontSize: isDesktop
-                                    ? 28.0
-                                    : (isTablet ? 24.0 : 20.0),
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade900,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSummaryCard(
+                                'Propinas Efectivo',
+                                closure.propinasEfectivo,
+                                Colors.orange.shade300,
+                                Icons.attach_money,
+                                isTablet,
+                                isDesktop,
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 32),
+                      ],
+
+                      // Sección: Notas del Cajero
+                      if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+                        Text(
+                          'Notas del Cajero',
+                          style: TextStyle(
+                            fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0)),
+                          decoration: BoxDecoration(
+                            color: Colors.yellow.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.yellow.shade300,
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Text(
+                            closure.notaCajero!,
+                            style: TextStyle(
+                              fontSize: isDesktop ? 14.0 : (isTablet ? 13.0 : 12.0),
+                              color: AppColors.textPrimary,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                      ],
+
+                      // Sección: Otros Ingresos (si hay texto)
+                      if (closure.otrosIngresosTexto != null && closure.otrosIngresosTexto!.isNotEmpty) ...[
+                        Text(
+                          'Detalle de Otros Ingresos',
+                          style: TextStyle(
+                            fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0)),
+                          decoration: BoxDecoration(
+                            color: Colors.purple.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.purple.shade300,
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Text(
+                            closure.otrosIngresosTexto!,
+                            style: TextStyle(
+                              fontSize: isDesktop ? 14.0 : (isTablet ? 13.0 : 12.0),
+                              color: AppColors.textPrimary,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                      ],
+
+                      // Sección: Movimientos Individuales (placeholder)
+                      Text(
+                        'Movimientos Individuales',
+                        style: TextStyle(
+                          fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0)),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Los movimientos individuales se mostrarán aquí cuando estén disponibles.',
+                            style: TextStyle(
+                              fontSize: isDesktop ? 14.0 : (isTablet ? 13.0 : 12.0),
+                              color: AppColors.textSecondary,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -1574,16 +1779,38 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                     bottomLeft: Radius.circular(12),
                     bottomRight: Radius.circular(12),
                   ),
+                  border: Border(
+                    top: BorderSide(
+                      color: Colors.grey.shade300,
+                      width: 1,
+                    ),
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cerrar'),
+                    TextButton.icon(
+                      onPressed: () {
+                        // TODO: Implementar impresión de detalle
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Funcionalidad de impresión en desarrollo'),
+                            backgroundColor: Colors.blue,
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.print),
+                      label: const Text('Imprimir detalle'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0),
+                          vertical: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 12),
-                    if (closure.estado == CashCloseStatus.pending)
+                    if (closure.estado == CashCloseStatus.pending) ...[
                       ElevatedButton.icon(
                         onPressed: () {
                           Navigator.of(context).pop();
@@ -1596,12 +1823,28 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                           );
                         },
                         icon: const Icon(Icons.check),
-                        label: const Text('Aprobar'),
+                        label: const Text('Marcar verificado'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                           foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0),
+                            vertical: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 12),
+                    ],
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0),
+                          vertical: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
+                        ),
+                      ),
+                      child: const Text('Cerrar'),
+                    ),
                   ],
                 ),
               ),
