@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_theme.dart';
+import '../../services/productos_service.dart';
+import '../../services/categorias_service.dart';
 
 /// Modal para personalizar un producto antes de agregarlo al pedido
 /// Basado en las imágenes 12-13 y 19-26 proporcionadas
@@ -32,6 +34,13 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   final Map<String, bool> selectedExtras = {};
   final Map<String, double> extraPrices = {};
   String kitchenNotes = '';
+  
+  // Productos de la BD
+  List<Map<String, dynamic>> _extrasProducts = [];
+  List<Map<String, dynamic>> _salsasProducts = [];
+  bool _loadingProducts = true;
+  final ProductosService _productosService = ProductosService();
+  final CategoriasService _categoriasService = CategoriasService();
 
   // Estimación de tiempo según el producto
   String get estimatedTime {
@@ -48,18 +57,106 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   @override
   void initState() {
     super.initState();
-    _initializeModifiers();
+    _loadProductsFromDB();
+  }
+
+  Future<void> _loadProductsFromDB() async {
+    setState(() {
+      _loadingProducts = true;
+    });
+
+    try {
+      // Obtener todas las categorías desde el backend
+      final categorias = await _categoriasService.getCategorias();
+      
+      // Buscar las categorías por nombre (búsqueda flexible)
+      int? ingredientesExtraId;
+      int? salsasId;
+      
+      for (var categoria in categorias) {
+        final nombre = (categoria['nombre'] as String? ?? '').trim();
+        final nombreLower = nombre.toLowerCase();
+        final id = categoria['id'] as int?;
+        
+        if (id != null) {
+          // Buscar "Ingredientes Extra" (puede tener variaciones en el nombre)
+          if (nombreLower.contains('ingrediente') && nombreLower.contains('extra') ||
+              nombreLower == 'extras' ||
+              nombreLower == 'ingredientes extra' ||
+              nombreLower == 'ingrediente extra') {
+            ingredientesExtraId = id;
+            print('Categoría "Ingredientes Extra" encontrada: ID=$id, Nombre="$nombre"');
+          }
+          // Buscar "Salsas"
+          if (nombreLower.contains('salsa') && 
+              (nombreLower == 'salsas' || nombreLower == 'salsa' || nombreLower.startsWith('salsa'))) {
+            salsasId = id;
+            print('Categoría "Salsas" encontrada: ID=$id, Nombre="$nombre"');
+          }
+        }
+      }
+      
+      // Debug: mostrar todas las categorías disponibles
+      print('Categorías disponibles:');
+      for (var cat in categorias) {
+        print('  - ID: ${cat['id']}, Nombre: "${cat['nombre']}"');
+      }
+
+      // Cargar productos de "Ingredientes Extra"
+      if (ingredientesExtraId != null) {
+        final productos = await _productosService.getProductosPorCategoria(ingredientesExtraId);
+        _extrasProducts = productos
+            .map((p) => p as Map<String, dynamic>)
+            .toList();
+      } else {
+        print('Advertencia: No se encontró la categoría "Ingredientes Extra"');
+        _extrasProducts = [];
+      }
+
+      // Cargar productos de "Salsas"
+      if (salsasId != null) {
+        final productos = await _productosService.getProductosPorCategoria(salsasId);
+        _salsasProducts = productos
+            .map((p) => p as Map<String, dynamic>)
+            .toList();
+      } else {
+        print('Advertencia: No se encontró la categoría "Salsas"');
+        _salsasProducts = [];
+      }
+
+      print('Productos cargados - Ingredientes Extra: ${_extrasProducts.length}, Salsas: ${_salsasProducts.length}');
+
+      setState(() {
+        _loadingProducts = false;
+      });
+
+      // Inicializar después de cargar productos
+      _initializeModifiers();
+    } catch (e) {
+      print('Error al cargar productos extras y salsas: $e');
+      setState(() {
+        _loadingProducts = false;
+        _extrasProducts = [];
+        _salsasProducts = [];
+      });
+      _initializeModifiers();
+    }
   }
 
   void _initializeModifiers() {
     final category = widget.product['category'] as String?;
-    final name = widget.product['name'] as String?;
 
     // Inicializar salsas según el tipo de producto
     if (category == 'Tacos' ||
         category == 'Platos Especiales' ||
         category == 'Salsas') {
-      selectedSauce = 'Salsa roja (picante)';
+      // Seleccionar la primera salsa disponible si existe
+      if (_salsasProducts.isNotEmpty) {
+        final primeraSalsa = _salsasProducts[0];
+        selectedSauce = primeraSalsa['nombre'] as String?;
+      } else {
+        selectedSauce = 'Sin salsa';
+      }
     }
 
     // Inicializar tamaño para consomés
@@ -72,32 +169,35 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
       selectedTemperature = '¿Con hielo? (Fría)';
     }
 
-    // Configurar extras disponibles según el producto
-    if (category == 'Tacos') {
-      extraPrices['Carne extra'] = 15.0;
-      extraPrices['Cebolla asada'] = 5.0;
-      extraPrices['Cebolla curtida'] = 3.0;
-      extraPrices['Queso Oaxaca'] = 8.0;
-    } else if (category == 'Platos Especiales') {
-      if (name?.contains('Mix') == true) {
-        extraPrices['Taco adicional'] = widget.product['price'] * 0.23; // ~22
-        extraPrices['Consomé extra'] = 15.0;
-        extraPrices['Tortillas extra (5 pzs)'] = 8.0;
+    // Configurar extras disponibles desde la BD
+    // Solo mostrar extras si el producto permite extras (Tacos o Platos Especiales)
+    if (category == 'Tacos' || category == 'Platos Especiales') {
+      for (var extra in _extrasProducts) {
+        final nombre = extra['nombre'] as String? ?? '';
+        final precio = (extra['precio'] as num?)?.toDouble() ?? 0.0;
+        if (nombre.isNotEmpty) {
+          extraPrices[nombre] = precio;
+        }
       }
     }
   }
 
   double get totalPrice {
-    double basePrice = (widget.product['price'] as num).toDouble();
+    final priceValue = widget.product['price'];
+    double basePrice = (priceValue is num ? priceValue.toDouble() : 0.0);
+    if (basePrice.isNaN || basePrice.isInfinite) basePrice = 0.0;
 
     // Aplicar precio según tamaño si es consomé
     if (widget.product['category'] == 'Consomes' && selectedSize != null) {
       if (selectedSize == 'Chico') {
-        basePrice = (widget.product['price'] as num).toDouble();
+        basePrice = (priceValue is num ? priceValue.toDouble() : 0.0);
+        if (basePrice.isNaN || basePrice.isInfinite) basePrice = 0.0;
       } else if (selectedSize == 'Mediano') {
-        basePrice = (widget.product['price'] as num).toDouble() + 10;
+        basePrice = (priceValue is num ? priceValue.toDouble() : 0.0) + 10;
+        if (basePrice.isNaN || basePrice.isInfinite) basePrice = 10.0;
       } else if (selectedSize == 'Grande') {
-        basePrice = (widget.product['price'] as num).toDouble() + 20;
+        basePrice = (priceValue is num ? priceValue.toDouble() : 0.0) + 20;
+        if (basePrice.isNaN || basePrice.isInfinite) basePrice = 20.0;
       }
     }
 
@@ -109,9 +209,15 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
       }
     });
 
-    // Agregar precio de salsa premium
-    if (selectedSauce == 'Chile de árbol (muy picante)') {
-      extrasTotal += 3.0;
+    // Agregar precio de salsa si tiene precio
+    if (selectedSauce != null && selectedSauce != 'Sin salsa') {
+      for (var salsa in _salsasProducts) {
+        if (salsa['nombre'] == selectedSauce) {
+          final precio = (salsa['precio'] as num?)?.toDouble() ?? 0.0;
+          extrasTotal += precio;
+          break;
+        }
+      }
     }
 
     return (basePrice + extrasTotal) * quantity;
@@ -165,9 +271,8 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                     ],
 
                     // Ingredientes extra (para tacos y platos especiales)
-                    if ((category == 'Tacos' ||
-                            category == 'Platos Especiales') &&
-                        extraPrices.isNotEmpty) ...[
+                    // Mostrar siempre si es taco o plato especial, la sección manejará si hay productos
+                    if (category == 'Tacos' || category == 'Platos Especiales') ...[
                       _buildExtrasSection(isTablet),
                       SizedBox(height: AppTheme.spacingLG),
                     ],
@@ -310,7 +415,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                         borderRadius: BorderRadius.circular(AppTheme.radiusSM),
                       ),
                       child: Text(
-                        '\$${(widget.product['price'] as num).toStringAsFixed(0)}',
+                        '\$${((widget.product['price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0)}',
                         style: TextStyle(
                           fontSize: isTablet ? 18.0 : 16.0,
                           fontWeight: AppTheme.fontWeightBold,
@@ -436,15 +541,19 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   }
 
   Widget _buildSizeSection(bool isTablet) {
+    final priceValue = widget.product['price'];
+    final basePrice = (priceValue is num ? priceValue.toDouble() : 0.0);
+    final safeBasePrice = basePrice.isNaN || basePrice.isInfinite ? 0.0 : basePrice;
+    
     final sizes = [
-      {'name': 'Chico', 'price': (widget.product['price'] as num).toDouble()},
+      {'name': 'Chico', 'price': safeBasePrice},
       {
         'name': 'Mediano',
-        'price': (widget.product['price'] as num).toDouble() + 10,
+        'price': safeBasePrice + 10,
       },
       {
         'name': 'Grande',
-        'price': (widget.product['price'] as num).toDouble() + 20,
+        'price': safeBasePrice + 20,
       },
     ];
 
@@ -473,7 +582,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 title: Text(
-                  '${size['name']} - \$${((size['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}',
+                  '${size['name']} - \$${((size['price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0)}',
                 ),
                 trailing: Icon(
                   selectedSize == size['name']
@@ -546,7 +655,23 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   }
 
   Widget _buildExtrasSection(bool isTablet) {
-    if (extraPrices.isEmpty) return const SizedBox.shrink();
+    if (_loadingProducts) {
+      return Card(
+        elevation: 1,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+          side: BorderSide(color: AppColors.border),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+          child: const Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
+    if (_extrasProducts.isEmpty) return const SizedBox.shrink();
 
     return Card(
       elevation: 1,
@@ -568,16 +693,20 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
               ),
             ),
             SizedBox(height: AppTheme.spacingMD),
-            ...extraPrices.entries.map((entry) {
-              final isSelected = selectedExtras[entry.key] ?? false;
+            ..._extrasProducts.map((extra) {
+              final nombre = extra['nombre'] as String? ?? '';
+              final precio = (extra['precio'] as num?)?.toDouble() ?? 0.0;
+              final isSelected = selectedExtras[nombre] ?? false;
               return CheckboxListTile(
                 title: Text(
-                  '${entry.key} +\$${entry.value.toStringAsFixed(0)}',
+                  precio > 0 
+                    ? '$nombre +\$${precio.toStringAsFixed(0)}'
+                    : nombre,
                 ),
                 value: isSelected,
                 onChanged: (value) {
                   setState(() {
-                    selectedExtras[entry.key] = value ?? false;
+                    selectedExtras[nombre] = value ?? false;
                   });
                 },
                 activeColor: AppColors.primary,
@@ -592,14 +721,39 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   }
 
   Widget _buildSaucesSection(bool isTablet, String? category) {
-    final sauces = category == 'Salsas'
-        ? ['Salsa roja (picante)', 'Salsa verde (medio)']
-        : [
-            'Salsa roja (picante)',
-            'Salsa verde (medio)',
-            'Chile de árbol (muy picante) +\$3',
-            'Sin salsa',
-          ];
+    if (_loadingProducts) {
+      return Card(
+        elevation: 1,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+          side: BorderSide(color: AppColors.border),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+          child: const Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
+    // Crear lista de salsas desde la BD + opción "Sin salsa"
+    final sauces = <Map<String, dynamic>>[];
+    for (var salsa in _salsasProducts) {
+      final nombre = salsa['nombre'] as String? ?? '';
+      final precio = (salsa['precio'] as num?)?.toDouble() ?? 0.0;
+      sauces.add({
+        'nombre': nombre,
+        'precio': precio,
+      });
+    }
+    // Agregar opción "Sin salsa" al final
+    sauces.add({
+      'nombre': 'Sin salsa',
+      'precio': 0.0,
+    });
+
+    if (sauces.isEmpty) return const SizedBox.shrink();
 
     return Card(
       elevation: 1,
@@ -625,19 +779,23 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                title: Text(sauce),
+                title: Text(
+                  sauce['precio'] > 0
+                    ? '${sauce['nombre']} +\$${sauce['precio'].toStringAsFixed(0)}'
+                    : sauce['nombre'] as String,
+                ),
                 trailing: Icon(
-                  selectedSauce == sauce
+                  selectedSauce == sauce['nombre']
                       ? Icons.check_circle
                       : Icons.radio_button_unchecked,
-                  color: selectedSauce == sauce
+                  color: selectedSauce == sauce['nombre']
                       ? AppColors.primary
                       : AppColors.border,
                   size: 20,
                 ),
                 onTap: () {
                   setState(() {
-                    selectedSauce = sauce;
+                    selectedSauce = sauce['nombre'] as String;
                   });
                 },
               ),
@@ -736,7 +894,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '\$${totalPrice.toStringAsFixed(2)}',
+                    '\$${(totalPrice.isNaN || totalPrice.isInfinite ? 0.0 : totalPrice).toStringAsFixed(2)}',
                     style: TextStyle(
                       fontSize: isTablet ? 24.0 : 20.0,
                       fontWeight: AppTheme.fontWeightBold,
@@ -761,9 +919,21 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
             height: isTablet ? 56.0 : 48.0,
             child: ElevatedButton(
               onPressed: () {
+                // Obtener el precio de la salsa seleccionada
+                double saucePrice = 0.0;
+                if (selectedSauce != null && selectedSauce != 'Sin salsa') {
+                  for (var salsa in _salsasProducts) {
+                    if (salsa['nombre'] == selectedSauce) {
+                      saucePrice = (salsa['precio'] as num?)?.toDouble() ?? 0.0;
+                      break;
+                    }
+                  }
+                }
+
                 final result = {
                   'quantity': quantity,
                   'sauce': selectedSauce,
+                  'saucePrice': saucePrice, // Precio de la salsa seleccionada
                   'size': selectedSize,
                   'temperature': selectedTemperature,
                   'extras': selectedExtras.entries

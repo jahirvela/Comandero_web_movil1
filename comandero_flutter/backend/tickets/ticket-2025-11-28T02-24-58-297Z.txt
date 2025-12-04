@@ -1,0 +1,26 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000049
+Fecha: 2025-11-27T20:23:38.000Z
+a1E1d1*** PARA LLEVAR ***
+d0E0a0Cliente: Adrian
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+ 16  Taco de Barbacoa            480.00
+  Nota: Extras: Quesillo (+$5) | Salsa: Salsa Verde
+------------------------------------------
+Subtotal:                    $  480.00
+Descuento:                   $   72.00
+Propina sugerida:           $   81.60
+E1TOTAL:                      $  489.60
+E0==========================================
+a1
+k4k10ORD-000049
+ORD-000049
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

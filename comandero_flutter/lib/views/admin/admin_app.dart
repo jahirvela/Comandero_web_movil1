@@ -11,10 +11,54 @@ import '../../services/payment_repository.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../../utils/app_theme.dart';
+import '../../utils/date_utils.dart' as date_utils;
 import '../cocinero/order_detail_modal.dart';
+import '../../services/ordenes_service.dart';
 
 class AdminApp extends StatelessWidget {
   const AdminApp({super.key});
+
+  /// Helper para extraer mensajes de error más claros
+  static String _extractErrorMessage(dynamic e) {
+    final errorStr = e.toString();
+    
+    // Errores comunes
+    if (errorStr.contains('Error al obtener roles')) {
+      return 'Error al obtener roles del sistema. Verifica que el backend esté funcionando.';
+    } else if (errorStr.contains('Rol no encontrado')) {
+      return 'Uno de los roles seleccionados no existe en el sistema.';
+    } else if (errorStr.contains('Categoría no encontrada')) {
+      return 'La categoría seleccionada no existe en el sistema.';
+    } else if (errorStr.contains('categoria') && (errorStr.contains('no existe') || errorStr.contains('Unknown column'))) {
+      return 'La columna categoria no existe en la base de datos. El sistema intentará crearla automáticamente. Si el error persiste, ejecuta: npm run migrate:inventory-category en el backend';
+    } else if (errorStr.contains('Error de conexión') || 
+               errorStr.contains('No se pudo conectar') ||
+               errorStr.contains('backend esté corriendo') ||
+               errorStr.contains('connection')) {
+      return 'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+    } else if (errorStr.contains('401') || errorStr.contains('403')) {
+      return 'No tienes permisos para realizar esta acción.';
+    } else if (errorStr.contains('username') && errorStr.contains('ya existe')) {
+      return 'El nombre de usuario ya existe.';
+    } else if (errorStr.contains('El backend no retornó')) {
+      // Extraer el mensaje específico
+      final match = RegExp(r'El backend no retornó (.+?)\.').firstMatch(errorStr);
+      if (match != null) {
+        return 'Error del servidor: ${match.group(1)}';
+      }
+    }
+    
+    // Intentar extraer el mensaje más relevante
+    final match = RegExp(r'Exception:\s*(.+?)(?:Exception:|$)').firstMatch(errorStr);
+    if (match != null) {
+      return match.group(1)?.trim() ?? 'Error desconocido';
+    }
+    
+    // Si el mensaje es muy largo, truncarlo
+    return errorStr.length > 150 
+        ? '${errorStr.substring(0, 150)}...' 
+        : errorStr;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -288,7 +332,7 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    final cards = _getGeneralSummaryCards();
+    final cards = _getGeneralSummaryCards(controller);
 
     return Card(
       elevation: 2,
@@ -344,33 +388,63 @@ class AdminApp extends StatelessWidget {
     );
   }
 
-  List<_SummaryCardData> _getGeneralSummaryCards() {
+  List<_SummaryCardData> _getGeneralSummaryCards(AdminController controller) {
+    // Calcular ventas del día
+    final todaySales = controller.todayTotalSales;
+    final salesGrowth = controller.salesGrowthPercentage;
+    final salesGrowthText = salesGrowth >= 0 
+        ? '+${salesGrowth.toStringAsFixed(1)}% vs ayer'
+        : '${salesGrowth.toStringAsFixed(1)}% vs ayer';
+
+    // Calcular órdenes activas
+    final activeOrders = controller.activeOrders.length;
+    final ordersInKitchen = controller.ordersInKitchen.length;
+    final ordersText = ordersInKitchen > 0 
+        ? '$ordersInKitchen en cocina'
+        : 'Sin órdenes en cocina';
+
+    // Calcular mesas ocupadas
+    final occupiedTables = controller.occupiedTablesCount;
+    final totalTables = controller.totalTablesCount;
+    final occupancyRate = controller.tableOccupancyRate;
+    final tablesText = '$occupiedTables/$totalTables';
+    final occupancyText = '${occupancyRate.toStringAsFixed(1)}% ocupación';
+
+    // Calcular stock crítico
+    final criticalStock = controller.criticalStockItems.length;
+    final stockItemsNames = controller.criticalStockItemsNames;
+    final stockText = criticalStock > 0 
+        ? stockItemsNames.length > 30 
+            ? '${stockItemsNames.substring(0, 30)}...'
+            : stockItemsNames
+        : 'Ninguno';
+
     return [
       _SummaryCardData(
         title: 'Ventas del Día',
-        value: '\$3,250',
-        subtitle: '+12.5% vs ayer',
+        value: '\$${todaySales.toStringAsFixed(2)}',
+        subtitle: salesGrowthText,
         color: AppColors.success,
         icon: Icons.trending_up,
       ),
       _SummaryCardData(
         title: 'Órdenes Activas',
-        value: '8',
-        subtitle: '3 en cocina',
+        value: '$activeOrders',
+        subtitle: ordersText,
         color: AppColors.info,
         icon: Icons.receipt_long,
       ),
       _SummaryCardData(
         title: 'Mesas Ocupadas',
-        value: '5/8',
-        subtitle: '62.5% ocupación',
+        value: tablesText,
+        subtitle: occupancyText,
         color: AppColors.warning,
         icon: Icons.table_restaurant,
       ),
       _SummaryCardData(
         title: 'Stock Crítico',
-        value: '2',
-        subtitle: 'Carnitas, Tortillas',
+        value: '$criticalStock',
+        subtitle: stockText,
         color: AppColors.error,
         icon: Icons.warning_amber,
       ),
@@ -488,11 +562,35 @@ class AdminApp extends StatelessWidget {
       return Container(
         padding: EdgeInsets.all(AppTheme.spacingXL),
         child: Center(
-          child: Text(
-            'No hay pagos registrados para el filtro seleccionado',
-            style: Theme.of(
-              context,
-            ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.receipt_long_outlined,
+                size: 64,
+                color: AppColors.textSecondary.withValues(alpha: 0.5),
+              ),
+              SizedBox(height: AppTheme.spacingMD),
+              Text(
+                'No hay datos de consumo para mostrar',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: AppTheme.fontWeightSemibold,
+                ),
+              ),
+              SizedBox(height: AppTheme.spacingXS),
+              Text(
+                'Los datos aparecerán aquí cuando se registren pagos',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.textSecondary.withValues(alpha: 0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
         ),
       );
@@ -873,13 +971,17 @@ class AdminApp extends StatelessWidget {
                 vertical: AppTheme.spacingXS,
               ),
               decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.2),
+                color: table.status == TableStatus.enLimpieza
+                    ? Colors.grey.shade200  // Gris claro para "En limpieza"
+                    : statusColor.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(AppTheme.radiusSM),
               ),
               child: Text(
                 statusText,
                 style: TextStyle(
-                  color: statusColor,
+                  color: table.status == TableStatus.enLimpieza
+                      ? Colors.grey.shade800  // Texto oscuro para contraste con gris claro
+                      : statusColor,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
                       : AppTheme.fontSizeXS,
@@ -1180,48 +1282,229 @@ class AdminApp extends StatelessWidget {
     );
   }
 
+  // Widget para construir un chip de área con botón de eliminar
+  Widget _buildAreaFilterChip({
+    required BuildContext context,
+    required String label,
+    required String value,
+    required bool isSelected,
+    required Function(bool) onSelected,
+    required VoidCallback? onDelete,
+    required bool isTablet,
+  }) {
+    return FilterChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
+          fontWeight: isSelected
+              ? AppTheme.fontWeightSemibold
+              : AppTheme.fontWeightNormal,
+        ),
+      ),
+      selected: isSelected,
+      onSelected: (selected) {
+        if (selected) {
+          onSelected(true);
+        }
+      },
+      selectedColor: AppColors.primary,
+      checkmarkColor: Colors.white,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : AppColors.textPrimary,
+      ),
+      onDeleted: onDelete,
+      deleteIcon: Icon(
+        Icons.close,
+        size: isTablet ? 16 : 14,
+        color: isSelected ? Colors.white : AppColors.textPrimary,
+      ),
+    );
+  }
+
   // Filtros de área
   Widget _buildAreaFilters(
     BuildContext context,
     AdminController controller,
     bool isTablet,
   ) {
-    final filterOptions = [
-      {'value': 'todos', 'label': 'Todos'},
-      {'value': 'area_principal', 'label': 'Área Principal'},
-      {'value': 'area_lateral', 'label': 'Área Lateral'},
-    ];
+    final filterOptions = controller.tableAreas.map((area) => {
+      'value': area,
+      'label': area == 'todos' ? 'Todos' : area,
+    }).toList();
 
     return Wrap(
       spacing: AppTheme.spacingSM,
       runSpacing: AppTheme.spacingSM,
       children: [
         for (final filter in filterOptions)
-          FilterChip(
-            label: Text(
-              filter['label']!,
-              style: TextStyle(
-                fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
-                fontWeight: controller.selectedTableArea == filter['value']
-                    ? AppTheme.fontWeightSemibold
-                    : AppTheme.fontWeightNormal,
-              ),
-            ),
-            selected: controller.selectedTableArea == filter['value'],
+          _buildAreaFilterChip(
+            context: context,
+            label: filter['label']!,
+            value: filter['value']!,
+            isSelected: controller.selectedTableArea == filter['value'],
             onSelected: (selected) {
               if (selected) {
                 controller.setSelectedTableArea(filter['value']!);
               }
             },
-            selectedColor: AppColors.primary,
-            checkmarkColor: Colors.white,
-            labelStyle: TextStyle(
-              color: controller.selectedTableArea == filter['value']
-                  ? Colors.white
-                  : AppColors.textPrimary,
-            ),
+            onDelete: filter['value'] != 'todos'
+                ? () => _showDeleteAreaDialog(context, controller, filter['value']!)
+                : null,
+            isTablet: isTablet,
           ),
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          color: AppColors.primary,
+          onPressed: () => _showAddAreaDialog(context, controller),
+          tooltip: 'Agregar Área',
+        ),
       ],
+    );
+  }
+
+  // Diálogo para agregar área
+  void _showAddAreaDialog(
+    BuildContext context,
+    AdminController controller,
+  ) {
+    final areaNameController = TextEditingController();
+    final isTablet = MediaQuery.of(context).size.width > 600;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Agregar Área',
+          style: TextStyle(fontSize: isTablet ? 20 : 18),
+        ),
+        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+        content: SizedBox(
+          width: isTablet ? 400 : double.infinity,
+          child: TextField(
+            controller: areaNameController,
+            decoration: const InputDecoration(
+              labelText: 'Nombre del área',
+              hintText: 'Ej: Terraza, Patio, etc.',
+              border: OutlineInputBorder(),
+            ),
+            autofocus: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final areaName = areaNameController.text.trim();
+              if (areaName.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Por favor ingresa un nombre para el área'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              
+              // Verificar si el área ya existe (comparación exacta)
+              if (controller.tableAreas.contains(areaName)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('El área "$areaName" ya existe'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              
+              controller.addTableArea(areaName);
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Área "$areaName" agregada'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+            child: const Text('Crear'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Diálogo para confirmar eliminación de área
+  void _showDeleteAreaDialog(
+    BuildContext context,
+    AdminController controller,
+    String areaName,
+  ) {
+    final isTablet = MediaQuery.of(context).size.width > 600;
+    
+    // Contar cuántas mesas usan esta área
+    final mesasConArea = controller.tables.where((t) => t.section == areaName).length;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Eliminar Área',
+          style: TextStyle(fontSize: isTablet ? 20 : 18),
+        ),
+        content: Text(
+          mesasConArea > 0
+              ? '¿Estás seguro de que deseas eliminar el área "$areaName"?\n\n'
+                  'Hay $mesasConArea mesa${mesasConArea > 1 ? 's' : ''} que usan esta área. '
+                  'Se moverán a "${controller.tableAreas.where((a) => a != 'todos' && a != areaName).isNotEmpty ? controller.tableAreas.where((a) => a != 'todos' && a != areaName).first : 'Área Principal'}".'
+              : '¿Estás seguro de que deseas eliminar el área "$areaName"?',
+          style: TextStyle(fontSize: isTablet ? 16 : 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              
+              try {
+                // El método ahora retorna inmediatamente después de actualizar localmente
+                // No necesita mostrar diálogo de carga porque es instantáneo
+                await controller.deleteTableArea(areaName);
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Área "$areaName" eliminada exitosamente. Las mesas se están actualizando en segundo plano.'),
+                      backgroundColor: Colors.green,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error al eliminar área: ${_extractErrorMessage(e)}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1290,11 +1573,14 @@ class AdminApp extends StatelessWidget {
           itemCount: tables.length,
           itemBuilder: (context, index) {
             final table = tables[index];
-            return _buildTableManagementCard(
-              context,
-              table,
-              controller,
-              isTablet,
+            return KeyedSubtree(
+              key: ValueKey('table_${table.id}_${table.status}'),
+              child: _buildTableManagementCard(
+                context,
+                table,
+                controller,
+                isTablet,
+              ),
             );
           },
         );
@@ -1326,18 +1612,16 @@ class AdminApp extends StatelessWidget {
         textColor = Colors.black87;
         break;
       case TableStatus.enLimpieza:
-        backgroundColor = Colors.orange.shade700;
-        textColor = Colors.white;
+        backgroundColor = Colors.grey.shade200;
+        textColor = Colors.grey.shade800;
         break;
       default:
         backgroundColor = Colors.grey.shade700;
         textColor = Colors.white;
     }
 
-    final sectionText = table.section == 'area_principal'
-        ? 'Área Principal'
-        : table.section == 'area_lateral'
-        ? 'Área Lateral'
+    final sectionText = table.section != null && table.section!.isNotEmpty
+        ? table.section!
         : 'Sin sección';
 
     return Container(
@@ -1426,11 +1710,15 @@ class AdminApp extends StatelessWidget {
             // Estado con dropdown
             Container(
               decoration: BoxDecoration(
-                color: textColor.withValues(alpha: 0.15),
+                color: table.status == TableStatus.enLimpieza 
+                    ? Colors.grey.shade200  // Gris claro para "En limpieza"
+                    : (table.status == TableStatus.reservada
+                        ? Colors.yellow.shade100
+                        : textColor.withValues(alpha: 0.15)),
                 borderRadius: BorderRadius.circular(AppTheme.radiusMD),
               ),
               child: DropdownButtonFormField<String>(
-                initialValue: table.status,
+                value: table.status,
                 decoration: InputDecoration(
                   labelText: 'Estado',
                   labelStyle: TextStyle(color: textColor),
@@ -1484,9 +1772,30 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                 ],
-                onChanged: (newStatus) {
+                onChanged: (newStatus) async {
                   if (newStatus != null) {
-                    controller.updateTableStatus(table.id, newStatus);
+                    try {
+                      await controller.updateTableStatus(table.id, newStatus);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Estado de mesa actualizado'),
+                            backgroundColor: Colors.green,
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error al actualizar estado: ${_extractErrorMessage(e)}'),
+                            backgroundColor: Colors.red,
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      }
+                    }
                   }
                 },
                 style: TextStyle(
@@ -1538,19 +1847,28 @@ class AdminApp extends StatelessWidget {
     final formKey = GlobalKey<FormState>();
     final numberController = TextEditingController();
     final seatsController = TextEditingController();
-    String selectedSection = 'area_principal';
+    // Obtener áreas disponibles (excluyendo 'todos')
+    final availableAreas = controller.tableAreas.where((a) => a != 'todos').toList();
+    String selectedSection = availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal';
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Agregar Mesa'),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          title: Text(
+            'Agregar Mesa',
+            style: TextStyle(fontSize: isTablet ? 20 : 18),
+          ),
+          contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+          content: SizedBox(
+            width: isTablet ? 450 : double.infinity,
+            child: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                   TextFormField(
                     controller: numberController,
                     decoration: const InputDecoration(
@@ -1593,21 +1911,15 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
-                    initialValue: selectedSection,
+                    value: selectedSection,
                     decoration: const InputDecoration(
                       labelText: 'Sección *',
                       border: OutlineInputBorder(),
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'area_principal',
-                        child: Text('Área Principal'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'area_lateral',
-                        child: Text('Área Lateral'),
-                      ),
-                    ],
+                    items: availableAreas.map((area) => DropdownMenuItem(
+                      value: area,
+                      child: Text(area),
+                    )).toList(),
                     onChanged: (value) {
                       if (value != null) {
                         setState(() {
@@ -1619,6 +1931,7 @@ class AdminApp extends StatelessWidget {
                 ],
               ),
             ),
+            ),
           ),
           actions: [
             TextButton(
@@ -1626,23 +1939,56 @@ class AdminApp extends StatelessWidget {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
+                  // El ID se asignará desde el backend
                   final newTable = TableModel(
-                    id: controller.getNextTableId(),
+                    id: 0, // Temporal, se actualizará desde el backend
                     number: int.parse(numberController.text),
                     status: TableStatus.libre,
                     seats: int.parse(seatsController.text),
                     section: selectedSection,
                   );
-                  controller.addTable(newTable);
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Mesa agregada exitosamente'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+
+                try {
+                  await controller.addTable(newTable);
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de creación
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Mesa agregada exitosamente'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al crear mesa: ${_extractErrorMessage(e)}'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -1669,28 +2015,42 @@ class AdminApp extends StatelessWidget {
       text: table.number.toString(),
     );
     final seatsController = TextEditingController(text: table.seats.toString());
-    String selectedSection = table.section ?? 'area_principal';
+    // Obtener áreas disponibles (excluyendo 'todos')
+    final availableAreas = controller.tableAreas.where((a) => a != 'todos').toList();
+    String selectedSection = table.section ?? (availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal');
+    // Si el área de la mesa no está en la lista, usar la primera disponible
+    if (!availableAreas.contains(selectedSection)) {
+      selectedSection = availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal';
+    }
+    final isTablet = MediaQuery.of(context).size.width > 600;
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Editar Mesa'),
+              Text(
+                'Editar Mesa',
+                style: TextStyle(fontSize: isTablet ? 20 : 18),
+              ),
               IconButton(
-                icon: const Icon(Icons.close),
+                icon: Icon(Icons.close, size: isTablet ? 24 : 20),
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ],
           ),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+          content: SizedBox(
+            width: isTablet ? 450 : double.infinity,
+            child: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                   TextFormField(
                     controller: numberController,
                     decoration: const InputDecoration(
@@ -1736,21 +2096,15 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
-                    initialValue: selectedSection,
+                    value: selectedSection,
                     decoration: const InputDecoration(
                       labelText: 'Sección *',
                       border: OutlineInputBorder(),
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'area_principal',
-                        child: Text('Área Principal'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'area_lateral',
-                        child: Text('Área Lateral'),
-                      ),
-                    ],
+                    items: availableAreas.map((area) => DropdownMenuItem(
+                      value: area,
+                      child: Text(area),
+                    )).toList(),
                     onChanged: (value) {
                       if (value != null) {
                         setState(() {
@@ -1762,6 +2116,7 @@ class AdminApp extends StatelessWidget {
                 ],
               ),
             ),
+            ),
           ),
           actions: [
             TextButton(
@@ -1769,21 +2124,53 @@ class AdminApp extends StatelessWidget {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
-                  final updatedTable = table.copyWith(
-                    number: int.parse(numberController.text),
-                    seats: int.parse(seatsController.text),
-                    section: selectedSection,
-                  );
-                  controller.updateTable(updatedTable);
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Mesa actualizada exitosamente'),
-                      backgroundColor: Colors.green,
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   );
+
+                  try {
+                    final updatedTable = table.copyWith(
+                      number: int.parse(numberController.text),
+                      seats: int.parse(seatsController.text),
+                      section: selectedSection,
+                    );
+                    await controller.updateTable(updatedTable);
+                    
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    // Cerrar diálogo de edición
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Mesa actualizada exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al actualizar mesa: ${_extractErrorMessage(e)}'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -1815,15 +2202,47 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              controller.deleteTable(table.id);
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Mesa ${table.number} eliminada'),
-                  backgroundColor: Colors.red,
+            onPressed: () async {
+              // Mostrar indicador de carga
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(
+                  child: CircularProgressIndicator(),
                 ),
               );
+
+              try {
+                await controller.deleteTable(table.id);
+                
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                // Cerrar diálogo de confirmación
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Mesa ${table.number} eliminada'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error al eliminar mesa: ${_extractErrorMessage(e)}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -1843,6 +2262,14 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    // Cargar productos y categorías si no están cargados
+    if (controller.menuItems.isEmpty) {
+      controller.loadMenuItems();
+    }
+    if (controller.getAllCategories().isEmpty) {
+      controller.loadCategorias();
+    }
+    
     return SingleChildScrollView(
       padding: EdgeInsets.all(
         isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
@@ -2074,37 +2501,106 @@ class AdminApp extends StatelessWidget {
       );
     }
 
-    if (isDesktop || isTablet) {
-      return GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: isDesktop ? 3 : 2,
-          childAspectRatio: isDesktop ? 1.25 : 1.1,
-          crossAxisSpacing: AppTheme.spacingMD,
-          mainAxisSpacing: AppTheme.spacingMD,
-        ),
-        itemCount: products.length,
-        itemBuilder: (context, index) {
-          final product = products[index];
-          return _buildMenuProductCard(context, product, controller, isTablet);
-        },
-      );
-    } else {
-      return Column(
-        children: products.map((product) {
-          return Padding(
-            padding: EdgeInsets.only(bottom: AppTheme.spacingMD),
-            child: _buildMenuProductCard(
-              context,
-              product,
-              controller,
-              isTablet,
-            ),
-          );
-        }).toList(),
-      );
+    // Agrupar productos por categoría (normalizando mayúsculas/minúsculas)
+    final Map<String, List<MenuItem>> productsByCategory = {};
+    for (final product in products) {
+      // Normalizar categoría: primera letra mayúscula, resto minúsculas
+      String category = product.category.isNotEmpty ? product.category : 'Otros';
+      if (category.isNotEmpty) {
+        category = category[0].toUpperCase() + category.substring(1).toLowerCase();
+      }
+      if (!productsByCategory.containsKey(category)) {
+        productsByCategory[category] = [];
+      }
+      productsByCategory[category]!.add(product);
     }
+
+    // Ordenar categorías
+    final sortedCategories = productsByCategory.keys.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: sortedCategories.map((category) {
+        final categoryProducts = productsByCategory[category]!;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Encabezado de categoría
+            Padding(
+              padding: EdgeInsets.only(
+                top: category == sortedCategories.first ? 0 : AppTheme.spacingXL,
+                bottom: AppTheme.spacingMD,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppTheme.spacingMD,
+                      vertical: AppTheme.spacingSM,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: AppTheme.spacingSM),
+                  Text(
+                    '(${categoryProducts.length})',
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Grid o lista de productos de esta categoría
+            if (isDesktop || isTablet)
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: isDesktop ? 3 : 2,
+                  childAspectRatio: isDesktop ? 1.1 : 0.85,
+                  crossAxisSpacing: AppTheme.spacingMD,
+                  mainAxisSpacing: AppTheme.spacingMD,
+                ),
+                itemCount: categoryProducts.length,
+                itemBuilder: (context, index) {
+                  final product = categoryProducts[index];
+                  return _buildMenuProductCard(context, product, controller, isTablet);
+                },
+              )
+            else
+              Column(
+                children: categoryProducts.map((product) {
+                  return Padding(
+                    padding: EdgeInsets.only(bottom: AppTheme.spacingMD),
+                    child: _buildMenuProductCard(
+                      context,
+                      product,
+                      controller,
+                      isTablet,
+                    ),
+                  );
+                }).toList(),
+              ),
+          ],
+        );
+      }).toList(),
+    );
   }
 
   // Tarjeta de producto del menú
@@ -2114,6 +2610,11 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
+    final hasSizes = product.hasSizes && (product.sizes?.isNotEmpty ?? false);
+    final priceLabel = hasSizes
+        ? 'Varios precios'
+        : (product.price != null ? '\$${product.price!.toStringAsFixed(0)}' : 'Sin precio');
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -2145,6 +2646,26 @@ class AdminApp extends StatelessWidget {
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacingSM,
+                    vertical: AppTheme.spacingXS,
+                  ),
+                  decoration: BoxDecoration(
+                    color: hasSizes
+                        ? AppColors.warning.withValues(alpha: 0.12)
+                        : AppColors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                  ),
+                  child: Text(
+                    hasSizes ? 'Varios precios' : 'Precio: $priceLabel',
+                    style: TextStyle(
+                      fontSize: isTablet ? 12 : 11,
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      color: hasSizes ? AppColors.warning : AppColors.primary,
+                    ),
                   ),
                 ),
                 Row(
@@ -2180,71 +2701,176 @@ class AdminApp extends StatelessWidget {
             ),
             SizedBox(height: AppTheme.spacingSM),
 
-            // Categoría
-            Chip(
-              label: Text(
-                product.category,
-                style: TextStyle(
-                  fontSize: isTablet
-                      ? AppTheme.fontSizeSM
-                      : AppTheme.fontSizeXS,
-                  color: Colors.white,
+            // Categoría y estado
+            Wrap(
+              spacing: AppTheme.spacingSM,
+              runSpacing: AppTheme.spacingXS,
+              children: [
+                Chip(
+                  label: Text(
+                    product.category,
+                    style: TextStyle(
+                      fontSize: isTablet
+                          ? AppTheme.fontSizeSM
+                          : AppTheme.fontSizeXS,
+                      color: Colors.white,
+                    ),
+                  ),
+                  backgroundColor: MenuCategory.getCategoryColor(product.category),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacingSM,
+                    vertical: AppTheme.spacingXS,
+                  ),
                 ),
-              ),
-              backgroundColor: MenuCategory.getCategoryColor(product.category),
-              padding: EdgeInsets.symmetric(
-                horizontal: AppTheme.spacingSM,
-                vertical: AppTheme.spacingXS,
-              ),
+                Chip(
+                  label: Text(
+                    product.isAvailable ? 'Disponible' : 'No disponible',
+                    style: TextStyle(
+                      fontSize: isTablet
+                          ? AppTheme.fontSizeSM
+                          : AppTheme.fontSizeXS,
+                      color: product.isAvailable ? AppColors.success : AppColors.error,
+                    ),
+                  ),
+                  backgroundColor: (product.isAvailable ? AppColors.success : AppColors.error)
+                      .withValues(alpha: 0.15),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacingSM,
+                    vertical: AppTheme.spacingXS,
+                  ),
+                ),
+                if (product.serveHot)
+                  Chip(
+                    avatar: const Icon(Icons.local_fire_department, size: 16, color: Colors.white),
+                    label: Text(
+                      'Caliente',
+                      style: TextStyle(
+                        fontSize: isTablet
+                            ? AppTheme.fontSizeSM
+                            : AppTheme.fontSizeXS,
+                        color: Colors.white,
+                      ),
+                    ),
+                    backgroundColor: AppColors.warning,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppTheme.spacingSM,
+                      vertical: AppTheme.spacingXS,
+                    ),
+                  ),
+                if (product.isSpicy)
+                  Chip(
+                    avatar: const Icon(Icons.local_fire_department_outlined, size: 16, color: Colors.white),
+                    label: Text(
+                      'Picante',
+                      style: TextStyle(
+                        fontSize: isTablet
+                            ? AppTheme.fontSizeSM
+                            : AppTheme.fontSizeXS,
+                        color: Colors.white,
+                      ),
+                    ),
+                    backgroundColor: Colors.redAccent,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppTheme.spacingSM,
+                      vertical: AppTheme.spacingXS,
+                    ),
+                  ),
+              ],
             ),
             SizedBox(height: AppTheme.spacingSM),
 
+            // Descripción
+            if (product.description.isNotEmpty) ...[
+              Text(
+                product.description,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.textSecondary,
+                  fontSize: isTablet ? 14 : 13,
+                ),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: AppTheme.spacingSM),
+            ],
+
+            if (product.recipeIngredients?.isNotEmpty ?? false) ...[
+              Row(
+                children: [
+                  Icon(
+                    Icons.restaurant_menu,
+                    size: isTablet ? 18 : 16,
+                    color: AppColors.primary,
+                  ),
+                  SizedBox(width: AppTheme.spacingXS),
+                  Text(
+                    '${product.recipeIngredients!.length} ingredientes configurados',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.textSecondary,
+                          fontWeight: AppTheme.fontWeightSemibold,
+                        ),
+                  ),
+                ],
+              ),
+              SizedBox(height: AppTheme.spacingSM),
+            ],
+
             // Precio o tamaños
-            if (product.hasSizes &&
-                product.sizes != null &&
-                product.sizes!.isNotEmpty)
+            if (hasSizes)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Tamaños:',
+                    'Tamaños disponibles:',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: AppTheme.fontWeightSemibold,
-                      color: AppColors.textPrimary,
-                    ),
+                          fontWeight: AppTheme.fontWeightSemibold,
+                          color: AppColors.textPrimary,
+                        ),
                   ),
-                  const SizedBox(height: 4),
-                  for (final size in product.sizes!)
-                    Text(
-                      '• ${size.name}: \$${size.price.toStringAsFixed(0)}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: isTablet ? 13 : 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
+                  SizedBox(height: AppTheme.spacingXS),
+                  Wrap(
+                    spacing: AppTheme.spacingSM,
+                    runSpacing: AppTheme.spacingXS,
+                    children: product.sizes!
+                        .map(
+                          (size) => Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: AppTheme.spacingSM,
+                              vertical: AppTheme.spacingXS,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.warning.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                              border: Border.all(
+                                color: AppColors.warning.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Text(
+                              '${size.name}: \$${size.price.toStringAsFixed(0)}',
+                              style: TextStyle(
+                                fontSize: isTablet
+                                    ? AppTheme.fontSizeSM
+                                    : AppTheme.fontSizeXS,
+                                fontWeight: AppTheme.fontWeightSemibold,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
                 ],
               )
-            else if (product.price != null)
+            else
               Text(
-                'Precio: \$${product.price!.toStringAsFixed(0)}',
+                priceLabel == 'Sin precio'
+                    ? 'Sin precio establecido'
+                    : 'Precio: $priceLabel',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontSize: isTablet ? 18 : 16,
-                  fontWeight: AppTheme.fontWeightBold,
-                  color: AppColors.primary,
-                ),
+                      fontSize: isTablet ? 18 : 16,
+                      fontWeight: AppTheme.fontWeightBold,
+                      color: AppColors.primary,
+                    ),
               ),
-            SizedBox(height: AppTheme.spacingSM),
-
-            // Descripción
-            Text(
-              product.description,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.textSecondary,
-                fontSize: isTablet ? 14 : 13,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
             SizedBox(height: AppTheme.spacingMD),
 
             // Botones de acción
@@ -2268,8 +2894,34 @@ class AdminApp extends StatelessWidget {
                 SizedBox(width: AppTheme.spacingSM),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () =>
-                        controller.toggleMenuItemAvailability(product.id),
+                    onPressed: () async {
+                      try {
+                        await controller.toggleMenuItemAvailability(product.id);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                product.isAvailable
+                                    ? 'Producto deshabilitado'
+                                    : 'Producto habilitado',
+                              ),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error: ${_extractErrorMessage(e)}'),
+                              backgroundColor: Colors.red,
+                              duration: const Duration(seconds: 3),
+                            ),
+                          );
+                        }
+                      }
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: product.isAvailable
                           ? Colors.orange
@@ -2332,18 +2984,52 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (formKey.currentState!.validate()) {
-                controller.addCustomCategory(nameController.text);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Categoría "${nameController.text}" agregada',
-                    ),
-                    backgroundColor: Colors.green,
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+
+                try {
+                  await controller.addCustomCategory(nameController.text);
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de creación
+                  if (context.mounted) Navigator.of(context).pop();
+
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Categoría "${nameController.text}" agregada exitosamente',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          _extractErrorMessage(e),
+                        ),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -2370,6 +3056,61 @@ class AdminApp extends StatelessWidget {
     String? selectedCategory;
     bool hasSizes = false;
     List<MenuSize> sizes = [];
+    final List<TextEditingController> sizeNameControllers = [];
+    final List<TextEditingController> sizePriceControllers = [];
+
+    TextEditingController _createNameController(String text) {
+      final controller = TextEditingController(text: text);
+      sizeNameControllers.add(controller);
+      return controller;
+    }
+
+    TextEditingController _createPriceController(double price) {
+      final controller = TextEditingController(
+        text: price > 0 ? (price % 1 == 0 ? price.toStringAsFixed(0) : price.toString()) : '',
+      );
+      sizePriceControllers.add(controller);
+      return controller;
+    }
+
+    void addSizeEntry({String name = '', double price = 0.0}) {
+      sizes = [
+        ...sizes,
+        MenuSize(name: name, price: price),
+      ];
+      _createNameController(name);
+      _createPriceController(price);
+    }
+
+    void removeSizeEntry(int index) {
+      if (index < 0 || index >= sizes.length) return;
+      sizes = List<MenuSize>.from(sizes)..removeAt(index);
+      final nameController = sizeNameControllers.removeAt(index);
+      final priceController = sizePriceControllers.removeAt(index);
+      nameController.dispose();
+      priceController.dispose();
+    }
+
+    void clearSizeEntries() {
+      sizes = [];
+      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+        controller.dispose();
+      }
+      sizeNameControllers.clear();
+      sizePriceControllers.clear();
+    }
+
+    void ensureInitialSizeEntry() {
+      if (sizes.isEmpty) {
+        addSizeEntry();
+      }
+    }
+
+    void disposeSizeControllers() {
+      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+        controller.dispose();
+      }
+    }
     bool serveHot = false;
     bool isSpicy = false;
     bool allowSauces = false;
@@ -2378,6 +3119,7 @@ class AdminApp extends StatelessWidget {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: const Text('Agregar Nuevo Producto'),
@@ -2389,18 +3131,19 @@ class AdminApp extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   TextFormField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nombre del Producto *',
-                      border: OutlineInputBorder(),
+                      controller: nameController,
+                      textAlign: TextAlign.start,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre del Producto *',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        return null;
+                      },
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Campo obligatorio';
-                      }
-                      return null;
-                    },
-                  ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
                     initialValue: selectedCategory,
@@ -2434,28 +3177,57 @@ class AdminApp extends StatelessWidget {
                     onChanged: (value) {
                       setState(() {
                         hasSizes = value;
-                        if (!value) {
-                          sizes = [];
+                        if (value) {
+                          ensureInitialSizeEntry();
+                        } else {
+                          clearSizeEntries();
                         }
                       });
                     },
                   ),
                   if (hasSizes) ...[
                     SizedBox(height: AppTheme.spacingSM),
-                    _buildSizesConfiguration(context, sizes, (newSizes) {
-                      setState(() {
-                        sizes = newSizes;
-                      });
-                    }, isTablet),
+                    _buildSizesConfiguration(
+                      context,
+                      sizes,
+                      (newSizes) {
+                        setState(() {
+                          sizes = newSizes;
+                        });
+                      },
+                      isTablet,
+                      sizeNameControllers,
+                      sizePriceControllers,
+                      () {
+                        setState(() {
+                          addSizeEntry();
+                        });
+                      },
+                      (index) {
+                        setState(() {
+                          removeSizeEntry(index);
+                        });
+                      },
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(top: AppTheme.spacingXS),
+                      child: Text(
+                        'Nota: El precio general se desactiva cuando usas tamaños. Cada tamaño debe tener un precio.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
+                    ),
                   ] else ...[
                     SizedBox(height: AppTheme.spacingMD),
                     TextFormField(
                       controller: priceController,
+                      textAlign: TextAlign.start,
                       decoration: const InputDecoration(
                         labelText: 'Precio (\$) *',
                         border: OutlineInputBorder(),
                       ),
-                      keyboardType: TextInputType.number,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       enabled: !hasSizes,
                       validator: hasSizes
                           ? null
@@ -2463,9 +3235,11 @@ class AdminApp extends StatelessWidget {
                               if (value == null || value.isEmpty) {
                                 return 'Campo obligatorio';
                               }
-                              final price = double.tryParse(value);
+                              // Limpiar el valor antes de parsear
+                              final cleanValue = value.trim().replaceAll(',', '.');
+                              final price = double.tryParse(cleanValue);
                               if (price == null || price <= 0) {
-                                return 'Debe ser un número válido';
+                                return 'Debe ser un número válido mayor a 0';
                               }
                               return null;
                             },
@@ -2474,6 +3248,7 @@ class AdminApp extends StatelessWidget {
                   SizedBox(height: AppTheme.spacingMD),
                   TextFormField(
                     controller: descriptionController,
+                    textAlign: TextAlign.start,
                     decoration: const InputDecoration(
                       labelText: 'Descripción',
                       border: OutlineInputBorder(),
@@ -2532,11 +3307,14 @@ class AdminApp extends StatelessWidget {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                disposeSizeControllers();
+                Navigator.of(context).pop();
+              },
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
                   if (hasSizes && sizes.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -2547,12 +3325,29 @@ class AdminApp extends StatelessWidget {
                     );
                     return;
                   }
+                  // El ID se asignará desde el backend
+                  // Limpiar y validar el precio antes de parsear
+                  double? precio;
+                  if (!hasSizes) {
+                    final precioTexto = priceController.text.trim().replaceAll(',', '.');
+                    precio = double.tryParse(precioTexto);
+                    if (precio == null || precio <= 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('El precio debe ser un número válido mayor a 0'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                  }
+                  
                   final newProduct = MenuItem(
-                    id: controller.getNextMenuItemId(),
-                    name: nameController.text,
+                    id: 'temp', // Temporal, se actualizará desde el backend
+                    name: nameController.text.trim(),
                     category: selectedCategory!,
-                    description: descriptionController.text,
-                    price: hasSizes ? null : double.parse(priceController.text),
+                    description: descriptionController.text.trim(),
+                    price: precio,
                     isAvailable: isAvailable,
                     ingredients: [],
                     allergens: [],
@@ -2565,14 +3360,49 @@ class AdminApp extends StatelessWidget {
                     allowSauces: allowSauces,
                     allowExtraIngredients: allowExtraIngredients,
                   );
-                  controller.addMenuItem(newProduct);
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Producto agregado exitosamente'),
-                      backgroundColor: Colors.green,
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   );
+
+                  try {
+                    await controller.addMenuItem(newProduct);
+                    
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    // Cerrar diálogo de creación
+                    if (context.mounted) {
+                      disposeSizeControllers();
+                      Navigator.of(context).pop();
+                    }
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Producto agregado exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al crear producto: ${_extractErrorMessage(e)}'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -2593,6 +3423,10 @@ class AdminApp extends StatelessWidget {
     List<MenuSize> sizes,
     Function(List<MenuSize>) onSizesChanged,
     bool isTablet,
+    List<TextEditingController> sizeNameControllers,
+    List<TextEditingController> sizePriceControllers,
+    VoidCallback onAddSize,
+    void Function(int index) onRemoveSize,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2604,66 +3438,63 @@ class AdminApp extends StatelessWidget {
           ),
         ),
         SizedBox(height: AppTheme.spacingSM),
-        for (final entry in sizes.asMap().entries)
+        for (var index = 0; index < sizes.length; index++)
           Padding(
             padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
+                    textAlign: TextAlign.start,
                     decoration: InputDecoration(
                       labelText: 'Nombre (ej: Chico)',
                       border: const OutlineInputBorder(),
                       isDense: true,
                     ),
-                    controller: TextEditingController(text: entry.value.name),
+                    controller: sizeNameControllers[index],
                     onChanged: (value) {
-                      sizes[entry.key] = MenuSize(
-                        name: value,
-                        price: entry.value.price,
+                      sizes[index] = MenuSize(
+                        name: value.trim(),
+                        price: sizes[index].price,
                       );
-                      onSizesChanged(sizes);
+                      onSizesChanged(List<MenuSize>.from(sizes));
                     },
                   ),
                 ),
                 SizedBox(width: AppTheme.spacingSM),
                 Expanded(
                   child: TextField(
+                    textAlign: TextAlign.start,
                     decoration: const InputDecoration(
                       labelText: 'Precio',
                       border: OutlineInputBorder(),
                       isDense: true,
                       prefixText: '\$',
                     ),
-                    keyboardType: TextInputType.number,
-                    controller: TextEditingController(
-                      text: entry.value.price.toStringAsFixed(0),
-                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    controller: sizePriceControllers[index],
                     onChanged: (value) {
-                      final price = double.tryParse(value) ?? 0.0;
-                      sizes[entry.key] = MenuSize(
-                        name: entry.value.name,
+                      final cleanValue = value.trim().replaceAll(',', '.');
+                      final price = double.tryParse(cleanValue) ?? 0.0;
+                      sizes[index] = MenuSize(
+                        name: sizes[index].name,
                         price: price,
                       );
-                      onSizesChanged(sizes);
+                      onSizesChanged(List<MenuSize>.from(sizes));
                     },
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete, color: Colors.red),
                   onPressed: () {
-                    sizes.removeAt(entry.key);
-                    onSizesChanged(sizes);
+                    onRemoveSize(index);
                   },
                 ),
               ],
             ),
           ),
         ElevatedButton.icon(
-          onPressed: () {
-            sizes.add(MenuSize(name: '', price: 0.0));
-            onSizesChanged(sizes);
-          },
+          onPressed: onAddSize,
           icon: const Icon(Icons.add),
           label: const Text('Añadir tamaño'),
           style: ElevatedButton.styleFrom(
@@ -2693,6 +3524,75 @@ class AdminApp extends StatelessWidget {
     String? selectedCategory = product.category;
     bool hasSizes = product.hasSizes;
     List<MenuSize> sizes = product.sizes?.toList() ?? [];
+    final List<TextEditingController> sizeNameControllers = [];
+    final List<TextEditingController> sizePriceControllers = [];
+
+    TextEditingController _createNameController(String text) {
+      final controller = TextEditingController(text: text);
+      sizeNameControllers.add(controller);
+      return controller;
+    }
+
+    TextEditingController _createPriceController(double price) {
+      final controller = TextEditingController(
+        text: price > 0 ? (price % 1 == 0 ? price.toStringAsFixed(0) : price.toString()) : '',
+      );
+      sizePriceControllers.add(controller);
+      return controller;
+    }
+
+    void syncControllersWithSizes() {
+      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+        controller.dispose();
+      }
+      sizeNameControllers.clear();
+      sizePriceControllers.clear();
+      for (final size in sizes) {
+        _createNameController(size.name);
+        _createPriceController(size.price);
+      }
+    }
+
+    void addSizeEntry({String name = '', double price = 0.0}) {
+      sizes = [
+        ...sizes,
+        MenuSize(name: name, price: price),
+      ];
+      _createNameController(name);
+      _createPriceController(price);
+    }
+
+    void removeSizeEntry(int index) {
+      if (index < 0 || index >= sizes.length) return;
+      sizes = List<MenuSize>.from(sizes)..removeAt(index);
+      final nameController = sizeNameControllers.removeAt(index);
+      final priceController = sizePriceControllers.removeAt(index);
+      nameController.dispose();
+      priceController.dispose();
+    }
+
+    void clearSizeEntries() {
+      sizes = [];
+      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+        controller.dispose();
+      }
+      sizeNameControllers.clear();
+      sizePriceControllers.clear();
+    }
+
+    void ensureInitialSizeEntry() {
+      if (sizes.isEmpty) {
+        addSizeEntry();
+      }
+    }
+
+    syncControllersWithSizes();
+
+    void disposeSizeControllers() {
+      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+        controller.dispose();
+      }
+    }
     bool serveHot = product.serveHot;
     bool isSpicy = product.isSpicy;
     bool allowSauces = product.allowSauces;
@@ -2701,6 +3601,7 @@ class AdminApp extends StatelessWidget {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Row(
@@ -2709,7 +3610,10 @@ class AdminApp extends StatelessWidget {
               const Text('Editar Producto'),
               IconButton(
                 icon: const Icon(Icons.close),
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  disposeSizeControllers();
+                  Navigator.of(context).pop();
+                },
               ),
             ],
           ),
@@ -2760,19 +3664,47 @@ class AdminApp extends StatelessWidget {
                     onChanged: (value) {
                       setState(() {
                         hasSizes = value;
-                        if (!value) {
-                          sizes = [];
+                        if (value) {
+                          ensureInitialSizeEntry();
+                        } else {
+                          clearSizeEntries();
                         }
                       });
                     },
                   ),
                   if (hasSizes) ...[
                     SizedBox(height: AppTheme.spacingSM),
-                    _buildSizesConfiguration(context, sizes, (newSizes) {
-                      setState(() {
-                        sizes = newSizes;
-                      });
-                    }, isTablet),
+                    _buildSizesConfiguration(
+                      context,
+                      sizes,
+                      (newSizes) {
+                        setState(() {
+                          sizes = newSizes;
+                        });
+                      },
+                      isTablet,
+                      sizeNameControllers,
+                      sizePriceControllers,
+                      () {
+                        setState(() {
+                          addSizeEntry();
+                        });
+                      },
+                      (index) {
+                        setState(() {
+                          removeSizeEntry(index);
+                        });
+                      },
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(top: AppTheme.spacingXS),
+                      child: Text(
+                        'Nota: El precio general se reemplaza por los precios configurados aquí.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
+                    ),
                   ] else ...[
                     SizedBox(height: AppTheme.spacingMD),
                     TextFormField(
@@ -2858,11 +3790,14 @@ class AdminApp extends StatelessWidget {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                disposeSizeControllers();
+                Navigator.of(context).pop();
+              },
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
                   if (hasSizes && sizes.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -2887,14 +3822,50 @@ class AdminApp extends StatelessWidget {
                     allowExtraIngredients: allowExtraIngredients,
                     updatedAt: DateTime.now(),
                   );
-                  controller.updateMenuItem(updatedProduct);
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Producto actualizado exitosamente'),
-                      backgroundColor: Colors.green,
+                  
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   );
+
+                  try {
+                    await controller.updateMenuItem(updatedProduct);
+                    
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    // Cerrar diálogo de edición
+                    if (context.mounted) {
+                      disposeSizeControllers();
+                      Navigator.of(context).pop();
+                    }
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Producto actualizado exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al actualizar producto: ${_extractErrorMessage(e)}'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -2965,14 +3936,69 @@ class AdminApp extends StatelessWidget {
                     Card(
                       margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
                       child: ListTile(
-                        title: Text(ingredient.name),
-                        subtitle: Text(
-                          '${ingredient.quantityPerPortion} ${ingredient.unit} por porción',
+                        leading: CircleAvatar(
+                          backgroundColor: AppColors.primary.withValues(alpha: 0.1),
+                          child: Icon(
+                            ingredient.inventoryItemId != null
+                                ? Icons.inventory_2
+                                : Icons.food_bank,
+                            color: AppColors.primary,
+                            size: 18,
+                          ),
+                        ),
+                        title: Text(
+                          ingredient.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${ingredient.quantityPerPortion} ${ingredient.unit} por porción',
+                            ),
+                            SizedBox(height: AppTheme.spacingXS / 2),
+                            Text(
+                              'Categoría: ${ingredient.category ?? 'Otros'}'
+                              '${ingredient.inventoryItemId != null ? ' • Inventario' : ' • Personalizado'}',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                            ),
+                            SizedBox(height: AppTheme.spacingXS),
+                            Wrap(
+                              spacing: AppTheme.spacingXS,
+                              runSpacing: AppTheme.spacingXS / 2,
+                              children: [
+                                Chip(
+                                  label: Text(
+                                    ingredient.inventoryItemId != null
+                                        ? 'Inventario'
+                                        : 'Personalizado',
+                                  ),
+                                  visualDensity: VisualDensity.compact,
+                                  backgroundColor: ingredient.inventoryItemId != null
+                                      ? AppColors.primary.withValues(alpha: 0.15)
+                                      : AppColors.secondary.withValues(alpha: 0.15),
+                                ),
+                                Chip(
+                                  label: Text(
+                                    ingredient.autoDeduct
+                                        ? 'Descuenta stock'
+                                        : 'Sin descuento',
+                                  ),
+                                  visualDensity: VisualDensity.compact,
+                                  backgroundColor: ingredient.autoDeduct
+                                      ? AppColors.success.withValues(alpha: 0.15)
+                                      : Colors.grey.withValues(alpha: 0.15),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red),
                           onPressed: () {
-                            ingredients.remove(ingredient);
+                            ingredients.removeWhere((ing) => ing.id == ingredient.id);
                             setState(() {});
                           },
                         ),
@@ -3024,19 +4050,51 @@ class AdminApp extends StatelessWidget {
                 child: const Text('Cancelar'),
               ),
             ElevatedButton(
-              onPressed: () {
-                final updatedProduct = product.copyWith(
-                  recipeIngredients: ingredients,
-                  updatedAt: DateTime.now(),
-                );
-                controller.updateMenuItem(updatedProduct);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Receta guardada exitosamente'),
-                    backgroundColor: Colors.green,
+              onPressed: () async {
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+
+                try {
+                  final updatedProduct = product.copyWith(
+                    recipeIngredients: ingredients,
+                    updatedAt: DateTime.now(),
+                  );
+                  await controller.updateMenuItem(updatedProduct);
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de receta
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Receta guardada exitosamente'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al guardar receta: ${_extractErrorMessage(e)}'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
@@ -3067,15 +4125,47 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              controller.deleteMenuItem(product.id);
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Producto "${product.name}" eliminado'),
-                  backgroundColor: Colors.red,
+            onPressed: () async {
+              // Mostrar indicador de carga
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(
+                  child: CircularProgressIndicator(),
                 ),
               );
+
+              try {
+                await controller.deleteMenuItem(product.id);
+                
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                // Cerrar diálogo de confirmación
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Producto "${product.name}" eliminado'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error al eliminar producto: ${_extractErrorMessage(e)}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -3401,14 +4491,7 @@ class AdminApp extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              for (final category in [
-                'todos',
-                'Carne',
-                'Tortillas',
-                'Condimentos',
-                'Bebidas',
-                'Otros',
-              ])
+              for (final category in controller.inventoryCategories)
                 Padding(
                   padding: EdgeInsets.only(right: AppTheme.spacingSM),
                   child: FilterChip(
@@ -3453,10 +4536,89 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                 ),
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline),
+                color: AppColors.primary,
+                onPressed: () => _showAddCategoryDialog(context, controller),
+                tooltip: 'Agregar Categoría',
+              ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  // Diálogo para agregar categoría
+  void _showAddCategoryDialog(
+    BuildContext context,
+    AdminController controller,
+  ) {
+    final categoryNameController = TextEditingController();
+    final isTablet = MediaQuery.of(context).size.width > 600;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Agregar Categoría',
+          style: TextStyle(fontSize: isTablet ? 20 : 18),
+        ),
+        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+        content: SizedBox(
+          width: isTablet ? 400 : double.infinity,
+          child: TextField(
+            controller: categoryNameController,
+            decoration: const InputDecoration(
+              labelText: 'Nombre de la categoría',
+              hintText: 'Ej: Verduras, Lácteos, etc.',
+              border: OutlineInputBorder(),
+            ),
+            autofocus: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final categoryName = categoryNameController.text.trim();
+              if (categoryName.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Por favor ingresa un nombre para la categoría'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              
+              // Verificar si la categoría ya existe
+              if (controller.inventoryCategories.contains(categoryName)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('La categoría "$categoryName" ya existe'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              
+              controller.addInventoryCategory(categoryName);
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Categoría "$categoryName" agregada'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+            child: const Text('Crear'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3501,6 +4663,14 @@ class AdminApp extends StatelessWidget {
   }
 
   // Tarjeta de producto de inventario
+  // Helper para formatear números de stock sin decimales innecesarios
+  String _formatStockNumber(double value) {
+    if (value == value.toInt()) {
+      return value.toInt().toString();
+    }
+    return value.toStringAsFixed(1).replaceAll(RegExp(r'0*$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+
   Widget _buildInventoryItemCard(
     BuildContext context,
     InventoryItem item,
@@ -3626,7 +4796,7 @@ class AdminApp extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Stock Actual: ${item.currentStock.toStringAsFixed(1)} ${item.unit}',
+                      'Stock Actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: AppTheme.fontWeightSemibold,
                         color: statusColor,
@@ -3652,13 +4822,13 @@ class AdminApp extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Mín: ${item.minStock.toStringAsFixed(1)} ${item.unit}',
+                      'Mín: ${_formatStockNumber(item.minStock)} ${item.unit}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
                     ),
                     Text(
-                      'Máx: ${item.maxStock.toStringAsFixed(1)} ${item.unit}',
+                      'Máx: ${_formatStockNumber(item.maxStock)} ${item.unit}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -3727,7 +4897,9 @@ class AdminApp extends StatelessWidget {
   }
 
   String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    // Asegurarse de que la fecha esté en zona horaria local
+    final localDate = date.isUtc ? date.toLocal() : date;
+    return date_utils.AppDateUtils.formatDateTime(localDate);
   }
 
   // Modal para agregar producto al inventario
@@ -3749,13 +4921,19 @@ class AdminApp extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Agregar al Inventario'),
-        content: SingleChildScrollView(
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+        title: Text(
+          'Agregar al Inventario',
+          style: TextStyle(fontSize: isTablet ? 20 : 18),
+        ),
+        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+        content: SizedBox(
+          width: isTablet ? 500 : double.infinity,
+          child: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                 TextFormField(
                   controller: nameController,
                   decoration: const InputDecoration(
@@ -3771,19 +4949,14 @@ class AdminApp extends StatelessWidget {
                 ),
                 SizedBox(height: AppTheme.spacingMD),
                 DropdownButtonFormField<String>(
-                  initialValue: selectedCategory,
+                  value: selectedCategory,
                   decoration: const InputDecoration(
                     labelText: 'Categoría *',
                     border: OutlineInputBorder(),
                   ),
-                  items:
-                      [
-                        'Carne',
-                        'Tortillas',
-                        'Condimentos',
-                        'Bebidas',
-                        'Otros',
-                      ].map((category) {
+                  items: controller.inventoryCategories
+                      .where((cat) => cat != 'todos')
+                      .map((category) {
                         return DropdownMenuItem(
                           value: category,
                           child: Text(category),
@@ -3901,6 +5074,7 @@ class AdminApp extends StatelessWidget {
                 ),
               ],
             ),
+            ),
           ),
         ),
         actions: [
@@ -3909,12 +5083,25 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (formKey.currentState!.validate()) {
-                final stock = double.parse(stockController.text);
-                final minStock = double.parse(minStockController.text);
-                final maxStock = double.parse(maxStockController.text);
-                final cost = double.parse(costController.text);
+                // Validar que se haya seleccionado una categoría
+                if (selectedCategory == null || selectedCategory!.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Por favor selecciona una categoría'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                
+                final stock = double.parse(stockController.text.trim());
+                final minStock = double.parse(minStockController.text.trim());
+                final maxStock = double.parse(maxStockController.text.trim());
+                // Limpiar el símbolo $ si está presente
+                final costText = costController.text.trim().replaceAll('\$', '').replaceAll(' ', '');
+                final cost = double.parse(costText);
                 final totalPrice = stock * cost;
 
                 // Determinar status según stock
@@ -3927,8 +5114,9 @@ class AdminApp extends StatelessWidget {
                   status = InventoryStatus.available;
                 }
 
+                // El ID se asignará desde el backend
                 final newItem = InventoryItem(
-                  id: 'inv_${DateTime.now().millisecondsSinceEpoch}',
+                  id: 'temp', // Temporal, se actualizará desde el backend
                   name: nameController.text,
                   category: selectedCategory!,
                   currentStock: stock,
@@ -3945,16 +5133,48 @@ class AdminApp extends StatelessWidget {
                   lastRestock: DateTime.now(),
                   status: status,
                 );
-                controller.addInventoryItem(newItem);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Producto agregado al inventario exitosamente',
-                    ),
-                    backgroundColor: Colors.green,
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+
+                try {
+                  await controller.addInventoryItem(newItem);
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de creación
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Producto agregado al inventario exitosamente',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al crear item: ${_extractErrorMessage(e)}'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -3975,19 +5195,27 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
+    // Helper para formatear números sin decimales innecesarios
+    String formatNumber(double value, {int maxDecimals = 2}) {
+      if (value == value.toInt()) {
+        return value.toInt().toString();
+      }
+      return value.toStringAsFixed(maxDecimals).replaceAll(RegExp(r'0*$'), '').replaceAll(RegExp(r'\.$'), '');
+    }
+
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item.name);
     final stockController = TextEditingController(
-      text: item.currentStock.toStringAsFixed(1),
+      text: formatNumber(item.currentStock),
     );
     final minStockController = TextEditingController(
-      text: item.minStock.toStringAsFixed(1),
+      text: formatNumber(item.minStock),
     );
     final maxStockController = TextEditingController(
-      text: item.maxStock.toStringAsFixed(1),
+      text: formatNumber(item.maxStock),
     );
     final costController = TextEditingController(
-      text: item.cost.toStringAsFixed(2),
+      text: formatNumber(item.cost, maxDecimals: 2),
     );
     final supplierController = TextEditingController(text: item.supplier ?? '');
 
@@ -3997,19 +5225,29 @@ class AdminApp extends StatelessWidget {
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Editar ${item.name}'),
+            Expanded(
+              child: Text(
+                'Editar ${item.name}',
+                style: TextStyle(fontSize: isTablet ? 20 : 18),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             IconButton(
-              icon: const Icon(Icons.close),
+              icon: Icon(Icons.close, size: isTablet ? 24 : 20),
               onPressed: () => Navigator.of(context).pop(),
             ),
           ],
         ),
-        content: SingleChildScrollView(
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+        content: SizedBox(
+          width: isTablet ? 500 : double.infinity,
+          child: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                 TextFormField(
                   controller: nameController,
                   decoration: const InputDecoration(
@@ -4112,6 +5350,7 @@ class AdminApp extends StatelessWidget {
                 ),
               ],
             ),
+            ),
           ),
         ),
         actions: [
@@ -4120,46 +5359,80 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (formKey.currentState!.validate()) {
-                final stock = double.parse(stockController.text);
-                final minStock = double.parse(minStockController.text);
-                final maxStock = double.parse(maxStockController.text);
-                final cost = double.parse(costController.text);
-                final totalPrice = stock * cost;
-
-                // Determinar status según stock
-                String status;
-                if (stock <= 0) {
-                  status = InventoryStatus.outOfStock;
-                } else if (stock < minStock) {
-                  status = InventoryStatus.lowStock;
-                } else {
-                  status = InventoryStatus.available;
-                }
-
-                final updatedItem = item.copyWith(
-                  currentStock: stock,
-                  minStock: minStock,
-                  maxStock: maxStock,
-                  minimumStock: minStock,
-                  cost: cost,
-                  price: totalPrice,
-                  unitPrice: cost,
-                  supplier: supplierController.text.isEmpty
-                      ? null
-                      : supplierController.text,
-                  lastRestock: DateTime.now(),
-                  status: status,
-                );
-                controller.updateInventoryItem(updatedItem);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Inventario actualizado exitosamente'),
-                    backgroundColor: Colors.green,
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+
+                try {
+                  final stock = double.parse(stockController.text.trim());
+                  final minStock = double.parse(minStockController.text.trim());
+                  final maxStock = double.parse(maxStockController.text.trim());
+                  // Limpiar el símbolo $ si está presente
+                  final costText = costController.text.trim().replaceAll('\$', '').replaceAll(' ', '');
+                  final cost = double.parse(costText);
+                  final totalPrice = stock * cost;
+
+                  // Determinar status según stock
+                  String status;
+                  if (stock <= 0) {
+                    status = InventoryStatus.outOfStock;
+                  } else if (stock < minStock) {
+                    status = InventoryStatus.lowStock;
+                  } else {
+                    status = InventoryStatus.available;
+                  }
+
+                  final updatedItem = item.copyWith(
+                    currentStock: stock,
+                    minStock: minStock,
+                    maxStock: maxStock,
+                    minimumStock: minStock,
+                    cost: cost,
+                    price: totalPrice,
+                    unitPrice: cost,
+                    supplier: supplierController.text.isEmpty
+                        ? null
+                        : supplierController.text,
+                    lastRestock: DateTime.now(),
+                    status: status,
+                  );
+                  await controller.updateInventoryItem(updatedItem);
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de edición
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Inventario actualizado exitosamente'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al actualizar inventario: ${_extractErrorMessage(e)}'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -4230,41 +5503,79 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (formKey.currentState!.validate()) {
-                final quantity = double.parse(quantityController.text);
-                final newStock = isDecrease
-                    ? item.currentStock - quantity
-                    : item.currentStock + quantity;
-
-                // Determinar status según nuevo stock
-                String status;
-                if (newStock <= 0) {
-                  status = InventoryStatus.outOfStock;
-                } else if (newStock < item.minStock) {
-                  status = InventoryStatus.lowStock;
-                } else {
-                  status = InventoryStatus.available;
-                }
-
-                final updatedItem = item.copyWith(
-                  currentStock: newStock,
-                  price: newStock * item.unitPrice,
-                  lastRestock: DateTime.now(),
-                  status: status,
-                );
-                controller.updateInventoryItem(updatedItem);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      isDecrease
-                          ? 'Stock disminuido exitosamente'
-                          : 'Stock aumentado exitosamente',
-                    ),
-                    backgroundColor: Colors.green,
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+
+                try {
+                  final quantity = double.parse(quantityController.text);
+                  final newStock = isDecrease
+                      ? item.currentStock - quantity
+                      : item.currentStock + quantity;
+
+                  // Determinar status según nuevo stock
+                  String status;
+                  if (newStock <= 0) {
+                    status = InventoryStatus.outOfStock;
+                  } else if (newStock < item.minStock) {
+                    status = InventoryStatus.lowStock;
+                  } else {
+                    status = InventoryStatus.available;
+                  }
+
+                  final updatedItem = item.copyWith(
+                    currentStock: newStock,
+                    price: newStock * item.unitPrice,
+                    lastRestock: DateTime.now(),
+                    status: status,
+                  );
+                  
+                  // Si es aumento, usar restockInventoryItem para registrar movimiento
+                  if (!isDecrease) {
+                    await controller.restockInventoryItem(item.id, quantity);
+                  } else {
+                    await controller.updateInventoryItem(updatedItem);
+                  }
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de ajuste
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isDecrease
+                              ? 'Stock disminuido exitosamente'
+                              : 'Stock aumentado exitosamente',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al ajustar stock: ${_extractErrorMessage(e)}'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -4297,15 +5608,47 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              controller.deleteInventoryItem(item.id);
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Producto "${item.name}" eliminado'),
-                  backgroundColor: Colors.red,
+            onPressed: () async {
+              // Mostrar indicador de carga
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(
+                  child: CircularProgressIndicator(),
                 ),
               );
+
+              try {
+                await controller.deleteInventoryItem(item.id);
+                
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                // Cerrar diálogo de confirmación
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Producto "${item.name}" eliminado'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error al eliminar item: ${_extractErrorMessage(e)}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -4511,13 +5854,7 @@ class AdminApp extends StatelessWidget {
       return SizedBox(
         width: double.infinity,
         child: Card(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: isDesktop ? 1100 : 900),
-              child: _buildUsersTable(context, users, controller, isTablet),
-            ),
-          ),
+          child: _buildUsersTable(context, users, controller, isTablet),
         ),
       );
     } else {
@@ -4544,42 +5881,95 @@ class AdminApp extends StatelessWidget {
     final headerStyle = TextStyle(fontWeight: AppTheme.fontWeightSemibold);
 
     return DataTable(
-      columnSpacing: 32,
-      horizontalMargin: 16,
-      headingRowHeight: 48,
-      dataRowMinHeight: 52,
-      dataRowMaxHeight: 68,
+      columnSpacing: 8,
+      horizontalMargin: 12,
+      headingRowHeight: 40,
+      dataRowMinHeight: 48,
+      dataRowMaxHeight: 56,
       columns: [
-        DataColumn(label: Text('Nombre completo', style: headerStyle)),
-        DataColumn(label: Text('Usuario', style: headerStyle)),
-        DataColumn(label: Text('Contraseña', style: headerStyle)),
-        DataColumn(label: Text('Teléfono', style: headerStyle)),
-        DataColumn(label: Text('Roles', style: headerStyle)),
-        DataColumn(label: Text('Estado', style: headerStyle)),
-        DataColumn(label: Text('Fecha de creación', style: headerStyle)),
-        DataColumn(label: Text('Acciones', style: headerStyle), numeric: true),
+        DataColumn(
+          label: Text('Nombre', style: headerStyle.copyWith(fontSize: 12)),
+          tooltip: 'Nombre completo',
+        ),
+        DataColumn(
+          label: Text('Usuario', style: headerStyle.copyWith(fontSize: 12)),
+        ),
+        DataColumn(
+          label: Text('Contraseña', style: headerStyle.copyWith(fontSize: 12)),
+        ),
+        DataColumn(
+          label: Text('Teléfono', style: headerStyle.copyWith(fontSize: 12)),
+        ),
+        DataColumn(
+          label: Text('Roles', style: headerStyle.copyWith(fontSize: 12)),
+        ),
+        DataColumn(
+          label: Text('Estado', style: headerStyle.copyWith(fontSize: 12)),
+        ),
+        DataColumn(
+          label: Text('Fecha', style: headerStyle.copyWith(fontSize: 12)),
+          tooltip: 'Fecha de creación',
+        ),
+        DataColumn(
+          label: Text('', style: headerStyle.copyWith(fontSize: 12)),
+          tooltip: 'Acciones',
+          numeric: true,
+        ),
       ],
       rows: users.map((user) {
         return DataRow(
           cells: [
             DataCell(
-              Text(
-                user.name,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Text(
+                  user.name,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
-            DataCell(Text(user.username)),
-            DataCell(Text(user.password.isNotEmpty ? user.password : '—')),
-            DataCell(Text(user.phone?.isNotEmpty == true ? user.phone! : '—')),
+            DataCell(
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 100),
+                child: Text(
+                  user.username,
+                  style: const TextStyle(fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            DataCell(
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Text(
+                  user.password.isNotEmpty ? user.password : '—',
+                  style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            DataCell(
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 100),
+                child: Text(
+                  user.phone?.isNotEmpty == true ? user.phone! : '—',
+                  style: const TextStyle(fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
             DataCell(
               Wrap(
-                spacing: 4,
+                spacing: 3,
+                runSpacing: 3,
                 children: user.roles.map((role) {
                   return Chip(
                     label: Text(
                       UserRole.getRoleText(role),
-                      style: TextStyle(fontSize: 10),
+                      style: const TextStyle(fontSize: 9),
                     ),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     backgroundColor: UserRole.getRoleColor(
                       role,
                     ).withValues(alpha: 0.2),
@@ -4592,15 +5982,21 @@ class AdminApp extends StatelessWidget {
                 label: Text(
                   user.isActive ? 'Activo' : 'Inactivo',
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 9,
                     color: user.isActive ? Colors.green : Colors.red,
                   ),
                 ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 backgroundColor: (user.isActive ? Colors.green : Colors.red)
                     .withValues(alpha: 0.1),
               ),
             ),
-            DataCell(Text(dateFormat.format(user.createdAt))),
+            DataCell(
+              Text(
+                dateFormat.format(user.createdAt),
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
             DataCell(
               Center(
                 child: PopupMenuButton(
@@ -5102,7 +6498,7 @@ class AdminApp extends StatelessWidget {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
                   if (selectedRoles.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -5113,27 +6509,93 @@ class AdminApp extends StatelessWidget {
                     );
                     return;
                   }
-                  final newUser = AdminUser(
-                    id: controller.getNextUserId(),
-                    name: nameController.text,
-                    username: usernameController.text.toLowerCase(),
-                    password: passwordController.text,
-                    phone: phoneController.text.isEmpty
-                        ? null
-                        : phoneController.text,
-                    roles: selectedRoles,
-                    isActive: true,
-                    createdAt: DateTime.now(),
-                    createdBy: 'current_admin',
-                  );
-                  controller.addUser(newUser);
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Usuario creado exitosamente'),
-                      backgroundColor: Colors.green,
+                  
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   );
+
+                  try {
+                    final newUser = AdminUser(
+                      id: 'temp', // Se asignará desde el backend
+                      name: nameController.text,
+                      username: usernameController.text.toLowerCase(),
+                      password: passwordController.text,
+                      phone: phoneController.text.isEmpty
+                          ? null
+                          : phoneController.text,
+                      roles: selectedRoles,
+                      isActive: true,
+                      createdAt: DateTime.now(),
+                      createdBy: 'current_admin',
+                    );
+                    
+                    await controller.addUser(newUser);
+                    
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    // Cerrar diálogo de creación
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Usuario creado exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      // Extraer mensaje de error más claro
+                      String errorMessage = 'Error al crear usuario';
+                      final errorStr = e.toString();
+                      if (errorStr.contains('Error al obtener roles')) {
+                        errorMessage = 'Error al obtener roles del sistema. Verifica que el backend esté funcionando correctamente.';
+                      } else if (errorStr.contains('Rol no encontrado')) {
+                        errorMessage = 'Uno de los roles seleccionados no existe en el sistema.';
+                      } else if (errorStr.contains('Error de conexión') || 
+                                 errorStr.contains('No se pudo conectar') ||
+                                 errorStr.contains('backend esté corriendo')) {
+                        errorMessage = 'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+                      } else if (errorStr.contains('401') || errorStr.contains('403')) {
+                        errorMessage = 'No tienes permisos para crear usuarios.';
+                      } else if (errorStr.contains('username')) {
+                        errorMessage = 'El nombre de usuario ya existe.';
+                      } else {
+                        // Extraer el mensaje más relevante
+                        final match = RegExp(r'Exception:\s*(.+?)(?:Exception:|$)').firstMatch(errorStr);
+                        if (match != null) {
+                          errorMessage = match.group(1)?.trim() ?? errorMessage;
+                        } else {
+                          errorMessage = errorStr.length > 100 
+                              ? '${errorStr.substring(0, 100)}...' 
+                              : errorStr;
+                        }
+                      }
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(errorMessage),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 8),
+                          action: SnackBarAction(
+                            label: 'Cerrar',
+                            textColor: Colors.white,
+                            onPressed: () {},
+                          ),
+                        ),
+                      );
+                    }
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -5340,7 +6802,7 @@ class AdminApp extends StatelessWidget {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
                   if (selectedRoles.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -5351,23 +6813,55 @@ class AdminApp extends StatelessWidget {
                     );
                     return;
                   }
-                  final updatedUser = user.copyWith(
-                    username: usernameController.text.toLowerCase(),
-                    name: nameController.text,
-                    phone: phoneController.text.isEmpty
-                        ? null
-                        : phoneController.text,
-                    roles: selectedRoles,
-                    isActive: isActive,
-                  );
-                  controller.updateUser(updatedUser);
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Usuario actualizado exitosamente'),
-                      backgroundColor: Colors.green,
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   );
+
+                  try {
+                    final updatedUser = user.copyWith(
+                      username: usernameController.text.toLowerCase(),
+                      name: nameController.text,
+                      phone: phoneController.text.isEmpty
+                          ? null
+                          : phoneController.text,
+                      roles: selectedRoles,
+                      isActive: isActive,
+                    );
+                    await controller.updateUser(updatedUser);
+                    
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    // Cerrar diálogo de edición
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Usuario actualizado exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al actualizar usuario: ${_extractErrorMessage(e)}'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -5568,19 +7062,51 @@ class AdminApp extends StatelessWidget {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
-                  controller.changeUserPassword(
-                    user.id,
-                    passwordController.text,
-                  );
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Contraseña actualizada exitosamente'),
-                      backgroundColor: Colors.green,
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   );
+
+                  try {
+                    await controller.changeUserPassword(
+                      user.id,
+                      passwordController.text,
+                    );
+                    
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    // Cerrar diálogo de contraseña
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Contraseña actualizada exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+                    
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al actualizar contraseña: ${_extractErrorMessage(e)}'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -5636,15 +7162,47 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              controller.deleteUser(user.id);
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Usuario "${user.name}" eliminado'),
-                  backgroundColor: Colors.red,
+            onPressed: () async {
+              // Mostrar indicador de carga
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(
+                  child: CircularProgressIndicator(),
                 ),
               );
+
+              try {
+                await controller.deleteUser(user.id);
+                
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                // Cerrar diálogo de confirmación
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Usuario "${user.name}" eliminado'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar diálogo de carga
+                if (context.mounted) Navigator.of(context).pop();
+                
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error al eliminar usuario: ${_extractErrorMessage(e)}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -5664,6 +7222,9 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    // NOTA: La carga de tickets ya se hace en setCurrentView('tickets')
+    // No llamar a loadTickets() aquí para evitar llamadas duplicadas y parpadeo
+    
     final filteredTickets = controller.filteredTickets;
 
     return SingleChildScrollView(
@@ -5684,22 +7245,47 @@ class AdminApp extends StatelessWidget {
                   color: AppColors.textPrimary,
                 ),
               ),
-              ElevatedButton.icon(
-                onPressed: () {
-                  controller.exportTicketsToCSV();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Exportando tickets a CSV...'),
-                      backgroundColor: Colors.green,
+              Row(
+                children: [
+                  // Botón de refrescar
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      print('🔄 AdminView: Refrescando tickets manualmente...');
+                      controller.loadTickets();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Recargando tickets...'),
+                          backgroundColor: Colors.blue,
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refrescar'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
                     ),
-                  );
-                },
-                icon: const Icon(Icons.file_download),
-                label: const Text('Exportar CSV'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                ),
+                  ),
+                  SizedBox(width: AppTheme.spacingSM),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      controller.exportTicketsToCSV();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Exportando tickets a CSV...'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.file_download),
+                    label: const Text('Exportar CSV'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -5796,6 +7382,162 @@ class AdminApp extends StatelessWidget {
             }
           },
         ),
+        SizedBox(height: AppTheme.spacingMD),
+
+        // Filtros de período de fecha
+        Text(
+          'Filtrar por fecha:',
+          style: TextStyle(
+            fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
+            fontWeight: AppTheme.fontWeightSemibold,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        SizedBox(height: AppTheme.spacingSM),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final period in [
+                'todos',
+                'hoy',
+                'ayer',
+                'semana',
+                'mes',
+                'personalizado',
+              ])
+                Padding(
+                  padding: EdgeInsets.only(right: AppTheme.spacingSM),
+                  child: FilterChip(
+                    label: Text(
+                      const {
+                        'todos': 'Todos',
+                        'hoy': 'Hoy',
+                        'ayer': 'Ayer',
+                        'semana': 'Última semana',
+                        'mes': 'Mes actual',
+                        'personalizado': 'Rango personalizado',
+                      }[period]!,
+                      style: TextStyle(
+                        fontSize: isTablet
+                            ? AppTheme.fontSizeSM
+                            : AppTheme.fontSizeXS,
+                        fontWeight: controller.selectedTicketPeriod == period
+                            ? AppTheme.fontWeightSemibold
+                            : AppTheme.fontWeightNormal,
+                      ),
+                    ),
+                    selected: controller.selectedTicketPeriod == period,
+                    onSelected: (selected) {
+                      if (selected) {
+                        controller.setSelectedTicketPeriod(period);
+                      }
+                    },
+                    selectedColor: AppColors.primary,
+                    checkmarkColor: Colors.white,
+                    labelStyle: TextStyle(
+                      color: controller.selectedTicketPeriod == period
+                          ? Colors.white
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+
+        // Campos de fecha personalizada
+        if (controller.selectedTicketPeriod == 'personalizado') ...[
+          SizedBox(height: AppTheme.spacingMD),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () async {
+                    final date = await showDatePicker(
+                      context: context,
+                      initialDate:
+                          controller.ticketStartDate ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now(),
+                      locale: const Locale('es', 'MX'),
+                      helpText: 'Seleccionar fecha',
+                      cancelText: 'Cancelar',
+                      confirmText: 'Aceptar',
+                    );
+                    if (date != null) {
+                      final endDate =
+                          controller.ticketEndDate ?? DateTime.now();
+                      controller.setTicketDateRange(date, endDate);
+                    }
+                  },
+                  child: Container(
+                    padding: EdgeInsets.all(AppTheme.spacingMD),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          controller.ticketStartDate != null
+                              ? _formatDate(controller.ticketStartDate!)
+                              : 'Fecha inicio',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const Icon(Icons.calendar_today),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: AppTheme.spacingMD),
+              Expanded(
+                child: InkWell(
+                  onTap: () async {
+                    final date = await showDatePicker(
+                      context: context,
+                      initialDate:
+                          controller.ticketEndDate ?? DateTime.now(),
+                      firstDate:
+                          controller.ticketStartDate ?? DateTime(2020),
+                      lastDate: DateTime.now(),
+                      locale: const Locale('es', 'MX'),
+                      helpText: 'Seleccionar fecha',
+                      cancelText: 'Cancelar',
+                      confirmText: 'Aceptar',
+                    );
+                    if (date != null) {
+                      final startDate =
+                          controller.ticketStartDate ?? DateTime.now();
+                      controller.setTicketDateRange(startDate, date);
+                    }
+                  },
+                  child: Container(
+                    padding: EdgeInsets.all(AppTheme.spacingMD),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          controller.ticketEndDate != null
+                              ? _formatDate(controller.ticketEndDate!)
+                              : 'Fecha fin',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const Icon(Icons.calendar_today),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -5808,6 +7550,29 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    // Mostrar indicador de carga
+    if (controller.isLoadingTickets) {
+      return Container(
+        padding: EdgeInsets.all(AppTheme.spacingXL),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: AppTheme.spacingMD),
+              const Text('Cargando tickets...'),
+              const SizedBox(height: AppTheme.spacingLG),
+              TextButton.icon(
+                onPressed: () => controller.loadTickets(force: true),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Forzar recarga'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
     if (tickets.isEmpty) {
       return Container(
         padding: EdgeInsets.all(AppTheme.spacingXL),
@@ -5819,12 +7584,26 @@ class AdminApp extends StatelessWidget {
                 size: 64,
                 color: AppColors.textSecondary,
               ),
-              SizedBox(height: AppTheme.spacingMD),
+              const SizedBox(height: AppTheme.spacingMD),
               Text(
                 'No hay tickets para mostrar',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppTheme.spacingSM),
+              Text(
+                'Los tickets aparecerán aquí cuando se cierren cuentas',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppTheme.spacingLG),
+              ElevatedButton.icon(
+                onPressed: () => controller.loadTickets(force: true),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Recargar'),
               ),
             ],
           ),
@@ -5875,13 +7654,13 @@ class AdminApp extends StatelessWidget {
               ),
               DataColumn(
                 label: Text(
-                  'Mesa',
+                  'Tipo',
                   style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
                 ),
               ),
               DataColumn(
                 label: Text(
-                  'Cuenta ID',
+                  'Mesa/Cliente',
                   style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
                 ),
               ),
@@ -5917,11 +7696,62 @@ class AdminApp extends StatelessWidget {
               ),
             ],
             rows: tickets.map((ticket) {
+              // Determinar si es para llevar o en mesa
+              final esParaLlevar = ticket.isTakeaway || 
+                  (ticket.tableNumber == null && ticket.customerName != null);
+              
               return DataRow(
                 cells: [
                   DataCell(Text(ticket.id)),
-                  DataCell(Text(ticket.tableNumber?.toString() ?? 'N/A')),
-                  DataCell(Text(ticket.id)),
+                  // Columna Tipo
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: esParaLlevar ? Colors.blue.shade700 : Colors.green.shade700,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            esParaLlevar ? Icons.shopping_bag : Icons.restaurant,
+                            size: 12,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            esParaLlevar ? 'Para llevar' : 'En mesa',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Columna Mesa/Cliente
+                  DataCell(
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (ticket.tableNumber != null)
+                          Text('Mesa ${ticket.tableNumber}')
+                        else if (ticket.customerName != null && ticket.customerName!.isNotEmpty)
+                          Text(ticket.customerName!, style: const TextStyle(fontWeight: FontWeight.bold))
+                        else
+                          const Text('N/A'),
+                        if (ticket.customerPhone != null && ticket.customerPhone!.isNotEmpty)
+                          Text(
+                            ticket.customerPhone!,
+                            style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                          ),
+                      ],
+                    ),
+                  ),
                   DataCell(Text('\$${ticket.total.toStringAsFixed(2)}')),
                   DataCell(
                     Chip(
@@ -6036,10 +7866,35 @@ class AdminApp extends StatelessWidget {
                               ?.copyWith(color: AppColors.textSecondary),
                         )
                       else if (ticket.isTakeaway)
-                        Text(
-                          'Para llevar',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: AppColors.textSecondary),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade700,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.shopping_bag,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'PARA LLEVAR',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                     ],
                   ),
@@ -6119,7 +7974,7 @@ class AdminApp extends StatelessWidget {
     );
   }
 
-  // Modal de detalles del ticket
+  // Modal de detalles del ticket (formato de ticket impreso)
   void _showTicketDetailsModal(
     BuildContext context,
     payment_models.BillModel ticket,
@@ -6127,54 +7982,9 @@ class AdminApp extends StatelessWidget {
   ) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Detalles del Ticket'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Mesa: ${ticket.tableNumber ?? 'N/A'}',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  Text(
-                    'Total: \$${ticket.total.toStringAsFixed(2)}',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: AppTheme.fontWeightBold,
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: AppTheme.spacingMD),
-              const Text(
-                'Productos:',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              SizedBox(height: AppTheme.spacingSM),
-              for (final item in ticket.items)
-                Padding(
-                  padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('${item.quantity}x ${item.name}'),
-                      Text('\$${item.total.toStringAsFixed(2)}'),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cerrar'),
-          ),
-        ],
+      builder: (context) => _TicketDetailsModal(
+        ticket: ticket,
+        isTablet: isTablet,
       ),
     );
   }
@@ -6202,17 +8012,19 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              controller.printTicket(ticket.id, 'Admin');
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'Ticket impreso: $tableText. Notificación enviada al mesero.',
+            onPressed: () async {
+              await controller.printTicket(ticket.id, 'Admin');
+              if (context.mounted) {
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Ticket impreso: $tableText. Notificación enviada al mesero.',
+                    ),
+                    backgroundColor: Colors.green,
                   ),
-                  backgroundColor: Colors.green,
-                ),
-              );
+                );
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
@@ -6247,6 +8059,9 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    // NOTA: La carga de cierres ya se hace en setCurrentView('cash_closures')
+    // No llamar a loadCashClosures() aquí para evitar llamadas duplicadas y parpadeo
+    
     return SingleChildScrollView(
       padding: EdgeInsets.all(
         isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
@@ -6267,6 +8082,27 @@ class AdminApp extends StatelessWidget {
               ),
               Row(
                 children: [
+                  // Botón de refrescar
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      print('🔄 AdminView: Refrescando cierres de caja manualmente...');
+                      controller.loadCashClosures();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Recargando cierres de caja...'),
+                          backgroundColor: Colors.blue,
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refrescar'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                  SizedBox(width: AppTheme.spacingMD),
                   ElevatedButton.icon(
                     onPressed: () {
                       controller.exportCashClosuresToCSV();
@@ -6312,8 +8148,12 @@ class AdminApp extends StatelessWidget {
           _buildCashCloseDateFilters(context, controller, isTablet),
           SizedBox(height: AppTheme.spacingLG),
 
-          // Tabla/Lista de cierres
-          _buildCashClosuresList(context, controller, isTablet, isDesktop),
+          // Tabla/Lista de cierres (usar Consumer para asegurar reconstrucción)
+          Consumer<AdminController>(
+            builder: (context, adminController, child) {
+              return _buildCashClosuresList(context, adminController, isTablet, isDesktop);
+            },
+          ),
         ],
       ),
     );
@@ -6363,6 +8203,8 @@ class AdminApp extends StatelessWidget {
                     onSelected: (selected) {
                       if (selected) {
                         controller.setSelectedCashClosePeriod(period);
+                        // Recargar cierres cuando cambia el período
+                        controller.loadCashClosures();
                       }
                     },
                     selectedColor: AppColors.primary,
@@ -6392,6 +8234,10 @@ class AdminApp extends StatelessWidget {
                           controller.cashCloseStartDate ?? DateTime.now(),
                       firstDate: DateTime(2020),
                       lastDate: DateTime.now(),
+                      locale: const Locale('es', 'MX'),
+                      helpText: 'Seleccionar fecha',
+                      cancelText: 'Cancelar',
+                      confirmText: 'Aceptar',
                     );
                     if (date != null) {
                       final endDate =
@@ -6431,6 +8277,10 @@ class AdminApp extends StatelessWidget {
                       firstDate:
                           controller.cashCloseStartDate ?? DateTime(2020),
                       lastDate: DateTime.now(),
+                      locale: const Locale('es', 'MX'),
+                      helpText: 'Seleccionar fecha',
+                      cancelText: 'Cancelar',
+                      confirmText: 'Aceptar',
                     );
                     if (date != null) {
                       final startDate =
@@ -6488,7 +8338,34 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    // Mostrar indicador de carga
+    if (controller.isLoadingCashClosures) {
+      return Container(
+        padding: EdgeInsets.all(AppTheme.spacingXL),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: AppTheme.spacingMD),
+              const Text('Cargando cierres de caja...'),
+              const SizedBox(height: AppTheme.spacingLG),
+              TextButton.icon(
+                onPressed: () => controller.loadCashClosures(force: true),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Forzar recarga'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
     final closures = controller.filteredCashClosures;
+    print('🎨 AdminView: _buildCashClosuresList - ${closures.length} cierres para mostrar');
+    if (closures.isNotEmpty) {
+      print('🎨 AdminView: Primer cierre - ID: ${closures.first.id}, Usuario: ${closures.first.usuario}, Total: ${closures.first.totalNeto}');
+    }
 
     if (closures.isEmpty) {
       return Container(
@@ -6501,12 +8378,26 @@ class AdminApp extends StatelessWidget {
                 size: 64,
                 color: AppColors.textSecondary,
               ),
-              SizedBox(height: AppTheme.spacingMD),
+              const SizedBox(height: AppTheme.spacingMD),
               Text(
                 'No hay cierres de caja para mostrar',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppTheme.spacingSM),
+              Text(
+                'Los cierres aparecerán aquí cuando el cajero los envíe',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppTheme.spacingLG),
+              ElevatedButton.icon(
+                onPressed: () => controller.loadCashClosures(force: true),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Recargar'),
               ),
             ],
           ),
@@ -6537,119 +8428,278 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        columns: [
-          DataColumn(
-            label: Text(
-              'Fecha/Periodo',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
+    print('🎨 AdminView: _buildCashClosuresTable - ${closures.length} cierres para mostrar en tabla');
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          headingRowColor: MaterialStateProperty.all(
+            AppColors.primary.withValues(alpha: 0.05),
           ),
-          DataColumn(
-            label: Text(
-              'Usuario',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Tipo',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Total Neto',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Efectivo',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Tarjeta',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Propinas (T)',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Propinas (E)',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Para llevar',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Estado',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-          DataColumn(
-            label: Text(
-              'Acciones',
-              style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
-            ),
-          ),
-        ],
-        rows: closures.map((closure) {
-          return DataRow(
-            cells: [
-              DataCell(Text(_formatDate(closure.fecha))),
-              DataCell(Text(closure.usuario)),
-              DataCell(Text(closure.periodo)),
-              DataCell(Text('\$${closure.totalNeto.toStringAsFixed(2)}')),
-              DataCell(Text('\$${closure.efectivo.toStringAsFixed(2)}')),
-              DataCell(Text('\$${closure.tarjeta.toStringAsFixed(2)}')),
-              DataCell(Text('\$${closure.propinasTarjeta.toStringAsFixed(2)}')),
-              DataCell(
-                Text('\$${closure.propinasEfectivo.toStringAsFixed(2)}'),
+          dataRowMinHeight: 56,
+          dataRowMaxHeight: 72,
+          columns: [
+            DataColumn(
+              label: Text(
+                'Fecha/Periodo',
+                style: TextStyle(
+                  fontWeight: AppTheme.fontWeightSemibold,
+                  fontSize: isTablet ? 14 : 12,
+                ),
               ),
-              DataCell(Text('${closure.pedidosParaLlevar}')),
-              DataCell(
-                Chip(
-                  label: Text(
-                    CashCloseStatus.getStatusText(closure.estado),
-                    style: const TextStyle(fontSize: 10, color: Colors.white),
-                  ),
-                  backgroundColor: CashCloseStatus.getStatusColor(
-                    closure.estado,
+            ),
+            DataColumn(
+              label: Text(
+                'Usuario',
+                style: TextStyle(
+                  fontWeight: AppTheme.fontWeightSemibold,
+                  fontSize: isTablet ? 14 : 12,
+                ),
+              ),
+            ),
+            DataColumn(
+              label: Tooltip(
+                message: 'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Total Neto',
+                      style: TextStyle(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                        fontSize: isTablet ? 14 : 12,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.help_outline, size: 14, color: AppColors.textSecondary),
+                  ],
+                ),
+              ),
+            ),
+            DataColumn(
+              label: Tooltip(
+                message: 'Dinero recibido en efectivo',
+                child: Text(
+                  'Efectivo',
+                  style: TextStyle(
+                    fontWeight: AppTheme.fontWeightSemibold,
+                    fontSize: isTablet ? 14 : 12,
                   ),
                 ),
               ),
-              DataCell(
-                IconButton(
-                  icon: const Icon(Icons.visibility, size: 18),
-                  color: AppColors.primary,
-                  onPressed: () => _showCashCloseDetailsModal(
-                    context,
-                    closure,
-                    controller,
-                    isTablet,
+            ),
+            DataColumn(
+              label: Tooltip(
+                message: 'Dinero recibido con tarjeta de crédito/débito',
+                child: Text(
+                  'Tarjeta',
+                  style: TextStyle(
+                    fontWeight: AppTheme.fontWeightSemibold,
+                    fontSize: isTablet ? 14 : 12,
                   ),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
                 ),
               ),
-            ],
-          );
-        }).toList(),
+            ),
+            DataColumn(
+              label: Tooltip(
+                message: 'Estados: Pendiente (revisión pendiente), Aprobado (verificado), Rechazado (con problemas), Aclaración (requiere más información)',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Estado',
+                      style: TextStyle(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                        fontSize: isTablet ? 14 : 12,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.info_outline, size: 14, color: AppColors.textSecondary),
+                  ],
+                ),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'Acciones',
+                style: TextStyle(
+                  fontWeight: AppTheme.fontWeightSemibold,
+                  fontSize: isTablet ? 14 : 12,
+                ),
+              ),
+            ),
+          ],
+          rows: closures.map((closure) {
+            final hasNotes = closure.notaCajero != null && closure.notaCajero!.isNotEmpty;
+            return DataRow(
+              cells: [
+                DataCell(
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatDate(closure.fecha),
+                        style: TextStyle(
+                          fontSize: isTablet ? 13 : 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (hasNotes)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Icon(
+                            Icons.note_alt,
+                            size: 14,
+                            color: Colors.amber.shade700,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                DataCell(
+                  Text(
+                    closure.usuario,
+                    style: TextStyle(fontSize: isTablet ? 13 : 11),
+                  ),
+                ),
+                DataCell(
+                  Text(
+                    '\$${closure.totalNeto.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 13 : 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+                DataCell(
+                  Text(
+                    '\$${closure.efectivo.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 13 : 11,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                ),
+                DataCell(
+                  Text(
+                    '\$${closure.tarjeta.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 13 : 11,
+                      color: Colors.blue.shade700,
+                    ),
+                  ),
+                ),
+                DataCell(
+                  Tooltip(
+                    message: _getStatusDescription(closure.estado),
+                    child: Chip(
+                      label: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _getStatusIcon(closure.estado),
+                            size: 12,
+                            color: Colors.white,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            CashCloseStatus.getStatusText(closure.estado),
+                            style: const TextStyle(fontSize: 10, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                      backgroundColor: CashCloseStatus.getStatusColor(
+                        closure.estado,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    ),
+                  ),
+                ),
+                DataCell(
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Botón ver detalles
+                      Tooltip(
+                        message: 'Ver detalles${hasNotes ? ' (tiene notas)' : ''}',
+                        child: IconButton(
+                          icon: Icon(
+                            hasNotes ? Icons.visibility : Icons.visibility_outlined,
+                            size: 18,
+                            color: hasNotes ? Colors.amber.shade700 : AppColors.primary,
+                          ),
+                          onPressed: () => _showCashCloseDetailsModal(
+                            context,
+                            closure,
+                            controller,
+                            isTablet,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
+                      // Botones de acción (mostrar para estados pending y clarification)
+                      if (closure.cierreId != null && 
+                          (closure.estado == CashCloseStatus.pending || 
+                           closure.estado == CashCloseStatus.clarification)) ...[
+                        SizedBox(width: 4),
+                        // Botón aprobar (solo si está pendiente)
+                        if (closure.estado == CashCloseStatus.pending)
+                          Tooltip(
+                            message: 'Aprobar cierre',
+                            child: IconButton(
+                              icon: const Icon(Icons.check_circle, size: 18),
+                              color: Colors.green,
+                              onPressed: () => _handleApproveClosure(context, closure, controller),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ),
+                        // Botón rechazar (solo si está pendiente)
+                        if (closure.estado == CashCloseStatus.pending)
+                          Tooltip(
+                            message: 'Rechazar cierre',
+                            child: IconButton(
+                              icon: const Icon(Icons.cancel, size: 18),
+                              color: Colors.red,
+                              onPressed: () => _handleRejectClosure(context, closure, controller),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ),
+                        // Botón pedir aclaración (si está pendiente o ya en aclaración)
+                        Tooltip(
+                          message: closure.estado == CashCloseStatus.clarification 
+                              ? 'Ver aclaración solicitada' 
+                              : 'Pedir aclaración',
+                          child: IconButton(
+                            icon: Icon(
+                              closure.estado == CashCloseStatus.clarification 
+                                  ? Icons.info_outline 
+                                  : Icons.help_outline, 
+                              size: 18,
+                            ),
+                            color: Colors.blue,
+                            onPressed: () => _handleRequestClarification(context, closure, controller),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
       ),
     );
   }
@@ -6763,40 +8813,171 @@ class AdminApp extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Detalle del cierre'),
-          content: SingleChildScrollView(
+        builder: (context, setState) => Dialog(
+          child: Container(
+            width: isTablet ? 700 : (MediaQuery.of(context).size.width * 0.9),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.85,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header del modal
+                Container(
+                  padding: EdgeInsets.all(AppTheme.spacingMD),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.account_balance_wallet, color: Colors.white),
+                      const SizedBox(width: AppTheme.spacingSM),
+                      Expanded(
+                        child: Text(
+                          'Detalle del cierre',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                // Contenido del modal
+                Expanded(
+                  child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Información básica
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Cierre de caja: ${closure.id}',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    Chip(
-                      label: Text(
-                        CashCloseStatus.getStatusText(closure.estado),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white,
+                // Información básica mejorada
+                Container(
+                  padding: EdgeInsets.all(AppTheme.spacingMD),
+                  decoration: BoxDecoration(
+                    color: AppColors.inputBackground,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Cierre de caja',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                                Text(
+                                  closure.id,
+                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Tooltip(
+                            message: _getStatusDescription(closure.estado),
+                            child: Chip(
+                              label: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _getStatusIcon(closure.estado),
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    CashCloseStatus.getStatusText(closure.estado),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              backgroundColor: CashCloseStatus.getStatusColor(
+                                closure.estado,
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildInfoItem(
+                              context,
+                              'Usuario',
+                              closure.usuario,
+                              Icons.person,
+                            ),
+                          ),
+                          SizedBox(width: AppTheme.spacingMD),
+                          Expanded(
+                            child: _buildInfoItem(
+                              context,
+                              'Período',
+                              closure.periodo,
+                              Icons.calendar_today,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      _buildInfoItem(
+                        context,
+                        'Fecha',
+                        _formatDate(closure.fecha),
+                        Icons.access_time,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+
+                // Explicación de Total Neto
+                Container(
+                  padding: EdgeInsets.all(AppTheme.spacingSM),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 18, color: AppColors.primary),
+                      SizedBox(width: AppTheme.spacingSM),
+                      Expanded(
+                        child: Text(
+                          'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                          ),
                         ),
                       ),
-                      backgroundColor: CashCloseStatus.getStatusColor(
-                        closure.estado,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: AppTheme.spacingSM),
-                Text('Usuario: ${closure.usuario}'),
-                Text('Tipo: ${closure.periodo}'),
-                Text(
-                  'Estado: ${CashCloseStatus.getStatusText(closure.estado)}',
+                    ],
+                  ),
                 ),
                 SizedBox(height: AppTheme.spacingMD),
 
@@ -6810,30 +8991,35 @@ class AdminApp extends StatelessWidget {
                       '\$${closure.totalNeto.toStringAsFixed(2)}',
                       AppColors.primary,
                       isTablet,
+                      tooltip: 'Suma total de ventas sin propinas',
                     ),
                     _buildSummaryCard(
                       'Efectivo Contado',
                       '\$${closure.efectivoContado.toStringAsFixed(2)}',
                       Colors.green,
                       isTablet,
+                      tooltip: 'Dinero en efectivo que el cajero contó físicamente',
                     ),
                     _buildSummaryCard(
                       'Tarjeta Total',
                       '\$${closure.totalTarjeta.toStringAsFixed(2)}',
                       Colors.blue,
                       isTablet,
+                      tooltip: 'Total de pagos recibidos con tarjeta',
                     ),
                     _buildSummaryCard(
                       'Propinas Tarjeta',
                       '\$${closure.propinasTarjeta.toStringAsFixed(2)}',
                       Colors.purple,
                       isTablet,
+                      tooltip: 'Propinas recibidas por pagos con tarjeta',
                     ),
                     _buildSummaryCard(
                       'Propinas Efectivo',
                       '\$${closure.propinasEfectivo.toStringAsFixed(2)}',
                       Colors.orange,
                       isTablet,
+                      tooltip: 'Propinas recibidas en efectivo',
                     ),
                     if (closure.otrosIngresos > 0)
                       _buildSummaryCard(
@@ -6841,10 +9027,98 @@ class AdminApp extends StatelessWidget {
                         '\$${closure.otrosIngresos.toStringAsFixed(2)}',
                         Colors.teal,
                         isTablet,
+                        tooltip: closure.otrosIngresosTexto ?? 'Otros ingresos adicionales',
                       ),
                   ],
                 ),
                 SizedBox(height: AppTheme.spacingMD),
+
+                // Notas del cajero
+                if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+                  Container(
+                    padding: EdgeInsets.all(AppTheme.spacingMD),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(color: Colors.amber.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.note_alt,
+                              size: 20,
+                              color: Colors.amber.shade800,
+                            ),
+                            SizedBox(width: AppTheme.spacingSM),
+                            Text(
+                              'Notas del Cajero',
+                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: Colors.amber.shade900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: AppTheme.spacingSM),
+                        Text(
+                          closure.notaCajero!,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.amber.shade800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                ],
+
+                // Otros ingresos texto si existe
+                if (closure.otrosIngresosTexto != null && closure.otrosIngresosTexto!.isNotEmpty) ...[
+                  Container(
+                    padding: EdgeInsets.all(AppTheme.spacingSM),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.shade50,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(color: Colors.teal.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 18,
+                          color: Colors.teal.shade800,
+                        ),
+                        SizedBox(width: AppTheme.spacingSM),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Otros Ingresos',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.teal.shade900,
+                                ),
+                              ),
+                              SizedBox(height: AppTheme.spacingXS),
+                              Text(
+                                closure.otrosIngresosTexto!,
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Colors.teal.shade800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                ],
 
                 // Movimientos individuales (simulado - en producción vendría de la BD)
                 const Text(
@@ -6982,31 +9256,50 @@ class AdminApp extends StatelessWidget {
                 ],
               ],
             ),
-          ),
-          actions: [
-            ElevatedButton.icon(
-              onPressed: () {
-                controller.generateCashClosuresPDF();
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Generando detalle en PDF...'),
-                    backgroundColor: Colors.green,
                   ),
-                );
-              },
-              icon: const Icon(Icons.print),
-              label: const Text('Imprimir detalle'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
+                ),
+                // Footer con botones
+                Container(
+                  padding: EdgeInsets.all(AppTheme.spacingMD),
+                  decoration: BoxDecoration(
+                    color: AppColors.inputBackground,
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          controller.generateCashClosuresPDF();
+                          Navigator.of(context).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Generando detalle en PDF...'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.print),
+                        label: const Text('Imprimir detalle'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      SizedBox(width: AppTheme.spacingSM),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Cerrar'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cerrar'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -7017,9 +9310,10 @@ class AdminApp extends StatelessWidget {
     String title,
     String value,
     Color color,
-    bool isTablet,
-  ) {
-    return Container(
+    bool isTablet, {
+    String? tooltip,
+  }) {
+    final cardContent = Container(
       width: isTablet ? 150 : 120,
       padding: EdgeInsets.all(AppTheme.spacingSM),
       decoration: BoxDecoration(
@@ -7030,12 +9324,24 @@ class AdminApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: AppTheme.fontSizeXS,
-              color: AppColors.textSecondary,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: AppTheme.fontSizeXS,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              if (tooltip != null)
+                Tooltip(
+                  message: tooltip,
+                  child: Icon(Icons.info_outline, size: 12, color: AppColors.textSecondary),
+                ),
+            ],
           ),
           SizedBox(height: AppTheme.spacingXS),
           Text(
@@ -7049,6 +9355,303 @@ class AdminApp extends StatelessWidget {
         ],
       ),
     );
+
+    return tooltip != null ? Tooltip(message: tooltip, child: cardContent) : cardContent;
+  }
+
+  // Helper para obtener icono según estado
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case CashCloseStatus.pending:
+        return Icons.pending;
+      case CashCloseStatus.approved:
+        return Icons.check_circle;
+      case CashCloseStatus.rejected:
+        return Icons.cancel;
+      case CashCloseStatus.clarification:
+        return Icons.help_outline;
+      default:
+        return Icons.help;
+    }
+  }
+
+  // Helper para obtener descripción del estado
+  String _getStatusDescription(String status) {
+    switch (status) {
+      case CashCloseStatus.pending:
+        return 'Pendiente: El cierre está esperando revisión del administrador. El cajero lo envió pero aún no ha sido verificado.';
+      case CashCloseStatus.approved:
+        return 'Aprobado: El administrador verificó y aprobó este cierre de caja. Todo está correcto.';
+      case CashCloseStatus.rejected:
+        return 'Rechazado: El administrador encontró problemas en este cierre y lo rechazó. Se requiere atención.';
+      case CashCloseStatus.clarification:
+        return 'Aclaración: El administrador necesita más información sobre este cierre. Se solicitaron detalles adicionales.';
+      default:
+        return 'Estado desconocido: No se pudo determinar el estado de este cierre.';
+    }
+  }
+
+  // Widget helper para mostrar información con icono
+  Widget _buildInfoItem(BuildContext context, String label, String value, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: AppColors.textSecondary),
+        SizedBox(width: AppTheme.spacingXS),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.textSecondary,
+                  fontSize: 10,
+                ),
+              ),
+              Text(
+                value,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Métodos para manejar acciones de cierres
+  Future<void> _handleApproveClosure(
+    BuildContext context,
+    CashCloseModel closure,
+    AdminController controller,
+  ) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Aprobar cierre de caja'),
+        content: const Text('¿Estás seguro de que deseas aprobar este cierre de caja?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Aprobar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado == true && closure.cierreId != null) {
+      try {
+        await controller.actualizarEstadoCierre(
+          cierreId: closure.cierreId!,
+          estado: CashCloseStatus.approved,
+        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Cierre de caja aprobado exitosamente'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al aprobar cierre: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleRejectClosure(
+    BuildContext context,
+    CashCloseModel closure,
+    AdminController controller,
+  ) async {
+    final comentarioController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rechazar cierre de caja'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '¿Estás seguro de que deseas rechazar este cierre de caja?',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 16),
+                const Text('Comentario (opcional):'),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: comentarioController,
+                  decoration: const InputDecoration(
+                    hintText: 'Explica el motivo del rechazo...',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Rechazar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado == true && closure.cierreId != null) {
+      try {
+        await controller.actualizarEstadoCierre(
+          cierreId: closure.cierreId!,
+          estado: CashCloseStatus.rejected,
+          comentarioRevision: comentarioController.text.trim().isEmpty
+              ? null
+              : comentarioController.text.trim(),
+        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Cierre de caja rechazado exitosamente'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al rechazar cierre: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleRequestClarification(
+    BuildContext context,
+    CashCloseModel closure,
+    AdminController controller,
+  ) async {
+    final comentarioController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pedir aclaración'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '¿Qué información necesitas que el cajero aclare?',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 16),
+                const Text('Solicitud de aclaración:'),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: comentarioController,
+                  decoration: const InputDecoration(
+                    hintText: 'Describe qué información necesitas...',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 3,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Por favor, describe qué información necesitas';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.of(context).pop(true);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Enviar solicitud'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado == true && closure.cierreId != null) {
+      try {
+        await controller.actualizarEstadoCierre(
+          cierreId: closure.cierreId!,
+          estado: CashCloseStatus.clarification,
+          comentarioRevision: comentarioController.text.trim(),
+        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Solicitud de aclaración enviada exitosamente'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al enviar solicitud: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   // Vista de Revisar Cierres de Cajeros
@@ -7547,6 +10150,94 @@ class AdminApp extends StatelessWidget {
                 'Total declarado',
                 '\$${closure.totalDeclarado.toStringAsFixed(2)}',
               ),
+              
+              // Notas del cajero
+              if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+                SizedBox(height: AppTheme.spacingMD),
+                Container(
+                  padding: EdgeInsets.all(AppTheme.spacingMD),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    border: Border.all(color: Colors.amber.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.note_alt,
+                            size: 20,
+                            color: Colors.amber.shade800,
+                          ),
+                          SizedBox(width: AppTheme.spacingSM),
+                          Text(
+                            'Notas del Cajero',
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.amber.shade900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      Text(
+                        closure.notaCajero!,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.amber.shade800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // Otros ingresos texto si existe
+              if (closure.otrosIngresosTexto != null && closure.otrosIngresosTexto!.isNotEmpty) ...[
+                SizedBox(height: AppTheme.spacingMD),
+                Container(
+                  padding: EdgeInsets.all(AppTheme.spacingSM),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.shade50,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                    border: Border.all(color: Colors.teal.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: 18,
+                        color: Colors.teal.shade800,
+                      ),
+                      SizedBox(width: AppTheme.spacingSM),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Otros Ingresos',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: Colors.teal.shade900,
+                              ),
+                            ),
+                            SizedBox(height: AppTheme.spacingXS),
+                            Text(
+                              closure.otrosIngresosTexto!,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.teal.shade800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
               SizedBox(height: AppTheme.spacingMD),
 
               // Historial de auditoría
@@ -8342,43 +11033,49 @@ class AdminApp extends StatelessWidget {
     final cashSales = controller.todayCashSales;
     final pendingTotal = controller.pendingCollectionsTotal;
     final totalNet = controller.todayTotalSales;
+    final localOrdersCount = controller.todayLocalOrdersCount;
+    final takeawayOrdersCount = controller.todayTakeawayOrdersCount;
+    final pendingCount = controller.pendingCollectionsCount;
 
     return [
       _SummaryCardData(
         title: 'Ventas en Local',
         value: controller.formatCurrency(localSales),
-        subtitle:
-            '${controller.todayLocalOrdersCount} ${controller.todayLocalOrdersCount == 1 ? 'orden' : 'órdenes'}',
+        subtitle: localOrdersCount > 0
+            ? '$localOrdersCount ${localOrdersCount == 1 ? 'orden' : 'órdenes'}'
+            : 'Sin órdenes',
         color: AppColors.success,
         icon: Icons.storefront,
       ),
       _SummaryCardData(
         title: 'Ventas Para llevar',
         value: controller.formatCurrency(takeawaySales),
-        subtitle:
-            '${controller.todayTakeawayOrdersCount} ${controller.todayTakeawayOrdersCount == 1 ? 'pedido' : 'pedidos'}',
+        subtitle: takeawayOrdersCount > 0
+            ? '$takeawayOrdersCount ${takeawayOrdersCount == 1 ? 'pedido' : 'pedidos'}'
+            : 'Sin pedidos',
         color: AppColors.info,
         icon: Icons.delivery_dining,
       ),
       _SummaryCardData(
         title: 'Ventas Efectivo',
         value: controller.formatCurrency(cashSales),
-        subtitle: 'Incluye pagos mixtos',
+        subtitle: cashSales > 0 ? 'Incluye pagos mixtos' : 'Sin ventas en efectivo',
         color: AppColors.primary,
         icon: Icons.payments,
       ),
       _SummaryCardData(
         title: 'Por cobrar',
         value: controller.formatCurrency(pendingTotal),
-        subtitle:
-            '${controller.pendingCollectionsCount} ${controller.pendingCollectionsCount == 1 ? 'ticket' : 'tickets'} pendientes',
+        subtitle: pendingCount > 0
+            ? '$pendingCount ${pendingCount == 1 ? 'ticket' : 'tickets'} pendientes'
+            : 'Sin tickets pendientes',
         color: AppColors.error,
         icon: Icons.pending_actions,
       ),
       _SummaryCardData(
         title: 'Total Neto',
         value: controller.formatCurrency(totalNet),
-        subtitle: 'Incluye efectivo y tarjeta',
+        subtitle: totalNet > 0 ? 'Incluye efectivo y tarjeta' : 'Sin ventas registradas',
         color: AppColors.info,
         icon: Icons.analytics,
       ),
@@ -8417,41 +11114,49 @@ class AdminApp extends StatelessWidget {
     }).toList();
   }
 
-  void _handleMenuCategoryDeletion(
+  Future<void> _handleMenuCategoryDeletion(
     BuildContext context,
     AdminController controller,
     String category,
-  ) {
+  ) async {
     final isCustom = controller.isCustomCategory(category);
     final hasProducts = controller.categoryHasProducts(category);
-    final deleted = controller.deleteCustomCategory(category);
-
+    
     String message;
     Color backgroundColor;
 
-    if (deleted) {
-      message = 'Categoría "$category" eliminada.';
-      backgroundColor = AppColors.success;
-    } else {
-      if (!isCustom) {
-        message =
-            'La categoría "$category" es predeterminada y no se puede eliminar.';
-      } else if (hasProducts) {
-        message =
-            'No puedes eliminar la categoría "$category" porque tiene productos asociados.';
+    try {
+      final deleted = await controller.deleteCustomCategory(category);
+      
+      if (deleted) {
+        message = 'Categoría "$category" eliminada.';
+        backgroundColor = AppColors.success;
       } else {
-        message = 'No fue posible eliminar la categoría "$category".';
+        if (!isCustom) {
+          message =
+              'La categoría "$category" es predeterminada y no se puede eliminar.';
+        } else if (hasProducts) {
+          message =
+              'No puedes eliminar la categoría "$category" porque tiene productos asociados.';
+        } else {
+          message = 'No fue posible eliminar la categoría "$category".';
+        }
+        backgroundColor = AppColors.error;
       }
+    } catch (e) {
+      message = 'Error al eliminar categoría: ${e.toString()}';
       backgroundColor = AppColors.error;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: backgroundColor,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: backgroundColor,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   void _handleInventoryCategoryDeletion(
@@ -8696,12 +11401,14 @@ class _IngredientFormWidget extends StatefulWidget {
 
 class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
   final formKey = GlobalKey<FormState>();
-  String? selectedSuggested;
   final nameController = TextEditingController();
   final unitController = TextEditingController();
-  final quantityController = TextEditingController();
+  final quantityController = TextEditingController(text: '1');
   bool isCustom = false;
   bool autoDeduct = true;
+  late List<String> categories;
+  String? selectedCategory;
+  String? selectedInventoryItemId;
 
   @override
   void dispose() {
@@ -8709,6 +11416,148 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
     unitController.dispose();
     quantityController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    categories = widget.controller.getInventoryCategories();
+    if (categories.isEmpty) {
+      categories = ['Otros'];
+    }
+    selectedCategory = categories.first;
+    final items = _itemsForSelectedCategory();
+    if (items.isEmpty) {
+      isCustom = true;
+    } else {
+      final first = items.first;
+      selectedInventoryItemId = first.id;
+      nameController.text = first.name;
+      unitController.text = first.unit;
+    }
+  }
+
+  List<InventoryItem> _itemsForSelectedCategory() {
+    if (selectedCategory == null) return [];
+    return widget.controller.getInventoryItemsByCategory(selectedCategory!);
+  }
+
+  void _syncInventorySelection() {
+    if (isCustom) return;
+    final items = _itemsForSelectedCategory();
+    if (items.isEmpty) {
+      setState(() {
+        selectedInventoryItemId = null;
+        nameController.clear();
+        unitController.clear();
+      });
+      return;
+    }
+
+    final selected = items.firstWhere(
+      (item) => item.id == selectedInventoryItemId,
+      orElse: () => items.first,
+    );
+
+    setState(() {
+      selectedInventoryItemId = selected.id;
+      nameController.text = selected.name;
+      unitController.text = selected.unit;
+    });
+  }
+
+  void _toggleCustomMode(bool value) {
+    if (!value) {
+      final items = _itemsForSelectedCategory();
+      if (items.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No hay ingredientes en esta categoría. Agrega uno personalizado.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
+    setState(() {
+      isCustom = value;
+      if (!isCustom) {
+        _syncInventorySelection();
+      } else {
+        selectedInventoryItemId = null;
+        nameController.clear();
+        unitController.clear();
+      }
+    });
+  }
+
+  void _resetForm() {
+    final hasInventory = _itemsForSelectedCategory().isNotEmpty;
+    setState(() {
+      nameController.clear();
+      unitController.clear();
+      quantityController.text = '1';
+      autoDeduct = true;
+      isCustom = !hasInventory;
+      selectedInventoryItemId = null;
+    });
+    if (hasInventory) {
+      _syncInventorySelection();
+    }
+  }
+
+  void _handleAddIngredient() {
+    if (!formKey.currentState!.validate()) return;
+
+    InventoryItem? selectedInventory;
+    if (!isCustom) {
+      final items = _itemsForSelectedCategory();
+      if (items.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No hay ingredientes en esta categoría. Agrega uno personalizado.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      selectedInventory = items.firstWhere(
+        (item) => item.id == selectedInventoryItemId,
+        orElse: () => items.first,
+      );
+    }
+
+    final quantity = double.tryParse(quantityController.text.trim()) ?? 0;
+    if (quantity <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('La cantidad debe ser mayor a 0'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final ingredientName = (isCustom ? nameController.text : selectedInventory?.name)?.trim() ?? '';
+    final ingredientUnit = (isCustom ? unitController.text : selectedInventory?.unit)?.trim() ?? '';
+
+    final newIngredient = RecipeIngredient(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: ingredientName,
+      unit: ingredientUnit,
+      quantityPerPortion: quantity,
+      autoDeduct: !isCustom && autoDeduct,
+      isCustom: isCustom || selectedInventory == null,
+      category: selectedCategory,
+      inventoryItemId: selectedInventory?.id,
+    );
+
+    final updatedIngredients = [
+      ...widget.ingredients,
+      newIngredient,
+    ];
+    widget.onSave(updatedIngredients);
+    _resetForm();
   }
 
   @override
@@ -8728,37 +11577,99 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
             ),
           ),
           SizedBox(height: AppTheme.spacingMD),
-          if (!isCustom)
-            DropdownButtonFormField<String>(
-              initialValue: selectedSuggested,
-              decoration: const InputDecoration(
-                labelText: 'Ingrediente sugerido',
-                border: OutlineInputBorder(),
-              ),
-              items: widget.controller.getSuggestedIngredients().map((
-                ingredient,
-              ) {
-                return DropdownMenuItem(
-                  value: ingredient,
-                  child: Text(ingredient),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  selectedSuggested = value;
-                  if (value != null) {
-                    // Parsear nombre y unidad del sugerido
-                    final parts = value.split(' ');
-                    if (parts.length >= 2) {
-                      nameController.text = parts
-                          .sublist(0, parts.length - 1)
-                          .join(' ');
-                      unitController.text = parts.last;
-                    }
-                  }
-                });
-              },
+          DropdownButtonFormField<String>(
+            value: selectedCategory,
+            decoration: const InputDecoration(
+              labelText: 'Categoría',
+              border: OutlineInputBorder(),
             ),
+            items: categories
+                .map(
+                  (category) => DropdownMenuItem(
+                    value: category,
+                    child: Text(category),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                selectedCategory = value;
+                selectedInventoryItemId = null;
+              });
+              if (!isCustom) {
+                _syncInventorySelection();
+              }
+            },
+          ),
+          SizedBox(height: AppTheme.spacingMD),
+          if (!isCustom)
+            Builder(builder: (context) {
+              final items = _itemsForSelectedCategory();
+              if (items.isEmpty) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(AppTheme.spacingMD),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      ),
+                      child: Text(
+                        'No hay ingredientes en esta categoría. Puedes agregar uno personalizado.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Colors.orange.shade900,
+                            ),
+                      ),
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextButton.icon(
+                      onPressed: () => _toggleCustomMode(true),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Agregar ingrediente personalizado'),
+                    ),
+                  ],
+                );
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedInventoryItemId ?? items.first.id,
+                    decoration: const InputDecoration(
+                      labelText: 'Ingrediente del inventario',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: items
+                        .map(
+                          (item) => DropdownMenuItem(
+                            value: item.id,
+                            child: Text('${item.name} (${item.unit})'),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        selectedInventoryItemId = value;
+                      });
+                      _syncInventorySelection();
+                    },
+                    validator: (value) {
+                      if (isCustom) return null;
+                      if (value == null || value.isEmpty) {
+                        return 'Selecciona un ingrediente';
+                      }
+                      return null;
+                    },
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                ],
+              );
+            }),
           if (isCustom) ...[
             TextFormField(
               controller: nameController,
@@ -8788,15 +11699,33 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
                 return null;
               },
             ),
+          ] else ...[
+            TextFormField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Nombre',
+                border: OutlineInputBorder(),
+              ),
+              readOnly: true,
+            ),
+            SizedBox(height: AppTheme.spacingMD),
+            TextFormField(
+              controller: unitController,
+              decoration: const InputDecoration(
+                labelText: 'Unidad',
+                border: OutlineInputBorder(),
+              ),
+              readOnly: true,
+            ),
+            SizedBox(height: AppTheme.spacingMD),
           ],
-          SizedBox(height: AppTheme.spacingMD),
           TextFormField(
             controller: quantityController,
             decoration: const InputDecoration(
               labelText: 'Cantidad por porción *',
               border: OutlineInputBorder(),
             ),
-            keyboardType: TextInputType.number,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             validator: (value) {
               if (value == null || value.isEmpty) {
                 return 'Campo obligatorio';
@@ -8811,78 +11740,42 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
           SizedBox(height: AppTheme.spacingMD),
           SwitchListTile(
             title: const Text('Descontar automáticamente'),
+            subtitle: isCustom
+                ? const Text('Disponible solo para ingredientes del inventario')
+                : null,
             value: autoDeduct,
-            onChanged: (value) {
-              setState(() {
-                autoDeduct = value;
-              });
-            },
+            onChanged: isCustom
+                ? null
+                : (value) {
+                    setState(() {
+                      autoDeduct = value;
+                    });
+                  },
           ),
           SizedBox(height: AppTheme.spacingMD),
           if (!isCustom)
             TextButton.icon(
-              onPressed: () {
-                setState(() {
-                  isCustom = true;
-                });
-              },
+              onPressed: () => _toggleCustomMode(true),
               icon: const Icon(Icons.add),
               label: const Text('Agregar ingrediente personalizado'),
+            )
+          else
+            TextButton.icon(
+              onPressed: () => _toggleCustomMode(false),
+              icon: const Icon(Icons.inventory_2),
+              label: const Text('Volver a sugeridos'),
             ),
           SizedBox(height: AppTheme.spacingMD),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton(
-                onPressed: () {
-                  nameController.clear();
-                  unitController.clear();
-                  quantityController.clear();
-                  setState(() {
-                    selectedSuggested = null;
-                    isCustom = false;
-                  });
-                },
-                child: const Text('Cancelar'),
+                onPressed: _resetForm,
+                child: const Text('Limpiar'),
               ),
               SizedBox(width: AppTheme.spacingSM),
               ElevatedButton(
-                onPressed: () {
-                  if (formKey.currentState!.validate()) {
-                    if (nameController.text.isEmpty ||
-                        unitController.text.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Debe completar todos los campos requeridos',
-                          ),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                      return;
-                    }
-                    final newIngredient = RecipeIngredient(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(),
-                      name: nameController.text,
-                      unit: unitController.text,
-                      quantityPerPortion: double.parse(quantityController.text),
-                      autoDeduct: autoDeduct,
-                      isCustom: isCustom,
-                    );
-                    final updatedIngredients = [
-                      ...widget.ingredients,
-                      newIngredient,
-                    ];
-                    widget.onSave(updatedIngredients);
-                    nameController.clear();
-                    unitController.clear();
-                    quantityController.clear();
-                    setState(() {
-                      selectedSuggested = null;
-                      isCustom = false;
-                    });
-                  }
-                },
+                onPressed: _handleAddIngredient,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -8895,4 +11788,631 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
       ),
     );
   }
+}
+
+// Widget para mostrar el ticket completo en formato de impresión
+class _TicketDetailsModal extends StatefulWidget {
+  final payment_models.BillModel ticket;
+  final bool isTablet;
+
+  const _TicketDetailsModal({
+    required this.ticket,
+    required this.isTablet,
+  });
+
+  @override
+  State<_TicketDetailsModal> createState() => _TicketDetailsModalState();
+}
+
+class _TicketDetailsModalState extends State<_TicketDetailsModal> {
+  Map<String, dynamic>? _ordenData;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrdenData();
+  }
+
+  Future<void> _loadOrdenData() async {
+    if (widget.ticket.ordenId == null) {
+      setState(() {
+        _isLoading = false;
+        _error = 'No hay orden asociada a este ticket';
+      });
+      return;
+    }
+
+    try {
+      final ordenesService = OrdenesService();
+      final ordenData = await ordenesService.getOrden(widget.ticket.ordenId!);
+      setState(() {
+        _ordenData = ordenData;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Error al cargar los datos de la orden: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: Container(
+        width: widget.isTablet ? 600 : double.infinity,
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
+        padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Ticket de Cobro',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 20.0 : 18.0,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // Contenido
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 48, color: Colors.red),
+                              const SizedBox(height: 16),
+                              Text(_error!, textAlign: TextAlign.center),
+                            ],
+                          ),
+                        )
+                      : SingleChildScrollView(
+                          child: _buildTicketContent(),
+                        ),
+            ),
+            
+            // Botón cerrar
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Cerrar'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTicketContent() {
+    if (_ordenData == null) {
+      return const Center(child: Text('No hay datos disponibles'));
+    }
+
+    final items = _ordenData!['items'] as List<dynamic>? ?? [];
+    final subtotal = (_ordenData!['subtotal'] as num?)?.toDouble() ?? 0.0;
+    final descuento = (_ordenData!['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+    final impuesto = (_ordenData!['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
+    final propina = (_ordenData!['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+    final total = (_ordenData!['total'] as num?)?.toDouble() ?? 0.0;
+    final mesaCodigo = _ordenData!['mesaCodigo'] as String?;
+    final clienteNombre = _ordenData!['clienteNombre'] as String?;
+    final clienteTelefono = _ordenData!['clienteTelefono'] as String?;
+    final folio = _ordenData!['folio'] as String? ?? widget.ticket.id;
+    final splitCount = widget.ticket.splitCount;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Encabezado del ticket
+        Center(
+          child: Column(
+            children: [
+              Text(
+                'TICKET DE COBRO',
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 18.0 : 16.0,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                folio,
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 14.0 : 12.0,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                DateFormat('dd/MM/yyyy HH:mm').format(widget.ticket.createdAt),
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 12.0 : 10.0,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Línea punteada
+        Container(
+          margin: const EdgeInsets.symmetric(vertical: 16),
+          height: 1,
+          child: CustomPaint(painter: _DashedLinePainter()),
+        ),
+
+        // Banner destacado para pedidos para llevar
+        if (clienteNombre != null && mesaCodigo == null) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade700,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.blue.shade900.withValues(alpha: 0.3),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.shopping_bag,
+                  color: Colors.white,
+                  size: widget.isTablet ? 24.0 : 20.0,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '*** PARA LLEVAR ***',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 18.0 : 16.0,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        // Información de mesa/cliente
+        if (mesaCodigo != null || clienteNombre != null) ...[
+          if (mesaCodigo != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.table_restaurant, size: 16, color: AppColors.textSecondary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Mesa: $mesaCodigo',
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 14.0 : 12.0,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (clienteNombre != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.person, size: 16, color: AppColors.textSecondary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Cliente: $clienteNombre',
+                        style: TextStyle(
+                          fontSize: widget.isTablet ? 14.0 : 12.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (clienteTelefono != null && clienteTelefono.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.phone, size: 16, color: AppColors.textSecondary),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Teléfono: $clienteTelefono',
+                          style: TextStyle(
+                            fontSize: widget.isTablet ? 13.0 : 11.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+
+        // Productos
+        Container(
+          padding: EdgeInsets.all(widget.isTablet ? 16.0 : 12.0),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.blue.shade200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Productos',
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 14.0 : 12.0,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...items.map((item) {
+                final cantidad = (item['cantidad'] as num?)?.toDouble() ?? 1.0;
+                final productoNombre = item['productoNombre'] as String? ?? 'Producto';
+                final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                final totalLinea = (item['totalLinea'] as num?)?.toDouble() ?? (precioUnitario * cantidad);
+                final modificadores = item['modificadores'] as List<dynamic>? ?? [];
+                final nota = item['nota'] as String?;
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${cantidad.toInt()}x',
+                            style: TextStyle(
+                              fontSize: widget.isTablet ? 14.0 : 12.0,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  productoNombre,
+                                  style: TextStyle(
+                                    fontSize: widget.isTablet ? 14.0 : 12.0,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                // Modificadores
+                                if (modificadores.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  ...modificadores.map((mod) {
+                                    final modNombre = mod['nombre'] as String? ?? '';
+                                    final modPrecio = (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(left: 8, bottom: 2),
+                                      child: Row(
+                                        children: [
+                                          const Text('  + ', style: TextStyle(fontSize: 10)),
+                                          Expanded(
+                                            child: Text(
+                                              modNombre,
+                                              style: TextStyle(
+                                                fontSize: widget.isTablet ? 11.0 : 10.0,
+                                                color: AppColors.textSecondary,
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                            ),
+                                          ),
+                                          if (modPrecio > 0)
+                                            Text(
+                                              '\$${modPrecio.toStringAsFixed(2)}',
+                                              style: TextStyle(
+                                                fontSize: widget.isTablet ? 11.0 : 10.0,
+                                                color: AppColors.textSecondary,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    );
+                                  }),
+                                ],
+                                // Nota del producto
+                                if (nota != null && nota.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: Text(
+                                      'Nota: $nota',
+                                      style: TextStyle(
+                                        fontSize: widget.isTablet ? 10.0 : 9.0,
+                                        color: AppColors.textSecondary,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          Text(
+                            '\$${totalLinea.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: widget.isTablet ? 14.0 : 12.0,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // Resumen financiero
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Subtotal:',
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 14.0 : 12.0,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  Text(
+                    '\$${subtotal.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 14.0 : 12.0,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              if (descuento > 0) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Descuento:',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      '-\$${descuento.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (impuesto > 0) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Impuesto:',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      '\$${impuesto.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (propina > 0) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Propina sugerida:',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      '\$${propina.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: Colors.grey.shade300, width: 2),
+                    bottom: BorderSide(color: Colors.grey.shade300, width: 2),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'TOTAL:',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      '\$${total.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (splitCount > 1) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: EdgeInsets.all(widget.isTablet ? 12.0 : 10.0),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.primary.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Total por persona (${splitCount} ${splitCount == 1 ? 'persona' : 'personas'}):',
+                        style: TextStyle(
+                          fontSize: widget.isTablet ? 16.0 : 14.0,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      Text(
+                        '\$${(total / splitCount).toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: widget.isTablet ? 18.0 : 16.0,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+
+        // Información de impresión
+        if (widget.ticket.printedBy != null) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.print, size: 16, color: AppColors.success),
+                const SizedBox(width: 8),
+                Text(
+                  'Impreso por: ${widget.ticket.printedBy}',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 11.0 : 10.0,
+                    color: AppColors.success,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// Painter para línea punteada estilo ticket
+class _DashedLinePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.grey.shade400
+      ..strokeWidth = 1;
+
+    const dashWidth = 5.0;
+    const dashSpace = 5.0;
+    double startX = 0;
+
+    while (startX < size.width) {
+      canvas.drawLine(
+        Offset(startX, 0),
+        Offset(startX + dashWidth, 0),
+        paint,
+      );
+      startX += dashWidth + dashSpace;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

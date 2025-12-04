@@ -1,0 +1,352 @@
+{
+  "fecha": "2025-11-19T02:50:32.594Z",
+  "database": "comandero",
+  "totalTablas": 8,
+  "tablas": [
+    {
+      "nombre": "cierres_caja",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "fecha",
+          "tipo": "date",
+          "nullable": false
+        },
+        {
+          "nombre": "apertura",
+          "tipo": "timestamp",
+          "nullable": true
+        },
+        {
+          "nombre": "cierre",
+          "tipo": "timestamp",
+          "nullable": true
+        },
+        {
+          "nombre": "monto_apertura",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "monto_cierre",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "total_ventas",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "notas",
+          "tipo": "varchar",
+          "nullable": true
+        },
+        {
+          "nombre": "usuario_id",
+          "tipo": "bigint",
+          "nullable": true
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "cuentas",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "mesa_id",
+          "tipo": "bigint",
+          "nullable": true
+        },
+        {
+          "nombre": "estado",
+          "tipo": "enum",
+          "nullable": false
+        },
+        {
+          "nombre": "total",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        },
+        {
+          "nombre": "actualizado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "elementos_cuenta",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "cuenta_id",
+          "tipo": "bigint",
+          "nullable": false
+        },
+        {
+          "nombre": "producto_id",
+          "tipo": "bigint",
+          "nullable": true
+        },
+        {
+          "nombre": "cantidad",
+          "tipo": "int",
+          "nullable": false
+        },
+        {
+          "nombre": "precio_unitario",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "inventario",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "producto_id",
+          "tipo": "bigint",
+          "nullable": false
+        },
+        {
+          "nombre": "cantidad",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "unidad",
+          "tipo": "varchar",
+          "nullable": true
+        },
+        {
+          "nombre": "minimo",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "actualizado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "mesas",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "nombre",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "asientos",
+          "tipo": "int",
+          "nullable": false
+        },
+        {
+          "nombre": "estado",
+          "tipo": "enum",
+          "nullable": false
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "productos",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "nombre",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "descripcion",
+          "tipo": "varchar",
+          "nullable": true
+        },
+        {
+          "nombre": "precio",
+          "tipo": "decimal",
+          "nullable": false
+        },
+        {
+          "nombre": "disponible",
+          "tipo": "tinyint",
+          "nullable": false
+        },
+        {
+          "nombre": "sku",
+          "tipo": "varchar",
+          "nullable": true
+        },
+        {
+          "nombre": "url_imagen",
+          "tipo": "varchar",
+          "nullable": true
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        },
+        {
+          "nombre": "actualizado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "usuario",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "nombre",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "username",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "telefono",
+          "tipo": "varchar",
+          "nullable": true
+        },
+        {
+          "nombre": "password_hash",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "activo",
+          "tipo": "tinyint",
+          "nullable": false
+        },
+        {
+          "nombre": "ultimo_acceso",
+          "tipo": "timestamp",
+          "nullable": true
+        },
+        {
+          "nombre": "password_actualizada_en",
+          "tipo": "timestamp",
+          "nullable": true
+        },
+        {
+          "nombre": "password_actualizada_por_usuario_id",
+          "tipo": "bigint",
+          "nullable": true
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        },
+        {
+          "nombre": "actualizado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "nombre": "usuarios",
+      "columnas": [
+        {
+          "nombre": "id",
+          "tipo": "bigint PRIMARY KEY AUTO_INCREMENT",
+          "nullable": false
+        },
+        {
+          "nombre": "nombre",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "correo",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "contraseña_hash",
+          "tipo": "varchar",
+          "nullable": false
+        },
+        {
+          "nombre": "rol",
+          "tipo": "enum",
+          "nullable": false
+        },
+        {
+          "nombre": "activo",
+          "tipo": "tinyint",
+          "nullable": false
+        },
+        {
+          "nombre": "creado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        },
+        {
+          "nombre": "actualizado_en",
+          "tipo": "timestamp",
+          "nullable": false
+        }
+      ]
+    }
+  ]
+}

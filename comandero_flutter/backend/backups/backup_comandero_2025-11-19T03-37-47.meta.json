@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-11-19T03:37:48.312Z",
+  "database": "comandero",
+  "filename": "backup_comandero_2025-11-19T03-37-47.sql.gz",
+  "size": 6728,
+  "sizeMB": 0.01,
+  "compressed": true,
+  "tables": 45,
+  "includesData": true,
+  "includesStructure": true
+}

@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:dio/dio.dart';
 import '../controllers/auth_controller.dart';
+import '../services/api_service.dart';
 import '../utils/app_colors.dart';
-import '../utils/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -35,6 +36,33 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
+      // Verificar conexión antes de intentar login (con timeout más corto)
+      final apiService = ApiService();
+      
+      // Intentar verificar conexión con timeout corto
+      final isConnected = await apiService.checkConnection().timeout(
+        const Duration(seconds: 8),
+        onTimeout: () {
+          print('⚠️  Timeout al verificar conexión');
+          return false;
+        },
+      );
+      
+      if (!isConnected) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        Fluttertoast.showToast(
+          msg: 'No se pudo conectar al backend.\n\nVerifica que:\n• Backend esté corriendo (npm run dev)\n• URL: http://localhost:3000\n• CORS esté configurado',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
+
       final authController = context.read<AuthController>();
       final success = await authController.login(
         _usernameController.text.trim(),
@@ -59,13 +87,48 @@ class _LoginScreenState extends State<LoginScreen> {
           textColor: Colors.white,
         );
       }
+    } on DioException catch (e) {
+      String errorMsg = 'Error al iniciar sesión';
+      
+      if (e.type == DioExceptionType.connectionError) {
+        errorMsg = 'No se pudo conectar al servidor.\n\nVerifica que:\n• El backend esté corriendo (npm run dev)\n• La URL sea http://localhost:3000/api\n• No haya errores en la terminal del backend';
+      } else if (e.type == DioExceptionType.connectionTimeout || 
+                 e.type == DioExceptionType.receiveTimeout) {
+        errorMsg = 'Tiempo de espera agotado.\n\nEl servidor no respondió a tiempo. Verifica tu conexión.';
+      } else if (e.response != null) {
+        final statusCode = e.response!.statusCode;
+        final data = e.response!.data;
+        
+        if (statusCode == 401) {
+          errorMsg = data['message'] ?? 'Credenciales incorrectas. Verifica usuario y contraseña.';
+        } else if (statusCode == 400) {
+          errorMsg = data['message'] ?? 'Datos inválidos. Verifica el formato de los datos.';
+        } else if (statusCode == 403) {
+          errorMsg = data['message'] ?? 'Usuario deshabilitado. Contacta al administrador.';
+        } else if (statusCode == 429) {
+          errorMsg = data['message'] ?? 'Demasiados intentos de inicio de sesión. Espera un momento e intenta de nuevo.';
+        } else {
+          errorMsg = data['message'] ?? 'Error en el servidor (${statusCode}). Intenta más tarde.';
+        }
+      }
+      
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: errorMsg,
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
     } catch (e) {
-      Fluttertoast.showToast(
-        msg: 'Error al iniciar sesión',
-        toastLength: Toast.LENGTH_SHORT,
-        backgroundColor: Colors.red,
-        textColor: Colors.white,
-      );
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error inesperado: ${e.toString()}',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -78,103 +141,125 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background, // Fondo del proyecto React
+      backgroundColor: const Color(0xFFFFF8F0), // Fondo cálido más suave
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppTheme.spacingXL),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 40),
-
-                // Card principal como en React
-                Card(
-                  elevation: AppTheme.elevationLG,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            child: Form(
+              key: _formKey,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Card(
+                  elevation: 8,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppTheme.radiusLG),
+                    borderRadius: BorderRadius.circular(20),
                     side: BorderSide(
-                      color: AppColors.primary.withValues(alpha: 0.2),
-                      width: 1.0,
+                      color: AppColors.primary.withValues(alpha: 0.3),
+                      width: 1.5,
                     ),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppTheme.spacingXL),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white,
+                          const Color(0xFFFFF8F0),
+                        ],
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(28),
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Logo y título
-                        Center(
-                          child: Column(
-                            children: [
-                              Container(
-                                width: 64,
-                                height: 64,
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary,
-                                  borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                                ),
-                                child: const Icon(
-                                  Icons.restaurant,
-                                  size: 32,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              SizedBox(height: AppTheme.spacingLG),
-                              Text(
-                                'Comandix',
-                                style: TextStyle(
-                                  fontSize: AppTheme.fontSize2XL,
-                                  fontWeight: AppTheme.fontWeightBold,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                              SizedBox(height: AppTheme.spacingXS),
-                              Text(
-                                'Sistema de comandero para puesto de barbacoa',
-                                style: TextStyle(
-                                  fontSize: AppTheme.fontSizeSM,
-                                  color: AppColors.textSecondary,
-                                ),
-                                textAlign: TextAlign.center,
+                        // Logo y título - más compacto
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [AppColors.primary, AppColors.warning],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
                               ),
                             ],
                           ),
+                          child: const Icon(
+                            Icons.restaurant,
+                            size: 28,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Comandix',
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Sistema de comandero para puesto de barbacoa',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
 
-                        SizedBox(height: AppTheme.spacingXL),
+                        const SizedBox(height: 20),
 
-                        // Grid de roles de referencia
+                        // Grid de roles - más compacto y llamativo
                         Container(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF9F5F1),
-                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: const Color(
-                                0xFFFF6B35,
-                              ).withValues(alpha: 0.1),
+                              color: AppColors.primary.withValues(alpha: 0.2),
+                              width: 1.5,
                             ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: 0.1),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Roles del sistema (referencia)',
+                              Text(
+                                'Roles del sistema',
                                 style: TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.bold,
-                                  color: Color(0xFF3C2317),
+                                  color: AppColors.textPrimary,
+                                  letterSpacing: 0.5,
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 10),
                               GridView.count(
                                 crossAxisCount: 2,
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
-                                childAspectRatio: 2.5,
-                                crossAxisSpacing: 8,
-                                mainAxisSpacing: 8,
+                                childAspectRatio: 2.8,
+                                crossAxisSpacing: 6,
+                                mainAxisSpacing: 6,
                                 children: [
                                   _buildRoleCard(
                                     'mesero',
@@ -208,15 +293,29 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
 
-                        SizedBox(height: AppTheme.spacingXL),
+                        const SizedBox(height: 20),
 
                         // Campo de usuario
                         TextFormField(
                           controller: _usernameController,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'Nombre de usuario',
                             hintText: 'Ingresa tu nombre de usuario',
-                            prefixIcon: Icon(Icons.person),
+                            prefixIcon: Icon(Icons.person, color: AppColors.primary),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: AppColors.primary, width: 2),
+                            ),
                           ),
                           validator: (value) {
                             if (value == null || value.isEmpty) {
@@ -226,7 +325,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                         ),
 
-                        SizedBox(height: AppTheme.spacingLG),
+                        const SizedBox(height: 16),
 
                         // Campo de contraseña
                         TextFormField(
@@ -235,18 +334,33 @@ class _LoginScreenState extends State<LoginScreen> {
                           decoration: InputDecoration(
                             labelText: 'Contraseña',
                             hintText: 'Ingresa tu contraseña',
-                            prefixIcon: const Icon(Icons.lock),
+                            prefixIcon: Icon(Icons.lock, color: AppColors.primary),
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword
                                     ? Icons.visibility
                                     : Icons.visibility_off,
+                                color: AppColors.textSecondary,
                               ),
                               onPressed: () {
                                 setState(() {
                                   _obscurePassword = !_obscurePassword;
                                 });
                               },
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: AppColors.primary, width: 2),
                             ),
                           ),
                           validator: (value) {
@@ -257,9 +371,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                         ),
 
-                        SizedBox(height: AppTheme.spacingXL),
+                        const SizedBox(height: 20),
 
-                        // Botón de login con gradiente
+                        // Botón de login con gradiente mejorado
                         Container(
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
@@ -267,14 +381,12 @@ class _LoginScreenState extends State<LoginScreen> {
                               begin: Alignment.centerLeft,
                               end: Alignment.centerRight,
                             ),
-                            borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                            borderRadius: BorderRadius.circular(12),
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(
-                                  0xFFFF6B35,
-                                ).withValues(alpha: 0.1),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
+                                color: AppColors.primary.withValues(alpha: 0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
                               ),
                             ],
                           ),
@@ -285,7 +397,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               shadowColor: Colors.transparent,
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                             child: _isLoading
@@ -305,19 +417,20 @@ class _LoginScreenState extends State<LoginScreen> {
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
                                       color: Colors.white,
+                                      letterSpacing: 0.5,
                                     ),
                                   ),
                           ),
                         ),
 
-                        SizedBox(height: AppTheme.spacingLG),
+                        const SizedBox(height: 12),
 
-                        // Texto de ayuda
-                        const Text(
+                        // Texto de ayuda - más pequeño
+                        Text(
                           '¿Problemas para entrar? Contacta al administrador',
                           style: TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF8D6E63),
+                            fontSize: 11,
+                            color: AppColors.textSecondary.withValues(alpha: 0.7),
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -325,39 +438,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 24),
-
-                // Información de usuarios de prueba
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF6B35).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFFFF6B35).withValues(alpha: 0.1),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Usuarios de prueba:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFFF6B35),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text('• admin / 123 (Administrador)'),
-                      const Text('• mesero / 123 (Mesero)'),
-                      const Text('• cocinero / 123 (Cocinero)'),
-                      const Text('• cajero / 123 (Cajero)'),
-                      const Text('• capitan / 123 (Capitán)'),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -373,21 +454,39 @@ class _LoginScreenState extends State<LoginScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.1)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: 0.15),
+            color.withValues(alpha: 0.08),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: color.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 4),
+          Icon(icon, color: color, size: 18),
+          const SizedBox(height: 3),
           Text(
             role,
             style: TextStyle(
-              fontSize: 10,
+              fontSize: 9,
               fontWeight: FontWeight.bold,
               color: color,
+              letterSpacing: 0.3,
             ),
           ),
         ],

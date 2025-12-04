@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../controllers/admin_controller.dart';
 import '../../../models/admin_model.dart';
+import '../../../services/ordenes_service.dart';
+import '../../../services/pagos_service.dart';
 import '../../../utils/app_colors.dart';
+import '../../../utils/date_utils.dart' as date_utils;
 
 class RealTimeSalesWebView extends StatefulWidget {
   const RealTimeSalesWebView({super.key});
@@ -14,20 +17,129 @@ class RealTimeSalesWebView extends StatefulWidget {
 class _RealTimeSalesWebViewState extends State<RealTimeSalesWebView> {
   String _selectedTimeframe = 'hoy';
   bool _autoRefresh = true;
+  List<Map<String, dynamic>> realTimeSales = [];
+  bool isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    // Simular actualización automática cada 30 segundos
+    _loadRealTimeSales();
+    // Actualización automática cada 30 segundos
     if (_autoRefresh) {
       _startAutoRefresh();
+    }
+  }
+
+  Future<void> _loadRealTimeSales() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final ordenesService = OrdenesService();
+      final pagosService = PagosService();
+      
+      // Obtener órdenes recientes
+      final ordenes = await ordenesService.getOrdenes();
+      
+      // Obtener pagos recientes
+      final pagos = await pagosService.getPagos();
+      
+      // Filtrar por timeframe
+      final ahora = DateTime.now();
+      DateTime fechaInicio;
+      
+      switch (_selectedTimeframe) {
+        case 'hoy':
+          fechaInicio = DateTime(ahora.year, ahora.month, ahora.day);
+          break;
+        case 'semana':
+          fechaInicio = ahora.subtract(const Duration(days: 7));
+          break;
+        case 'mes':
+          fechaInicio = DateTime(ahora.year, ahora.month, 1);
+          break;
+        default:
+          fechaInicio = DateTime(ahora.year, ahora.month, ahora.day);
+      }
+
+      // Combinar órdenes y pagos para crear ventas en tiempo real
+      final ventas = <Map<String, dynamic>>[];
+      
+      // Procesar pagos recientes
+      for (final pago in pagos) {
+        final creadoEnRaw = pago['creadoEn'];
+        final creadoEn = creadoEnRaw != null 
+            ? date_utils.AppDateUtils.parseToLocal(creadoEnRaw)
+            : null;
+        
+        if (creadoEn != null && creadoEn.isAfter(fechaInicio)) {
+          final ordenId = pago['ordenId'] as int?;
+          Map<String, dynamic> orden = <String, dynamic>{};
+          if (ordenId != null && ordenes.isNotEmpty) {
+            try {
+              orden = ordenes.firstWhere(
+                (o) => o['id'] == ordenId,
+                orElse: () => <String, dynamic>{},
+              );
+            } catch (e) {
+              orden = <String, dynamic>{};
+            }
+          }
+          
+          final items = orden['items'] as List<dynamic>? ?? [];
+          if (items.isNotEmpty) {
+            for (final item in items) {
+              final productoNombre = item['productoNombre'] as String? ?? 'Producto';
+              final cantidad = (item['cantidad'] as num?)?.toDouble() ?? 1.0;
+              final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+              final monto = cantidad * precioUnitario;
+              
+              final mesaId = orden['mesaId'] as int?;
+              final mesaTexto = mesaId != null ? 'Mesa $mesaId' : 'Para Llevar';
+              
+              ventas.add({
+                'time': date_utils.AppDateUtils.formatTime(creadoEn),
+                'product': productoNombre,
+                'amount': monto,
+                'table': mesaTexto,
+              });
+            }
+          } else {
+            // Si no hay items, usar el monto del pago
+            final monto = (pago['monto'] as num?)?.toDouble() ?? 0.0;
+            final mesaId = orden['mesaId'] as int?;
+            final mesaTexto = mesaId != null ? 'Mesa $mesaId' : 'Para Llevar';
+            
+            ventas.add({
+              'time': date_utils.AppDateUtils.formatTime(creadoEn),
+              'product': 'Pago',
+              'amount': monto,
+              'table': mesaTexto,
+            });
+          }
+        }
+      }
+
+      // Ordenar por tiempo (más reciente primero)
+      ventas.sort((a, b) => b['time'].compareTo(a['time']));
+      
+      // Limitar a las últimas 20 ventas
+      realTimeSales = ventas.take(20).toList();
+    } catch (e) {
+      print('Error al cargar ventas en tiempo real: $e');
+      realTimeSales = [];
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
     }
   }
 
   void _startAutoRefresh() {
     Future.delayed(const Duration(seconds: 30), () {
       if (_autoRefresh && mounted) {
-        setState(() {});
+        _loadRealTimeSales();
         _startAutoRefresh();
       }
     });
@@ -147,7 +259,7 @@ class _RealTimeSalesWebViewState extends State<RealTimeSalesWebView> {
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+                  date_utils.AppDateUtils.formatTime(now),
                   style: TextStyle(
                     fontSize: isDesktop ? 18.0 : (isTablet ? 16.0 : 14.0),
                     fontWeight: FontWeight.bold,
@@ -384,6 +496,7 @@ class _RealTimeSalesWebViewState extends State<RealTimeSalesWebView> {
                 setState(() {
                   _selectedTimeframe = value!;
                 });
+                _loadRealTimeSales();
               },
               items: const [
                 DropdownMenuItem(value: 'hoy', child: Text('Hoy')),
@@ -712,39 +825,29 @@ class _RealTimeSalesWebViewState extends State<RealTimeSalesWebView> {
     bool isTablet,
     bool isDesktop,
   ) {
-    // Simular datos de ventas en tiempo real
-    final realTimeSales = [
-      {
-        'time': '14:32',
-        'product': 'Taco de Barbacoa',
-        'amount': 22.0,
-        'table': 'Mesa 5',
-      },
-      {
-        'time': '14:31',
-        'product': 'Consomé Grande',
-        'amount': 35.0,
-        'table': 'Mesa 3',
-      },
-      {
-        'time': '14:30',
-        'product': 'Mix Barbacoa',
-        'amount': 95.0,
-        'table': 'Mesa 7',
-      },
-      {
-        'time': '14:29',
-        'product': 'Quesadilla',
-        'amount': 40.0,
-        'table': 'Para Llevar',
-      },
-      {
-        'time': '14:28',
-        'product': 'Agua de Horchata',
-        'amount': 18.0,
-        'table': 'Mesa 2',
-      },
-    ];
+    if (isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32.0),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (realTimeSales.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Text(
+            'No hay ventas registradas en el período seleccionado',
+            style: TextStyle(
+              fontSize: isTablet ? 16.0 : 14.0,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+      );
+    }
 
     return Card(
       elevation: 2,

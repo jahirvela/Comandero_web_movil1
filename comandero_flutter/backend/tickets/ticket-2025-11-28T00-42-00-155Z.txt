@@ -1,0 +1,23 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000022
+Fecha: 2025-11-26T21:40:26.000Z
+Mesa: 9
+Cajero: Jahir Velarde
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  4  Agua de Jamaica Hecha ...    80.00
+  4  Taco de Barbacoa            100.00
+------------------------------------------
+Subtotal:                    $  180.00
+E1TOTAL:                      $  180.00
+E0==========================================
+a1
+k4k10ORD-000022
+ORD-000022
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

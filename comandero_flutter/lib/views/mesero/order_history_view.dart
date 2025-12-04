@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../utils/app_colors.dart';
+import 'alert_to_kitchen_modal.dart';
 
 class OrderHistoryView extends StatefulWidget {
   const OrderHistoryView({super.key});
@@ -652,33 +653,19 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
   }
 
   void _showAlertToKitchenModal(Map<String, dynamic> order) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Enviar alerta a cocina'),
-        content: Text(
-          '¿Deseas enviar una alerta sobre la orden ${order['id']}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () {
-              // TODO: Implementar envío de alerta
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Alerta enviada para ${order['id']}'),
-                  backgroundColor: AppColors.success,
-                ),
-              );
-            },
-            child: const Text('Enviar'),
-          ),
-        ],
-      ),
+    // Extraer información de la orden
+    final orderId = order['id']?.toString() ?? 'ORD-UNKNOWN';
+    final tableNumber =
+        order['tableNumber']?.toString() ??
+        order['mesaId']?.toString() ??
+        order['mesa']?.toString() ??
+        'N/A';
+
+    // Usar el modal completo de alertas
+    showAlertToKitchenModal(
+      context,
+      tableNumber: tableNumber,
+      orderId: orderId,
     );
   }
 

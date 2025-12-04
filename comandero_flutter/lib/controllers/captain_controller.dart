@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/captain_model.dart';
+import '../services/mesas_service.dart';
+import '../services/socket_service.dart';
+// import '../services/ordenes_service.dart'; // Reservado para futuras funcionalidades
 
 class CaptainController extends ChangeNotifier {
+  final MesasService _mesasService = MesasService();
   // Estado de las alertas
   List<CaptainAlert> _alerts = [];
 
@@ -65,11 +69,247 @@ class CaptainController extends ChangeNotifier {
     }).toList();
   }
 
+  // Cargar mesas desde el backend
+  Future<void> loadTables() async {
+    try {
+      final mesas = await _mesasService.getMesas();
+      // Filtrar mesas inactivas (activo = false) - el backend marca como inactivo en lugar de eliminar
+      final mesasActivas = mesas.where((m) {
+        final data = m as Map<String, dynamic>;
+        return (data['activo'] as bool?) ?? true; // Solo incluir mesas activas
+      }).toList();
+      
+      _tables = mesasActivas.map((m) {
+        final data = m as Map<String, dynamic>;
+        final codigo = data['codigo'] as String;
+        final numero = int.tryParse(codigo) ?? 0;
+        final estadoNombre = (data['estadoNombre'] as String?)?.toLowerCase() ?? 'libre';
+        
+        // Mapear estado del backend a estado del frontend
+        String status = CaptainTableStatus.disponible;
+        final estadoLower = estadoNombre.toLowerCase().trim();
+        
+        // Verificar primero coincidencias exactas
+        if (estadoLower == 'libre' || estadoLower == 'disponible') {
+          status = CaptainTableStatus.disponible;
+        } else if (estadoLower == 'ocupada' || estadoLower == 'ocupado') {
+          status = CaptainTableStatus.ocupada;
+        } else if (estadoLower == 'reservada' || estadoLower == 'reservado') {
+          status = CaptainTableStatus.reservada;
+        } else if (estadoLower == 'en limpieza' || 
+                   estadoLower == 'en-limpieza' || 
+                   estadoLower == 'limpieza') {
+          status = CaptainTableStatus.servicio;
+        } 
+        // Luego verificar coincidencias parciales
+        else if (estadoLower.contains('ocupad')) {
+          status = CaptainTableStatus.ocupada;
+        } else if (estadoLower.contains('cuenta')) {
+          status = CaptainTableStatus.cuenta;
+        } else if (estadoLower.contains('reservad')) {
+          status = CaptainTableStatus.reservada;
+        } else if (estadoLower.contains('limpieza')) {
+          status = CaptainTableStatus.servicio;
+        }
+        
+        return CaptainTable(
+          number: numero,
+          status: status,
+          hasActiveOrder: status == CaptainTableStatus.ocupada || status == CaptainTableStatus.cuenta,
+        );
+      }).toList();
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar mesas: $e');
+      // Si falla, mantener lista vacía
+      _tables = [];
+      notifyListeners();
+    }
+  }
+
   CaptainController() {
     _initializeData();
+    _setupSocketListeners();
+  }
+
+  // Configurar listeners de Socket.IO
+  void _setupSocketListeners() {
+    final socketService = SocketService();
+    
+    // Escuchar nuevas órdenes creadas (solo si tienen mesa)
+    socketService.onOrderCreated((data) {
+      try {
+        final mesaId = data['mesaId'] as int?;
+        if (mesaId != null) {
+          // Recargar mesas cuando se crea una orden con mesa
+          loadTables();
+          
+          // Agregar alerta
+          _alerts.add(CaptainAlert(
+            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            type: 'order_delayed',
+            title: 'Nueva Orden',
+            message: 'Nueva orden en mesa $mesaId',
+            tableNumber: mesaId,
+            orderNumber: data['id']?.toString() ?? '',
+            minutes: 0,
+            priority: 'medium',
+            timestamp: DateTime.now(),
+          ));
+          notifyListeners();
+        }
+      } catch (e) {
+        print('Error al procesar nueva orden en capitán: $e');
+      }
+    });
+
+    // Escuchar actualizaciones de órdenes
+    socketService.onOrderUpdated((data) {
+      try {
+        final mesaId = data['mesaId'] as int?;
+        if (mesaId != null) {
+          // Recargar mesas cuando se actualiza una orden
+          loadTables();
+        }
+      } catch (e) {
+        print('Error al procesar actualización de orden en capitán: $e');
+      }
+    });
+
+    // Escuchar alertas de demora
+    socketService.onAlertaDemora((data) {
+      try {
+        _alerts.add(CaptainAlert(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          type: 'order_delayed',
+          title: data['ordenId']?.toString() ?? 'Orden',
+          message: data['mensaje'] ?? 'Orden con demora',
+          tableNumber: data['mesaNumero'] as int? ?? 0,
+          orderNumber: data['ordenId']?.toString() ?? '',
+          minutes: data['minutos'] as int? ?? 0,
+          priority: 'high',
+          timestamp: DateTime.now(),
+        ));
+        notifyListeners();
+      } catch (e) {
+        print('Error al procesar alerta de demora: $e');
+      }
+    });
+
+    // Escuchar alertas de cancelación
+    socketService.onAlertaCancelacion((data) {
+      try {
+        _alerts.add(CaptainAlert(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          type: 'service_issue', // Cambiar a service_issue para cancelaciones
+          title: 'Orden Cancelada',
+          message: data['mensaje'] ?? 'Una orden ha sido cancelada',
+          tableNumber: data['mesaNumero'] as int? ?? 0,
+          orderNumber: data['ordenId']?.toString() ?? '',
+          minutes: 0,
+          priority: 'high',
+          timestamp: DateTime.now(),
+        ));
+        notifyListeners();
+      } catch (e) {
+        print('Error al procesar alerta de cancelación: $e');
+      }
+    });
+
+    // Escuchar alertas de modificación
+    socketService.onAlertaModificacion((data) {
+      try {
+        _alerts.add(CaptainAlert(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          type: 'service_issue',
+          title: 'Orden Modificada',
+          message: data['mensaje'] ?? 'Una orden ha sido modificada',
+          tableNumber: data['mesaNumero'] as int? ?? 0,
+          orderNumber: data['ordenId']?.toString() ?? '',
+          minutes: 0,
+          priority: 'medium',
+          timestamp: DateTime.now(),
+        ));
+        notifyListeners();
+      } catch (e) {
+        print('Error al procesar alerta de modificación: $e');
+      }
+    });
+
+    // Escuchar alertas de mesa
+    socketService.onAlertaMesa((data) {
+      try {
+        // Recargar mesas cuando hay cambios
+        loadTables();
+      } catch (e) {
+        print('Error al procesar alerta de mesa: $e');
+      }
+    });
+
+    // Escuchar eventos de mesas
+    socketService.onTableCreated((data) {
+      try {
+        // Recargar mesas cuando se crea una nueva
+        loadTables();
+        notifyListeners();
+      } catch (e) {
+        print('Error al procesar mesa creada en capitán: $e');
+      }
+    });
+
+    socketService.onTableUpdated((data) {
+      try {
+        print('📢 Capitán: Mesa actualizada recibida vía socket - Mesa ID: ${data['id']}, Estado: ${data['estadoNombre']}');
+        // Recargar mesas cuando se actualiza una mesa (desde otro rol)
+        // Esto asegura que los cambios del admin o mesero se reflejen en capitán
+        loadTables();
+        notifyListeners();
+      } catch (e) {
+        print('Error al procesar mesa actualizada en capitán: $e');
+      }
+    });
+
+    socketService.onTableDeleted((data) {
+      try {
+        final mesaId = data['id'] as int?;
+        final mesaNumero = data['numero'] as int?;
+        print('📢 Capitán: Mesa eliminada recibida vía socket - Mesa ID: $mesaId, Número: $mesaNumero');
+        
+        // Eliminar la mesa de la lista local inmediatamente
+        if (mesaNumero != null) {
+          _tables.removeWhere((t) => t.number == mesaNumero);
+          notifyListeners();
+          print('✅ Capitán: Mesa $mesaNumero eliminada de la lista local');
+        }
+        
+        // Recargar mesas desde el backend para asegurar sincronización completa
+        loadTables();
+      } catch (e) {
+        print('❌ Error al procesar mesa eliminada en capitán: $e');
+        // Si hay error, recargar desde el backend
+        loadTables();
+      }
+    });
+
+    // Escuchar eventos de pagos (para estadísticas)
+    socketService.onPaymentCreated((data) {
+      try {
+        // Actualizar estadísticas cuando se crea un pago
+        _initializeData(); // Recargar datos
+        notifyListeners();
+      } catch (e) {
+        print('Error al procesar pago creado en capitán: $e');
+      }
+    });
   }
 
   void _initializeData() {
+    // Cargar mesas desde el backend
+    loadTables();
+    
+    // Datos de ejemplo solo para alertas y órdenes que no vienen del backend todavía
+    // (estos se pueden mantener como fallback o eliminar cuando todo esté integrado)
+    /*
     // Inicializar alertas de ejemplo según las imágenes
     _alerts = [
       CaptainAlert(
@@ -181,8 +421,12 @@ class CaptainController extends ChangeNotifier {
         hasActiveOrder: true,
       ),
     ];
+    */
+    // Fin del comentario de datos de ejemplo
+    // Las mesas ahora se cargan desde el backend a través de loadTables()
+    // Las alertas y órdenes seguirán usando datos de ejemplo hasta que se integren completamente
 
-    // Inicializar estadísticas
+    // Inicializar estadísticas (estas también se pueden integrar con el backend más adelante)
     _stats = CaptainStats(
       todaySales: 3250.0,
       variation: '+12.5%',
@@ -238,14 +482,88 @@ class CaptainController extends ChangeNotifier {
   }
 
   // Actualizar estado de mesa
-  void updateTableStatus(int tableNumber, String newStatus) {
-    _tables = _tables.map((table) {
-      if (table.number == tableNumber) {
-        return table.copyWith(status: newStatus);
+  Future<void> updateTableStatus(int tableNumber, String newStatus) async {
+    try {
+      // Verificar que la mesa existe
+      if (!_tables.any((t) => t.number == tableNumber)) {
+        throw Exception('Mesa no encontrada: $tableNumber');
       }
-      return table;
-    }).toList();
-    notifyListeners();
+      
+      // Obtener estados de mesa disponibles
+      final estados = await _mesasService.getEstadosMesa();
+      
+      // Mapear estado del frontend al ID del backend
+      int? estadoMesaId;
+      final statusLower = newStatus.toLowerCase();
+      
+      if (statusLower.contains('libre') || statusLower.contains('disponible')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('libre') ||
+                 (e['nombre'] as String).toLowerCase().contains('disponible'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 1},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('ocupada') || statusLower.contains('ocupado')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('ocupada') ||
+                 (e['nombre'] as String).toLowerCase().contains('ocupado'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 2},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('limpieza')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('limpieza'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 3},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('reservada') || statusLower.contains('reservado')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('reservada') ||
+                 (e['nombre'] as String).toLowerCase().contains('reservado'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 4},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('cuenta')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('cuenta'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 5},
+        );
+        estadoMesaId = estado['id'] as int;
+      }
+      
+      if (estadoMesaId == null) {
+        throw Exception('Estado de mesa no encontrado: $newStatus');
+      }
+      
+      // Verificar que la mesa existe localmente
+      if (!_tables.any((t) => t.number == tableNumber)) {
+        throw Exception('Mesa con número $tableNumber no encontrada');
+      }
+      
+      // Necesitamos obtener el ID de la mesa desde el backend
+      // El número de mesa corresponde al código en el backend
+      // Buscamos la mesa por código para obtener su ID
+      final mesas = await _mesasService.getMesas();
+      final mesaBackend = mesas.firstWhere(
+        (m) {
+          final codigo = m['codigo'] as String?;
+          final numero = codigo != null ? int.tryParse(codigo) : null;
+          return numero == tableNumber;
+        },
+        orElse: () => throw Exception('Mesa con número $tableNumber no encontrada en el backend'),
+      );
+      
+      final mesaId = mesaBackend['id'] as int;
+      
+      // Actualizar estado en BD
+      await _mesasService.cambiarEstadoMesa(mesaId, estadoMesaId);
+      
+      // Recargar mesas desde el backend para asegurar sincronización
+      await loadTables();
+    } catch (e) {
+      print('Error al actualizar estado de mesa: $e');
+      rethrow;
+    }
   }
 
   // Reasignar mesa a otro mesero

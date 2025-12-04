@@ -1214,6 +1214,10 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
       initialDate: _startDate,
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
+      locale: const Locale('es', 'MX'),
+      helpText: 'Seleccionar fecha inicio',
+      cancelText: 'Cancelar',
+      confirmText: 'Aceptar',
     );
     if (date != null) {
       setState(() {
@@ -1228,6 +1232,10 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
       initialDate: _endDate,
       firstDate: _startDate,
       lastDate: DateTime.now(),
+      locale: const Locale('es', 'MX'),
+      helpText: 'Seleccionar fecha fin',
+      cancelText: 'Cancelar',
+      confirmText: 'Aceptar',
     );
     if (date != null) {
       setState(() {

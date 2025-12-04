@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/date_utils.dart' as date_utils;
 
 class PaymentModel {
   final String id;
@@ -61,7 +62,7 @@ class PaymentModel {
       notes: json['notes'],
       tableNumber: json['tableNumber'],
       billId: json['billId'],
-      timestamp: DateTime.parse(json['timestamp']),
+      timestamp: date_utils.AppDateUtils.parseToLocal(json['timestamp']),
       cashierName: json['cashierName'],
       cardMethod: json['cardMethod'],
       terminal: json['terminal'],
@@ -71,7 +72,7 @@ class PaymentModel {
       cardBrand: json['cardBrand'],
       voucherPrinted: json['voucherPrinted'],
       cardPaymentDate: json['cardPaymentDate'] != null
-          ? DateTime.parse(json['cardPaymentDate'])
+          ? date_utils.AppDateUtils.parseToLocal(json['cardPaymentDate'])
           : null,
     );
   }
@@ -154,6 +155,7 @@ class PaymentModel {
 class BillModel {
   final String id;
   final int? tableNumber;
+  final int? ordenId; // ID de la orden en la BD (requerido para pagos)
   final List<BillItem> items;
   final double subtotal;
   final double tax;
@@ -168,11 +170,14 @@ class BillModel {
   final String? waiterNotes; // Notas del mesero
   final bool isPrinted; // Si el ticket ya fue impreso
   final String? printedBy; // Quien imprimió el ticket
+  final DateTime? printedAt; // Fecha y hora de impresión
   final bool requestedByWaiter; // Si fue solicitado por mesero
+  final int splitCount; // Número de personas para dividir la cuenta
 
   BillModel({
     required this.id,
     this.tableNumber,
+    this.ordenId, // ID de la orden en la BD
     required this.items,
     required this.subtotal,
     required this.tax,
@@ -187,13 +192,93 @@ class BillModel {
     this.waiterNotes,
     this.isPrinted = false,
     this.printedBy,
+    this.printedAt,
     this.requestedByWaiter = false,
+    this.splitCount = 1,
   });
+
+  /// Calcula el total real sumando precio * cantidad de cada item
+  /// Esto asegura que siempre se muestre el precio correcto
+  double get calculatedTotal {
+    final totalFromItems = items.fold<double>(
+      0.0,
+      (sum, item) => sum + (item.price * item.quantity),
+    );
+    return totalFromItems - discount + tax;
+  }
+
+  /// Genera un ID de visualización claro y legible para el cajero
+  /// Ejemplos:
+  /// - "BILL-MESA-2-30-31-32" -> "Cuenta agrupada - Mesa 2"
+  /// - "BILL-ORD-30" -> "ORD-000030"
+  String get displayId {
+    // Si el ID contiene múltiples órdenes (formato BILL-MESA-X-Y-Z)
+    if (id.contains('BILL-MESA-') && id.contains('-')) {
+      final parts = id.split('-');
+      if (parts.length >= 4) {
+        final mesaNumero = parts[2];
+        final ordenIdsCount =
+            parts.length - 3; // Número de órdenes después de "BILL-MESA-X"
+
+        if (ordenIdsCount > 1) {
+          // Para múltiples órdenes: mostrar solo el número de órdenes (el badge ya muestra la mesa)
+          return 'Cuenta agrupada ($ordenIdsCount órdenes)';
+        } else if (ordenIdsCount == 1) {
+          // Una sola orden en formato mesa
+          final ordenId = parts[3];
+          return 'ORD-${ordenId.padLeft(6, '0')}';
+        }
+      }
+    }
+
+    // Si es formato BILL-ORD-X
+    if (id.startsWith('BILL-ORD-')) {
+      final ordenId = id.replaceFirst('BILL-ORD-', '');
+      return 'ORD-${ordenId.padLeft(6, '0')}';
+    }
+
+    // Si es formato BILL-TEMP-X (temporal)
+    if (id.startsWith('BILL-TEMP-')) {
+      if (tableNumber != null) {
+        return 'Mesa $tableNumber - Cuenta temporal';
+      }
+      return 'Cuenta temporal';
+    }
+
+    // Por defecto, devolver el ID tal cual
+    return id;
+  }
+
+  /// Extrae los IDs de órdenes del billId para mostrar información detallada
+  List<String> get ordenIdsFromBillId {
+    if (id.contains('BILL-MESA-') && id.contains('-')) {
+      final parts = id.split('-');
+      if (parts.length >= 4) {
+        // Obtener todas las partes después de "BILL-MESA-X"
+        final ordenIds = parts.sublist(3);
+        return ordenIds.map((id) => 'ORD-${id.padLeft(6, '0')}').toList();
+      }
+    }
+
+    if (id.startsWith('BILL-ORD-')) {
+      final ordenId = id.replaceFirst('BILL-ORD-', '');
+      return ['ORD-${ordenId.padLeft(6, '0')}'];
+    }
+
+    return [];
+  }
+
+  // Helper estático para parsear fechas
+  static DateTime _parseDateTime(dynamic fecha) {
+    // Usar AppDateUtils para el parseo correcto de zona horaria
+    return date_utils.AppDateUtils.parseToLocal(fecha);
+  }
 
   factory BillModel.fromJson(Map<String, dynamic> json) {
     return BillModel(
       id: json['id'],
       tableNumber: json['tableNumber'],
+      ordenId: json['ordenId'],
       items: (json['items'] as List)
           .map((item) => BillItem.fromJson(item))
           .toList(),
@@ -202,7 +287,7 @@ class BillModel {
       total: json['total'].toDouble(),
       discount: (json['discount'] as num?)?.toDouble() ?? 0.0,
       status: json['status'],
-      createdAt: DateTime.parse(json['createdAt']),
+      createdAt: _parseDateTime(json['createdAt']),
       customerName: json['customerName'],
       customerPhone: json['customerPhone'],
       isTakeaway: json['isTakeaway'] ?? false,
@@ -210,7 +295,11 @@ class BillModel {
       waiterNotes: json['waiterNotes'],
       isPrinted: json['isPrinted'] ?? false,
       printedBy: json['printedBy'],
+      printedAt: json['printedAt'] != null
+          ? _parseDateTime(json['printedAt'])
+          : null,
       requestedByWaiter: json['requestedByWaiter'] ?? false,
+      splitCount: (json['splitCount'] as num?)?.toInt() ?? 1,
     );
   }
 
@@ -218,6 +307,7 @@ class BillModel {
     return {
       'id': id,
       'tableNumber': tableNumber,
+      'ordenId': ordenId,
       'items': items.map((item) => item.toJson()).toList(),
       'subtotal': subtotal,
       'tax': tax,
@@ -232,13 +322,16 @@ class BillModel {
       'waiterNotes': waiterNotes,
       'isPrinted': isPrinted,
       'printedBy': printedBy,
+      'printedAt': printedAt?.toIso8601String(),
       'requestedByWaiter': requestedByWaiter,
+      'splitCount': splitCount,
     };
   }
 
   BillModel copyWith({
     String? id,
     int? tableNumber,
+    int? ordenId,
     List<BillItem>? items,
     double? subtotal,
     double? tax,
@@ -253,11 +346,14 @@ class BillModel {
     String? waiterNotes,
     bool? isPrinted,
     String? printedBy,
+    DateTime? printedAt,
     bool? requestedByWaiter,
+    int? splitCount,
   }) {
     return BillModel(
       id: id ?? this.id,
       tableNumber: tableNumber ?? this.tableNumber,
+      ordenId: ordenId ?? this.ordenId,
       items: items ?? this.items,
       subtotal: subtotal ?? this.subtotal,
       tax: tax ?? this.tax,
@@ -272,7 +368,9 @@ class BillModel {
       waiterNotes: waiterNotes ?? this.waiterNotes,
       isPrinted: isPrinted ?? this.isPrinted,
       printedBy: printedBy ?? this.printedBy,
+      printedAt: printedAt ?? this.printedAt,
       requestedByWaiter: requestedByWaiter ?? this.requestedByWaiter,
+      splitCount: splitCount ?? this.splitCount,
     );
   }
 }
@@ -304,131 +402,8 @@ class BillItem {
   }
 }
 
-class CashCloseModel {
-  final String id;
-  final DateTime fecha;
-  final String periodo;
-  final String usuario;
-  final double totalNeto;
-  final double efectivo;
-  final double tarjeta;
-  final double propinasTarjeta;
-  final double propinasEfectivo;
-  final int pedidosParaLlevar;
-  final String estado;
-  final double efectivoContado;
-  final double totalTarjeta;
-  final double otrosIngresos;
-  final String? otrosIngresosTexto;
-  final String? notaCajero;
-  final double totalDeclarado;
-  final List<AuditLogEntry> auditLog;
-
-  CashCloseModel({
-    required this.id,
-    required this.fecha,
-    required this.periodo,
-    required this.usuario,
-    required this.totalNeto,
-    required this.efectivo,
-    required this.tarjeta,
-    required this.propinasTarjeta,
-    required this.propinasEfectivo,
-    required this.pedidosParaLlevar,
-    required this.estado,
-    required this.efectivoContado,
-    required this.totalTarjeta,
-    required this.otrosIngresos,
-    this.otrosIngresosTexto,
-    this.notaCajero,
-    required this.totalDeclarado,
-    required this.auditLog,
-  });
-
-  factory CashCloseModel.fromJson(Map<String, dynamic> json) {
-    return CashCloseModel(
-      id: json['id'],
-      fecha: DateTime.parse(json['fecha']),
-      periodo: json['periodo'],
-      usuario: json['usuario'],
-      totalNeto: json['totalNeto'].toDouble(),
-      efectivo: json['efectivo'].toDouble(),
-      tarjeta: json['tarjeta'].toDouble(),
-      propinasTarjeta: json['propinasTarjeta'].toDouble(),
-      propinasEfectivo: json['propinasEfectivo'].toDouble(),
-      pedidosParaLlevar: json['pedidosParaLlevar'],
-      estado: json['estado'],
-      efectivoContado: json['efectivoContado'].toDouble(),
-      totalTarjeta: json['totalTarjeta'].toDouble(),
-      otrosIngresos: json['otrosIngresos'].toDouble(),
-      otrosIngresosTexto: json['otrosIngresosTexto'],
-      notaCajero: json['notaCajero'],
-      totalDeclarado: json['totalDeclarado'].toDouble(),
-      auditLog: (json['auditLog'] as List)
-          .map((entry) => AuditLogEntry.fromJson(entry))
-          .toList(),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'fecha': fecha.toIso8601String(),
-      'periodo': periodo,
-      'usuario': usuario,
-      'totalNeto': totalNeto,
-      'efectivo': efectivo,
-      'tarjeta': tarjeta,
-      'propinasTarjeta': propinasTarjeta,
-      'propinasEfectivo': propinasEfectivo,
-      'pedidosParaLlevar': pedidosParaLlevar,
-      'estado': estado,
-      'efectivoContado': efectivoContado,
-      'totalTarjeta': totalTarjeta,
-      'otrosIngresos': otrosIngresos,
-      'otrosIngresosTexto': otrosIngresosTexto,
-      'notaCajero': notaCajero,
-      'totalDeclarado': totalDeclarado,
-      'auditLog': auditLog.map((entry) => entry.toJson()).toList(),
-    };
-  }
-}
-
-class AuditLogEntry {
-  final String id;
-  final DateTime timestamp;
-  final String action;
-  final String usuario;
-  final String mensaje;
-
-  AuditLogEntry({
-    required this.id,
-    required this.timestamp,
-    required this.action,
-    required this.usuario,
-    required this.mensaje,
-  });
-
-  factory AuditLogEntry.fromJson(Map<String, dynamic> json) {
-    return AuditLogEntry(
-      id: json['id'],
-      timestamp: DateTime.parse(json['timestamp']),
-      action: json['action'],
-      usuario: json['usuario'],
-      mensaje: json['mensaje'],
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'timestamp': timestamp.toIso8601String(),
-      'action': action,
-      'usuario': usuario,
-      'mensaje': mensaje,
-    };
-  }
-}
+// CashCloseModel y AuditLogEntry se han movido a admin_model.dart
+// Importar desde allí: import '../models/admin_model.dart';
 
 // Tipos de pago
 class PaymentType {
@@ -493,26 +468,5 @@ class BillStatus {
   }
 }
 
-// Estados de cierre de caja
-class CashCloseStatus {
-  static const String pending = 'Pendiente verificación';
-  static const String approved = 'Aprobado';
-  static const String rejected = 'Rechazado';
-  static const String clarification = 'Requiere aclaración';
-
-  static String getStatusText(String status) {
-    switch (status) {
-      case pending:
-        return 'Pendiente verificación';
-      case approved:
-        return 'Aprobado';
-      case rejected:
-        return 'Rechazado';
-      case clarification:
-        return 'Requiere aclaración';
-      default:
-        return 'Desconocido';
-    }
-  }
-}
-
+// CashCloseStatus se ha movido a admin_model.dart
+// Importar desde allí: import '../models/admin_model.dart';

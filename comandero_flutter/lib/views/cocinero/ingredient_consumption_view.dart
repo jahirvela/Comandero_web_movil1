@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cocinero_controller.dart';
+import '../../services/inventario_service.dart';
+import '../../services/ordenes_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class IngredientConsumptionView extends StatefulWidget {
   const IngredientConsumptionView({super.key});
@@ -15,6 +18,8 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
   String selectedCategory = 'Todos';
   String searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  List<Map<String, dynamic>> ingredients = [];
+  bool isLoading = true;
 
   final List<String> categories = [
     'Todos',
@@ -25,8 +30,84 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
     'Bebidas',
   ];
 
-  // Datos mock de ingredientes
-  final List<Map<String, dynamic>> ingredients = [
+  @override
+  void initState() {
+    super.initState();
+    _loadIngredientsData();
+  }
+
+  Future<void> _loadIngredientsData() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final inventarioService = InventarioService();
+      final ordenesService = OrdenesService();
+
+      // Obtener items de inventario
+      final items = await inventarioService.getItems();
+
+      // Obtener órdenes del día para calcular consumo
+      final ordenes = await ordenesService.getOrdenes();
+      final hoy = DateTime.now();
+      final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
+
+      final ordenesHoy = ordenes.where((o) {
+        final creadoEn = o['creadoEn'] != null
+            ? date_utils.AppDateUtils.parseToLocal(o['creadoEn'])
+            : null;
+        return creadoEn != null && creadoEn.isAfter(inicioDia);
+      }).toList();
+
+      // Mapear items a formato de ingredientes
+      ingredients = items.map((item) {
+        final nombre = item['nombre'] as String? ?? 'Sin nombre';
+        final categoria = item['categoria'] as String? ?? 'Otros';
+        final cantidadActual =
+            (item['cantidadActual'] as num?)?.toDouble() ?? 0.0;
+        final stockMinimo = (item['stockMinimo'] as num?)?.toDouble() ?? 0.0;
+        final unidad = item['unidad'] as String? ?? 'unidad';
+
+        // Calcular consumo del día (simplificado: basado en órdenes)
+        final consumoHoy = (ordenesHoy.length * 0.5).clamp(0.0, cantidadActual);
+
+        // Determinar estado
+        String status = 'Normal';
+        Color color = AppColors.success;
+
+        if (cantidadActual <= 0) {
+          status = 'Agotado';
+          color = AppColors.error;
+        } else if (cantidadActual < stockMinimo) {
+          status = 'Bajo Stock';
+          color = AppColors.warning;
+        }
+
+        return {
+          'name': nombre,
+          'category': categoria,
+          'currentStock': cantidadActual,
+          'unit': unidad,
+          'minStock': stockMinimo,
+          'consumptionToday': consumoHoy,
+          'lastUpdated': hoy.toString().substring(11, 16),
+          'status': status,
+          'color': color,
+        };
+      }).toList();
+    } catch (e) {
+      print('Error al cargar datos de ingredientes: $e');
+      ingredients = [];
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  // Datos mock de ingredientes (respaldo)
+  final List<Map<String, dynamic>> _mockIngredients = [
     {
       'name': 'Barbacoa de Res',
       'category': 'Carnes',
@@ -158,28 +239,30 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
 
               // Contenido principal
               Expanded(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Barra de búsqueda
-                      _buildSearchBar(isTablet),
-                      const SizedBox(height: 16),
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Barra de búsqueda
+                            _buildSearchBar(isTablet),
+                            const SizedBox(height: 16),
 
-                      // Filtros de categoría
-                      _buildCategoryFilters(isTablet),
-                      const SizedBox(height: 16),
+                            // Filtros de categoría
+                            _buildCategoryFilters(isTablet),
+                            const SizedBox(height: 16),
 
-                      // Estadísticas rápidas
-                      _buildQuickStats(isTablet),
-                      const SizedBox(height: 24),
+                            // Estadísticas rápidas
+                            _buildQuickStats(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Lista de ingredientes
-                      _buildIngredientsList(isTablet),
-                    ],
-                  ),
-                ),
+                            // Lista de ingredientes
+                            _buildIngredientsList(isTablet),
+                          ],
+                        ),
+                      ),
               ),
             ],
           ),

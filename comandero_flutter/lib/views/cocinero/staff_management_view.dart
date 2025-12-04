@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cocinero_controller.dart';
+import '../../services/usuarios_service.dart';
+import '../../services/ordenes_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class StaffManagementView extends StatefulWidget {
   const StaffManagementView({super.key});
@@ -13,8 +16,107 @@ class StaffManagementView extends StatefulWidget {
 class _StaffManagementViewState extends State<StaffManagementView> {
   String selectedShift = 'Todos';
   String selectedStation = 'Todas';
+  List<Map<String, dynamic>> staff = [];
+  bool isLoading = true;
 
-  final List<Map<String, dynamic>> staff = [
+  @override
+  void initState() {
+    super.initState();
+    _loadStaffData();
+  }
+
+  Future<void> _loadStaffData() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final usuariosService = UsuariosService();
+      final ordenesService = OrdenesService();
+
+      // Obtener todos los usuarios
+      final usuarios = await usuariosService.listarUsuarios();
+
+      // Filtrar solo cocineros
+      final cocineros = usuarios
+          .where(
+            (u) => u.roles.contains('cocinero') || u.roles.contains('Cocinero'),
+          )
+          .toList();
+
+      // Obtener órdenes para calcular estadísticas
+      final ordenes = await ordenesService.getOrdenes();
+      final hoy = DateTime.now();
+      final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
+
+      // Calcular órdenes completadas por cocinero (simplificado)
+      final ordenesHoy = ordenes.where((o) {
+        final creadoEn = o['creadoEn'] != null
+            ? date_utils.AppDateUtils.parseToLocal(o['creadoEn'])
+            : null;
+        return creadoEn != null && creadoEn.isAfter(inicioDia);
+      }).toList();
+
+      // Mapear cocineros a formato de staff
+      staff = cocineros.map((cocinero) {
+        // Calcular órdenes completadas (simplificado - contar órdenes del día)
+        final ordersCompleted = cocineros.isNotEmpty
+            ? ordenesHoy.length ~/ cocineros.length
+            : 0;
+
+        // Determinar turno basado en hora actual
+        final hora = hoy.hour;
+        String shift = 'Mañana';
+        String startTime = '08:00';
+        String endTime = '16:00';
+
+        if (hora >= 14 && hora < 22) {
+          shift = 'Tarde';
+          startTime = '14:00';
+          endTime = '22:00';
+        } else if (hora >= 22 || hora < 6) {
+          shift = 'Noche';
+          startTime = '22:00';
+          endTime = '06:00';
+        }
+
+        // Determinar estación basada en rol o asignación (simplificado)
+        final station = 'Estación Cocina'; // Por defecto
+
+        // Calcular eficiencia (simplificado)
+        final efficiency = (85 + (ordersCompleted * 2)).clamp(70, 100);
+
+        return {
+          'id': cocinero.id,
+          'name': cocinero.name,
+          'role': cocinero.roles.contains('cocinero') ? 'Cocinero' : 'Chef',
+          'station': station,
+          'shift': shift,
+          'status': cocinero.isActive ? 'Activo' : 'Inactivo',
+          'startTime': startTime,
+          'endTime': endTime,
+          'ordersCompleted': ordersCompleted,
+          'efficiency': efficiency,
+          'avatar': '👨‍🍳',
+          'phone': cocinero.phone ?? 'N/A',
+          'email': '${cocinero.username}@comandero.com',
+          'experience': 'Experiencia',
+          'specialties': ['Cocina'],
+          'color': AppColors.primary,
+        };
+      }).toList();
+    } catch (e) {
+      print('Error al cargar datos de staff: $e');
+      // Mantener lista vacía si hay error
+      staff = [];
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  final List<Map<String, dynamic>> _mockStaff = [
     {
       'id': 'juan_martinez',
       'name': 'Juan Martínez',
@@ -155,24 +257,26 @@ class _StaffManagementViewState extends State<StaffManagementView> {
 
               // Contenido principal
               Expanded(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Resumen general
-                      _buildGeneralSummary(isTablet),
-                      const SizedBox(height: 24),
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Resumen general
+                            _buildGeneralSummary(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Filtros
-                      _buildFilters(isTablet),
-                      const SizedBox(height: 24),
+                            // Filtros
+                            _buildFilters(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Lista de personal
-                      _buildStaffList(isTablet, isDesktop),
-                    ],
-                  ),
-                ),
+                            // Lista de personal
+                            _buildStaffList(isTablet, isDesktop),
+                          ],
+                        ),
+                      ),
               ),
             ],
           ),
@@ -258,9 +362,10 @@ class _StaffManagementViewState extends State<StaffManagementView> {
       0,
       (sum, person) => sum + (person['ordersCompleted'] as int),
     );
-    final avgEfficiency =
-        staff.fold<double>(0, (sum, person) => sum + person['efficiency']) /
-        staff.length;
+    final avgEfficiency = staff.isEmpty
+        ? 0.0
+        : staff.fold<double>(0, (sum, person) => sum + person['efficiency']) /
+              staff.length;
 
     return Card(
       elevation: 2,
@@ -1049,6 +1154,16 @@ class _StaffManagementViewState extends State<StaffManagementView> {
       final result = await showTimePicker(
         context: context,
         initialTime: initial,
+        helpText: 'Seleccionar hora',
+        cancelText: 'Cancelar',
+        confirmText: 'Aceptar',
+        builder: (context, child) {
+          return Localizations.override(
+            context: context,
+            locale: const Locale('es', 'MX'),
+            child: child!,
+          );
+        },
       );
       if (result != null) {
         setModalState(() {

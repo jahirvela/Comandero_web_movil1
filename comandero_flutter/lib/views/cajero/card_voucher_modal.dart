@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../../controllers/cajero_controller.dart';
+import '../../controllers/auth_controller.dart';
 import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
 
@@ -203,7 +205,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
           ),
           const SizedBox(width: 6),
           Text(
-            widget.controller.formatCurrency(widget.bill.total),
+            widget.controller.formatCurrency(widget.bill.calculatedTotal),
             style: TextStyle(
               color: AppColors.primary,
               fontSize: widget.isTablet ? 16 : 14,
@@ -447,6 +449,10 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
       initialDate: _selectedDateTime,
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now().add(const Duration(days: 1)),
+      locale: const Locale('es', 'MX'),
+      helpText: 'Seleccionar fecha',
+      cancelText: 'Cancelar',
+      confirmText: 'Aceptar',
     );
 
     if (!mounted) return;
@@ -455,6 +461,16 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_selectedDateTime),
+      helpText: 'Seleccionar hora',
+      cancelText: 'Cancelar',
+      confirmText: 'Aceptar',
+      builder: (context, child) {
+        return Localizations.override(
+          context: context,
+          locale: const Locale('es', 'MX'),
+          child: child!,
+        );
+      },
     );
 
     if (!mounted) return;
@@ -471,41 +487,75 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     });
   }
 
-  void _confirmPayment() {
+  void _confirmPayment() async {
     setState(() => _submitted = true);
 
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
 
-    final payment = PaymentModel(
-      id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
-      type: PaymentType.card,
-      totalAmount: widget.bill.total,
-      tableNumber: widget.bill.tableNumber,
-      billId: widget.bill.id,
-      timestamp: DateTime.now(),
-      cashierName: 'Cajero', // TODO: Obtener del AuthController
-      cardMethod: widget.cardMethod,
-      terminal: widget.terminal,
-      transactionId: _transactionIdController.text.trim(),
-      authorizationCode: _authorizationCodeController.text.trim().isNotEmpty
-          ? _authorizationCodeController.text.trim()
-          : null,
-      last4Digits: _last4DigitsController.text.trim().isNotEmpty
-          ? _last4DigitsController.text.trim()
-          : null,
-      voucherPrinted: _voucherPrinted,
-      cardPaymentDate: _selectedDateTime,
-      notes: _notesController.text.trim().isNotEmpty
-          ? _notesController.text.trim()
-          : null,
+    // Mostrar indicador de carga
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
     );
 
-    widget.controller.processPayment(payment);
-    Navigator.of(context).pop();
+    try {
+      final payment = PaymentModel(
+        id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
+        type: PaymentType.card,
+        totalAmount: widget.bill.calculatedTotal,
+        tableNumber: widget.bill.tableNumber,
+        billId: widget.bill.id,
+        timestamp: DateTime.now(),
+        cashierName: Provider.of<AuthController>(context, listen: false).userName.isNotEmpty
+            ? Provider.of<AuthController>(context, listen: false).userName
+            : 'Cajero',
+        cardMethod: widget.cardMethod,
+        terminal: widget.terminal,
+        transactionId: _transactionIdController.text.trim(),
+        authorizationCode: _authorizationCodeController.text.trim().isNotEmpty
+            ? _authorizationCodeController.text.trim()
+            : null,
+        last4Digits: _last4DigitsController.text.trim().isNotEmpty
+            ? _last4DigitsController.text.trim()
+            : null,
+        voucherPrinted: _voucherPrinted,
+        cardPaymentDate: _selectedDateTime,
+        notes: _notesController.text.trim().isNotEmpty
+            ? _notesController.text.trim()
+            : null,
+      );
 
-    _showSuccessModal(payment);
+      await widget.controller.processPayment(payment);
+      
+      // Cerrar diálogo de carga
+      if (context.mounted) Navigator.of(context).pop();
+      
+      // Cerrar diálogo de pago
+      if (context.mounted) Navigator.of(context).pop();
+
+      // Mostrar modal de éxito
+      if (context.mounted) {
+        _showSuccessModal(payment);
+      }
+    } catch (e) {
+      // Cerrar diálogo de carga
+      if (context.mounted) Navigator.of(context).pop();
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al procesar pago: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   void _showSuccessModal(PaymentModel payment) {

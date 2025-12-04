@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../models/payment_model.dart';
 import '../../controllers/cajero_controller.dart';
+import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
 
 /// Modal para confirmar cobro en efectivo
@@ -52,7 +54,8 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
 
   double get _cashReceived => double.tryParse(_cashReceivedController.text) ?? 0.0;
   double get _tipAmount => double.tryParse(_tipAmountController.text) ?? 0.0;
-  double get _totalAmount => widget.bill.total;
+  // Usar el total calculado desde los items para asegurar que sea correcto
+  double get _totalAmount => widget.bill.calculatedTotal;
   
   // Cambio = efectivo recibido - total (sin restar propina)
   double get _change => _cashReceived - _totalAmount;
@@ -306,30 +309,63 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
     );
   }
 
-  void _confirmPayment() {
-    final payment = PaymentModel(
-      id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
-      type: PaymentType.cash,
-      totalAmount: _totalAmount,
-      cashReceived: _cashReceived,
-      tipAmount: _tipAmount > 0 ? _tipAmount : null,
-      tipDelivered: _tipDelivered,
-      cashApplied: _cashApplied,
-      change: _change,
-      notes: _notesController.text.trim().isEmpty
-          ? null
-          : _notesController.text.trim(),
-      tableNumber: widget.bill.tableNumber,
-      billId: widget.bill.id,
-      timestamp: DateTime.now(),
-      cashierName: 'Cajero', // TODO: Obtener del AuthController
+  void _confirmPayment() async {
+    // Mostrar indicador de carga
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
     );
 
-    widget.controller.processPayment(payment);
-    Navigator.of(context).pop();
-    
-    // Mostrar modal de éxito
-    _showSuccessModal(_tipAmount);
+    try {
+      final payment = PaymentModel(
+        id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
+        type: PaymentType.cash,
+        totalAmount: _totalAmount,
+        cashReceived: _cashReceived,
+        tipAmount: _tipAmount > 0 ? _tipAmount : null,
+        tipDelivered: _tipDelivered,
+        cashApplied: _cashApplied,
+        change: _change,
+        notes: _notesController.text.trim().isEmpty
+            ? null
+            : _notesController.text.trim(),
+        tableNumber: widget.bill.tableNumber,
+        billId: widget.bill.id,
+        timestamp: DateTime.now(),
+        cashierName: Provider.of<AuthController>(context, listen: false).userName.isNotEmpty
+            ? Provider.of<AuthController>(context, listen: false).userName
+            : 'Cajero',
+      );
+
+      await widget.controller.processPayment(payment);
+      
+      // Cerrar diálogo de carga
+      if (context.mounted) Navigator.of(context).pop();
+      
+      // Cerrar diálogo de pago
+      if (context.mounted) Navigator.of(context).pop();
+      
+      // Mostrar modal de éxito
+      if (context.mounted) {
+        _showSuccessModal(_tipAmount);
+      }
+    } catch (e) {
+      // Cerrar diálogo de carga
+      if (context.mounted) Navigator.of(context).pop();
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al procesar pago: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   void _showSuccessModal(double tipAmount) {

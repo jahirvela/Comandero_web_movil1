@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/date_utils.dart' as date_utils;
 
 class AdminUser {
   final String id;
@@ -34,9 +35,9 @@ class AdminUser {
       phone: json['phone'],
       roles: List<String>.from(json['roles']),
       isActive: json['isActive'],
-      createdAt: DateTime.parse(json['createdAt']),
+      createdAt: date_utils.AppDateUtils.parseToLocal(json['createdAt']),
       lastLogin: json['lastLogin'] != null
-          ? DateTime.parse(json['lastLogin'])
+          ? date_utils.AppDateUtils.parseToLocal(json['lastLogin'])
           : null,
       createdBy: json['createdBy'],
     );
@@ -127,7 +128,7 @@ class InventoryItem {
     return InventoryItem(
       id: json['id'],
       name: json['name'],
-      category: json['category'],
+      category: (json['category'] ?? json['categoria'] ?? 'Otros').toString(),
       currentStock: json['currentStock'].toDouble(),
       minStock: json['minStock'].toDouble(),
       maxStock: json['maxStock'].toDouble(),
@@ -139,10 +140,10 @@ class InventoryItem {
       unitPrice: json['unitPrice']?.toDouble() ?? json['price'].toDouble(),
       supplier: json['supplier'],
       lastRestock: json['lastRestock'] != null
-          ? DateTime.parse(json['lastRestock'])
+          ? date_utils.AppDateUtils.parseToLocal(json['lastRestock'])
           : null,
       expiryDate: json['expiryDate'] != null
-          ? DateTime.parse(json['expiryDate'])
+          ? date_utils.AppDateUtils.parseToLocal(json['expiryDate'])
           : null,
       status: json['status'],
       notes: json['notes'],
@@ -247,7 +248,7 @@ class SalesReport {
   factory SalesReport.fromJson(Map<String, dynamic> json) {
     return SalesReport(
       id: json['id'],
-      date: DateTime.parse(json['date']),
+      date: date_utils.AppDateUtils.parseToLocal(json['date']),
       totalSales: json['totalSales'].toDouble(),
       cashSales: json['cashSales'].toDouble(),
       cardSales: json['cardSales'].toDouble(),
@@ -420,6 +421,8 @@ class MenuItem {
   });
 
   factory MenuItem.fromJson(Map<String, dynamic> json) {
+    final ingredientesData =
+        json['recipeIngredients'] ?? json['ingredientes'];
     return MenuItem(
       id: json['id'],
       name: json['name'],
@@ -432,9 +435,9 @@ class MenuItem {
       allergens: json['allergens'] != null ? List<String>.from(json['allergens']) : [],
       preparationTime: json['preparationTime'] ?? 0,
       notes: json['notes'],
-      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
+      createdAt: json['createdAt'] != null ? date_utils.AppDateUtils.parseToLocal(json['createdAt']) : DateTime.now(),
       updatedAt: json['updatedAt'] != null
-          ? DateTime.parse(json['updatedAt'])
+          ? date_utils.AppDateUtils.parseToLocal(json['updatedAt'])
           : null,
       hasSizes: json['hasSizes'] ?? false,
       sizes: json['sizes'] != null
@@ -444,8 +447,10 @@ class MenuItem {
       isSpicy: json['isSpicy'] ?? false,
       allowSauces: json['allowSauces'] ?? false,
       allowExtraIngredients: json['allowExtraIngredients'] ?? false,
-      recipeIngredients: json['recipeIngredients'] != null
-          ? (json['recipeIngredients'] as List).map((r) => RecipeIngredient.fromJson(r)).toList()
+      recipeIngredients: ingredientesData != null
+          ? (ingredientesData as List)
+              .map((r) => RecipeIngredient.fromJson(r as Map<String, dynamic>))
+              .toList()
           : null,
     );
   }
@@ -534,8 +539,8 @@ class MenuSize {
 
   factory MenuSize.fromJson(Map<String, dynamic> json) {
     return MenuSize(
-      name: json['name'],
-      price: json['price'].toDouble(),
+      name: (json['name'] ?? json['nombre'] ?? json['etiqueta'] ?? '').toString(),
+      price: (json['price'] ?? json['precio'] ?? 0).toDouble(),
     );
   }
 
@@ -555,6 +560,8 @@ class RecipeIngredient {
   final double quantityPerPortion;
   final bool autoDeduct; // Descontar automáticamente del inventario
   final bool isCustom; // Si es ingrediente personalizado o sugerido
+  final String? category;
+  final String? inventoryItemId;
 
   RecipeIngredient({
     required this.id,
@@ -563,16 +570,50 @@ class RecipeIngredient {
     required this.quantityPerPortion,
     this.autoDeduct = true,
     this.isCustom = false,
+    this.category,
+    this.inventoryItemId,
   });
 
   factory RecipeIngredient.fromJson(Map<String, dynamic> json) {
+    double _parseDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    bool _parseBool(dynamic value, {bool fallback = false}) {
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      if (value is String) {
+        final normalized = value.toLowerCase();
+        return normalized == 'true' || normalized == '1';
+      }
+      return fallback;
+    }
+
     return RecipeIngredient(
-      id: json['id'],
-      name: json['name'],
-      unit: json['unit'],
-      quantityPerPortion: json['quantityPerPortion'].toDouble(),
-      autoDeduct: json['autoDeduct'] ?? true,
-      isCustom: json['isCustom'] ?? false,
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? json['nombre'] ?? '').toString(),
+      unit: (json['unit'] ?? json['unidad'] ?? '').toString(),
+      quantityPerPortion: _parseDouble(
+        json['quantityPerPortion'] ??
+            json['cantidadPorPorcion'] ??
+            json['cantidad_por_porcion'],
+      ),
+      autoDeduct: _parseBool(
+        json['autoDeduct'] ??
+            json['descontarAutomaticamente'] ??
+            json['descontar_automaticamente'],
+        fallback: true,
+      ),
+      isCustom: _parseBool(
+        json['isCustom'] ?? json['esPersonalizado'] ?? json['es_personalizado'],
+      ),
+      category: (json['category'] ?? json['categoria'])?.toString(),
+      inventoryItemId: (json['inventoryItemId'] ??
+              json['inventarioItemId'] ??
+              json['inventario_item_id'])
+          ?.toString(),
     );
   }
 
@@ -584,6 +625,8 @@ class RecipeIngredient {
       'quantityPerPortion': quantityPerPortion,
       'autoDeduct': autoDeduct,
       'isCustom': isCustom,
+      'category': category,
+      'inventoryItemId': inventoryItemId,
     };
   }
 }
@@ -623,7 +666,7 @@ class TableModel {
       waiter: json['waiter'],
       currentTotal: json['currentTotal']?.toDouble(),
       lastOrderTime: json['lastOrderTime'] != null
-          ? DateTime.parse(json['lastOrderTime'])
+          ? date_utils.AppDateUtils.parseToLocal(json['lastOrderTime'])
           : null,
       notes: json['notes'],
       section: json['section'],
@@ -790,6 +833,128 @@ class UserRole {
   }
 }
 
+// Modelo de Permiso
+class Permiso {
+  final int id;
+  final String nombre;
+  final String? descripcion;
+
+  Permiso({
+    required this.id,
+    required this.nombre,
+    this.descripcion,
+  });
+
+  factory Permiso.fromJson(Map<String, dynamic> json) {
+    return Permiso(
+      id: json['id'] as int,
+      nombre: json['nombre'] as String,
+      descripcion: json['descripcion'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'nombre': nombre,
+      'descripcion': descripcion,
+    };
+  }
+
+  Permiso copyWith({
+    int? id,
+    String? nombre,
+    String? descripcion,
+  }) {
+    return Permiso(
+      id: id ?? this.id,
+      nombre: nombre ?? this.nombre,
+      descripcion: descripcion ?? this.descripcion,
+    );
+  }
+}
+
+// Modelo de Role
+class Role {
+  final int id;
+  final String nombre;
+  final String? descripcion;
+  final List<Permiso> permisos;
+  final DateTime creadoEn;
+  final DateTime actualizadoEn;
+
+  Role({
+    required this.id,
+    required this.nombre,
+    this.descripcion,
+    required this.permisos,
+    required this.creadoEn,
+    required this.actualizadoEn,
+  });
+
+  factory Role.fromJson(Map<String, dynamic> json) {
+    return Role(
+      id: json['id'] as int,
+      nombre: json['nombre'] as String,
+      descripcion: json['descripcion'] as String?,
+      permisos: (json['permisos'] as List<dynamic>?)
+              ?.map((p) {
+                if (p is Map<String, dynamic>) {
+                  return Permiso.fromJson(p);
+                } else if (p is Map) {
+                  return Permiso.fromJson(Map<String, dynamic>.from(p));
+                } else {
+                  // Si viene como objeto simple con id y nombre
+                  return Permiso(
+                    id: p['id'] as int? ?? 0,
+                    nombre: p['nombre'] as String? ?? '',
+                    descripcion: p['descripcion'] as String?,
+                  );
+                }
+              })
+              .toList() ??
+          [],
+      creadoEn: json['creadoEn'] != null
+          ? date_utils.AppDateUtils.parseToLocal(json['creadoEn'])
+          : DateTime.now(),
+      actualizadoEn: json['actualizadoEn'] != null
+          ? date_utils.AppDateUtils.parseToLocal(json['actualizadoEn'])
+          : DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'nombre': nombre,
+      'descripcion': descripcion,
+      'permisos': permisos.map((p) => p.toJson()).toList(),
+      'creadoEn': creadoEn.toIso8601String(),
+      'actualizadoEn': actualizadoEn.toIso8601String(),
+    };
+  }
+
+  Role copyWith({
+    int? id,
+    String? nombre,
+    String? descripcion,
+    List<Permiso>? permisos,
+    DateTime? creadoEn,
+    DateTime? actualizadoEn,
+  }) {
+    return Role(
+      id: id ?? this.id,
+      nombre: nombre ?? this.nombre,
+      descripcion: descripcion ?? this.descripcion,
+      permisos: permisos ?? this.permisos,
+      creadoEn: creadoEn ?? this.creadoEn,
+      actualizadoEn: actualizadoEn ?? this.actualizadoEn,
+    );
+  }
+
+  List<int> get permisosIds => permisos.map((p) => p.id).toList();
+}
+
 // Estados de mesa
 class TableStatus {
   static const String libre = 'libre';
@@ -926,7 +1091,11 @@ class CashCloseModel {
   final double totalTarjeta;
   final double otrosIngresos;
   final double totalDeclarado;
+  final String? otrosIngresosTexto;
+  final String? notaCajero;
   final List<AuditLogEntry> auditLog;
+  final int? cierreId; // ID real del cierre en la BD (opcional, solo para manuales)
+  final String? comentarioRevision; // Comentario del administrador al revisar (para aclaraciones/rechazos)
 
   CashCloseModel({
     required this.id,
@@ -944,13 +1113,23 @@ class CashCloseModel {
     required this.totalTarjeta,
     required this.otrosIngresos,
     required this.totalDeclarado,
+    this.otrosIngresosTexto,
+    this.notaCajero,
     required this.auditLog,
+    this.cierreId,
+    this.comentarioRevision,
   });
+
+  // Helper estático para parsear fechas
+  static DateTime _parseDateTime(dynamic fecha) {
+    // Usar AppDateUtils para el parseo correcto de zona horaria
+    return date_utils.AppDateUtils.parseToLocal(fecha);
+  }
 
   factory CashCloseModel.fromJson(Map<String, dynamic> json) {
     return CashCloseModel(
       id: json['id'],
-      fecha: DateTime.parse(json['fecha']),
+      fecha: _parseDateTime(json['fecha']),
       periodo: json['periodo'],
       usuario: json['usuario'],
       totalNeto: json['totalNeto'].toDouble(),
@@ -964,9 +1143,13 @@ class CashCloseModel {
       totalTarjeta: json['totalTarjeta'].toDouble(),
       otrosIngresos: json['otrosIngresos'].toDouble(),
       totalDeclarado: json['totalDeclarado'].toDouble(),
-      auditLog: (json['auditLog'] as List)
-          .map((entry) => AuditLogEntry.fromJson(entry))
-          .toList(),
+      otrosIngresosTexto: json['otrosIngresosTexto'] as String?,
+      notaCajero: json['notaCajero'] as String?,
+      auditLog: (json['auditLog'] as List?)
+          ?.map((entry) => AuditLogEntry.fromJson(entry))
+          .toList() ?? [],
+      cierreId: json['cierreId'] as int?,
+      comentarioRevision: json['comentarioRevision'] as String?,
     );
   }
 
@@ -987,7 +1170,11 @@ class CashCloseModel {
       'totalTarjeta': totalTarjeta,
       'otrosIngresos': otrosIngresos,
       'totalDeclarado': totalDeclarado,
+      'otrosIngresosTexto': otrosIngresosTexto,
+      'notaCajero': notaCajero,
       'auditLog': auditLog.map((entry) => entry.toJson()).toList(),
+      'cierreId': cierreId,
+      'comentarioRevision': comentarioRevision,
     };
   }
 
@@ -1007,7 +1194,11 @@ class CashCloseModel {
     double? totalTarjeta,
     double? otrosIngresos,
     double? totalDeclarado,
+    String? otrosIngresosTexto,
+    String? notaCajero,
     List<AuditLogEntry>? auditLog,
+    int? cierreId,
+    String? comentarioRevision,
   }) {
     return CashCloseModel(
       id: id ?? this.id,
@@ -1025,7 +1216,11 @@ class CashCloseModel {
       totalTarjeta: totalTarjeta ?? this.totalTarjeta,
       otrosIngresos: otrosIngresos ?? this.otrosIngresos,
       totalDeclarado: totalDeclarado ?? this.totalDeclarado,
+      otrosIngresosTexto: otrosIngresosTexto ?? this.otrosIngresosTexto,
+      notaCajero: notaCajero ?? this.notaCajero,
       auditLog: auditLog ?? this.auditLog,
+      cierreId: cierreId ?? this.cierreId,
+      comentarioRevision: comentarioRevision ?? this.comentarioRevision,
     );
   }
 }
@@ -1049,7 +1244,7 @@ class AuditLogEntry {
   factory AuditLogEntry.fromJson(Map<String, dynamic> json) {
     return AuditLogEntry(
       id: json['id'],
-      timestamp: DateTime.parse(json['timestamp']),
+      timestamp: date_utils.AppDateUtils.parseToLocal(json['timestamp']),
       action: json['action'],
       usuario: json['usuario'],
       mensaje: json['mensaje'],

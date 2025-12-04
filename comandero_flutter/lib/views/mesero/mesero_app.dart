@@ -10,9 +10,26 @@ import 'floor_view.dart';
 import 'table_view.dart';
 import 'menu_view.dart';
 import 'cart_view.dart';
+import 'takeaway_view.dart';
 
 class MeseroApp extends StatelessWidget {
   const MeseroApp({super.key});
+
+  // Formatear tiempo transcurrido para notificaciones
+  String _formatTimeAgo(DateTime timestamp) {
+    final now = DateTime.now();
+    final difference = now.difference(timestamp);
+    
+    if (difference.inMinutes < 1) {
+      return 'Hace unos segundos';
+    } else if (difference.inMinutes < 60) {
+      return 'Hace ${difference.inMinutes} min';
+    } else if (difference.inHours < 24) {
+      return 'Hace ${difference.inHours} h';
+    } else {
+      return 'Hace ${difference.inDays} días';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -95,26 +112,55 @@ class MeseroApp extends StatelessWidget {
         ],
       ),
       actions: [
-        // Botón de notificaciones
-        Stack(
-          children: [
-            IconButton(
-              onPressed: () {
-                // Mostrar notificaciones pendientes
-                final pendingNotifications =
-                    meseroController.pendingNotifications;
-                if (pendingNotifications.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('No hay notificaciones pendientes'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                } else {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Notificaciones'),
+        // Botón de notificaciones - Mejorado para mejor respuesta táctil
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              // Mostrar notificaciones pendientes
+              final pendingNotifications =
+                  meseroController.pendingNotifications;
+              if (pendingNotifications.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('No hay notificaciones pendientes'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              } else {
+                showDialog(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                      title: Row(
+                        children: [
+                          Icon(
+                            Icons.notifications_active,
+                            color: AppColors.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text('Notificaciones'),
+                          const Spacer(),
+                          if (pendingNotifications.length > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.error,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${pendingNotifications.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                       content: SizedBox(
                         width: double.maxFinite,
                         child: ListView.builder(
@@ -122,20 +168,58 @@ class MeseroApp extends StatelessWidget {
                           itemCount: pendingNotifications.length,
                           itemBuilder: (context, index) {
                             final notification = pendingNotifications[index];
-                            return ListTile(
-                              leading: Icon(
-                                Icons.notifications_active,
-                                color: AppColors.primary,
-                              ),
-                              title: Text(
-                                notification['title'] ?? 'Notificación',
-                              ),
-                              subtitle: Text(notification['message'] ?? ''),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () {
-                                  meseroController.removeNotification(index);
-                                },
+                            final timestamp = notification['timestamp'] as DateTime?;
+                            final timeAgo = timestamp != null
+                                ? _formatTimeAgo(timestamp)
+                                : 'Ahora';
+                            
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              elevation: 2,
+                              child: ListTile(
+                                leading: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.success.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    Icons.restaurant_menu,
+                                    color: AppColors.success,
+                                    size: 20,
+                                  ),
+                                ),
+                                title: Text(
+                                  notification['title'] ?? 'Notificación',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const SizedBox(height: 4),
+                                    Text(notification['message'] ?? ''),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      timeAgo,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () {
+                                    meseroController.removeNotification(index);
+                                    // Si no quedan notificaciones, cerrar el diálogo
+                                    if (meseroController.pendingNotifications.isEmpty) {
+                                      Navigator.of(dialogContext).pop();
+                                    }
+                                  },
+                                ),
                               ),
                             );
                           },
@@ -143,7 +227,14 @@ class MeseroApp extends StatelessWidget {
                       ),
                       actions: [
                         TextButton(
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () {
+                            meseroController.clearAllNotifications();
+                            Navigator.of(dialogContext).pop();
+                          },
+                          child: const Text('Limpiar todas'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
                           child: const Text('Cerrar'),
                         ),
                       ],
@@ -151,78 +242,101 @@ class MeseroApp extends StatelessWidget {
                   );
                 }
               },
-              icon: Icon(
-                Icons.notifications_outlined,
-                size: isTablet ? 28.0 : 24.0,
+            borderRadius: BorderRadius.circular(24),
+            splashColor: Colors.white24,
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    Icons.notifications_outlined,
+                    size: isTablet ? 28.0 : 24.0,
+                    color: Colors.white,
+                  ),
+                  // Badge de notificaciones - IgnorePointer para no bloquear toques
+                  if (meseroController.pendingNotifications.isNotEmpty)
+                    Positioned(
+                      right: -6,
+                      top: -6,
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.primary, width: 2),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 20,
+                            minHeight: 20,
+                          ),
+                          child: Text(
+                            '${meseroController.pendingNotifications.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
-            // Badge de notificaciones
-            if (meseroController.pendingNotifications.isNotEmpty)
-              Positioned(
-                right: 8,
-                top: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: AppColors.error,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  constraints: const BoxConstraints(
-                    minWidth: 20,
-                    minHeight: 20,
-                  ),
-                  child: Text(
-                    '${meseroController.pendingNotifications.length}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-          ],
+          ),
         ),
 
-        // Botón de carrito
-        Stack(
-          children: [
-            IconButton(
-              onPressed: () {
-                meseroController.setCurrentView('cart');
-              },
-              icon: Icon(
-                Icons.shopping_cart_outlined,
-                size: isTablet ? 28.0 : 24.0,
+        // Botón de carrito - Mejorado para mejor respuesta táctil
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              meseroController.setCurrentView('cart');
+            },
+            borderRadius: BorderRadius.circular(24),
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    Icons.shopping_cart_outlined,
+                    size: isTablet ? 28.0 : 24.0,
+                  ),
+                  if (totalCartItems > 0)
+                    Positioned(
+                      right: -6,
+                      top: -6,
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.warning,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 20,
+                            minHeight: 20,
+                          ),
+                          child: Text(
+                            '$totalCartItems',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
-            if (totalCartItems > 0)
-              Positioned(
-                right: 8,
-                top: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  constraints: const BoxConstraints(
-                    minWidth: 20,
-                    minHeight: 20,
-                  ),
-                  child: Text(
-                    '$totalCartItems',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-          ],
+          ),
         ),
 
         // Botón de logout
@@ -255,6 +369,8 @@ class MeseroApp extends StatelessWidget {
             return const FloorView();
           case 'table':
             return const TableView();
+          case 'takeaway':
+            return const TakeawayView();
           case 'menu':
             return const MenuView();
           case 'cart':

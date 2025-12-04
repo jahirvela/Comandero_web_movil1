@@ -1,0 +1,22 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000020
+Fecha: 2025-11-26T20:38:13.000Z
+Mesa: 9
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  7  Taco de Barbacoa            175.00
+------------------------------------------
+Subtotal:                    $  175.00
+E1TOTAL:                      $  175.00
+E0==========================================
+a1
+k4k10ORD-000020
+ORD-000020
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

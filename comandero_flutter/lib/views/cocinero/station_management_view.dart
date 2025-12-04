@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cocinero_controller.dart';
+import '../../services/categorias_service.dart';
+import '../../services/ordenes_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class StationManagementView extends StatefulWidget {
   const StationManagementView({super.key});
@@ -12,8 +15,98 @@ class StationManagementView extends StatefulWidget {
 
 class _StationManagementViewState extends State<StationManagementView> {
   String selectedStation = 'Todas';
+  List<Map<String, dynamic>> stations = [];
+  bool isLoading = true;
 
-  final List<Map<String, dynamic>> stations = [
+  @override
+  void initState() {
+    super.initState();
+    _loadStationsData();
+  }
+
+  Future<void> _loadStationsData() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final categoriasService = CategoriasService();
+      final ordenesService = OrdenesService();
+
+      // Obtener categorías (estaciones)
+      final categorias = await categoriasService.getCategorias();
+
+      // Obtener órdenes para calcular estadísticas
+      final ordenes = await ordenesService.getOrdenes();
+      final hoy = DateTime.now();
+      final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
+
+      // Filtrar órdenes del día
+      final ordenesHoy = ordenes.where((o) {
+        final creadoEn = o['creadoEn'] != null
+            ? date_utils.AppDateUtils.parseToLocal(o['creadoEn'])
+            : null;
+        return creadoEn != null && creadoEn.isAfter(inicioDia);
+      }).toList();
+
+      // Mapear categorías a estaciones
+      stations = categorias.map((categoria) {
+        final categoriaId = categoria['id'] as int?;
+        final categoriaNombre = categoria['nombre'] as String? ?? 'Sin nombre';
+
+        // Contar órdenes por categoría (simplificado)
+        final currentOrders = categorias.isNotEmpty
+            ? ordenesHoy.length ~/ categorias.length
+            : 0;
+        final pendingOrders = currentOrders;
+        final completedOrders = ordenesHoy.length;
+
+        // Determinar icono según categoría
+        IconData icon = Icons.restaurant;
+        Color color = AppColors.primary;
+
+        if (categoriaNombre.toLowerCase().contains('bebida')) {
+          icon = Icons.local_drink;
+          color = AppColors.success;
+        } else if (categoriaNombre.toLowerCase().contains('consom') ||
+            categoriaNombre.toLowerCase().contains('caldo')) {
+          icon = Icons.soup_kitchen;
+          color = AppColors.info;
+        } else if (categoriaNombre.toLowerCase().contains('carne')) {
+          icon = Icons.local_fire_department;
+          color = AppColors.warning;
+        }
+
+        // Calcular tiempo estimado
+        final estimatedTime = (currentOrders * 5).clamp(5, 30);
+
+        return {
+          'id':
+              categoriaId?.toString() ??
+              categoriaNombre.toLowerCase().replaceAll(' ', '_'),
+          'name': 'Estación $categoriaNombre',
+          'icon': icon,
+          'status': 'Activa',
+          'currentOrders': currentOrders,
+          'pendingOrders': pendingOrders,
+          'completedOrders': completedOrders,
+          'estimatedTime': '$estimatedTime min',
+          'color': color,
+          'staff': [],
+          'equipment': [],
+        };
+      }).toList();
+    } catch (e) {
+      print('Error al cargar datos de estaciones: $e');
+      stations = [];
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  final List<Map<String, dynamic>> _mockStations = [
     {
       'id': 'tacos',
       'name': 'Estación Tacos',
@@ -84,28 +177,30 @@ class _StationManagementViewState extends State<StationManagementView> {
 
               // Contenido principal
               Expanded(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Resumen general
-                      _buildGeneralSummary(isTablet),
-                      const SizedBox(height: 24),
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Resumen general
+                            _buildGeneralSummary(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Selector de estación
-                      _buildStationSelector(isTablet),
-                      const SizedBox(height: 24),
+                            // Selector de estación
+                            _buildStationSelector(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Grid de estaciones
-                      _buildStationsGrid(isTablet, isDesktop),
-                      const SizedBox(height: 24),
+                            // Grid de estaciones
+                            _buildStationsGrid(isTablet, isDesktop),
+                            const SizedBox(height: 24),
 
-                      // Estadísticas detalladas
-                      _buildDetailedStats(isTablet),
-                    ],
-                  ),
-                ),
+                            // Estadísticas detalladas
+                            _buildDetailedStats(isTablet),
+                          ],
+                        ),
+                      ),
               ),
             ],
           ),

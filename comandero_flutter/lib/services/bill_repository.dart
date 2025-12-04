@@ -1,12 +1,17 @@
 import 'package:flutter/foundation.dart';
-
 import '../models/payment_model.dart';
+import '../services/ordenes_service.dart';
+import '../utils/date_utils.dart' as date_utils;
 
-/// Repositorio en memoria para compartir las cuentas abiertas entre Mesero y
-/// Cajero. Posteriormente se conectará con backend/base de datos.
+/// Repositorio para compartir las cuentas abiertas entre Mesero y Cajero.
+/// Ahora carga órdenes pendientes desde el backend y las convierte en bills.
 class BillRepository extends ChangeNotifier {
+  final OrdenesService _ordenesService = OrdenesService();
+
   BillRepository() {
-    _seedSampleBills();
+    // Cargar bills desde el backend de forma asíncrona
+    // No esperar aquí para no bloquear la inicialización
+    loadBills();
   }
 
   final List<BillModel> _bills = [];
@@ -16,9 +21,20 @@ class BillRepository extends ChangeNotifier {
   List<BillModel> get pendingBills =>
       _bills.where((bill) => bill.status == BillStatus.pending).toList();
 
+  BillModel? getBill(String billId) {
+    try {
+      return _bills.firstWhere((bill) => bill.id == billId);
+    } catch (e) {
+      return null;
+    }
+  }
+
   void addBill(BillModel bill) {
-    _bills.insert(0, bill);
-    notifyListeners();
+    // Verificar que no exista ya
+    if (!_bills.any((b) => b.id == bill.id)) {
+      _bills.insert(0, bill);
+      notifyListeners();
+    }
   }
 
   void updateBill(String billId, BillModel Function(BillModel) updater) {
@@ -39,96 +55,121 @@ class BillRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _seedSampleBills() {
-    _bills.addAll([
-      BillModel(
-        id: 'BILL-001',
-        tableNumber: 5,
-        items: [
-          BillItem(
-            name: 'Taco de Barbacoa',
-            quantity: 3,
-            price: 22.0,
-            total: 66.0,
-          ),
-          BillItem(
-            name: 'Consomé Grande',
-            quantity: 1,
-            price: 35.0,
-            total: 35.0,
-          ),
-          BillItem(
-            name: 'Agua de Horchata',
-            quantity: 2,
-            price: 18.0,
-            total: 36.0,
-          ),
-        ],
-        subtotal: 137.0,
-        tax: 0.0,
-        discount: 0.0,
-        total: 137.0,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 240)),
-        waiterName: 'Mesero',
-      ),
-      BillModel(
-        id: 'BILL-002',
-        tableNumber: 3,
-        items: [
-          BillItem(
-            name: 'Mix Barbacoa',
-            quantity: 1,
-            price: 95.0,
-            total: 95.0,
-          ),
-          BillItem(
-            name: 'Taco de Carnitas',
-            quantity: 2,
-            price: 22.0,
-            total: 44.0,
-          ),
-        ],
-        subtotal: 139.0,
-        tax: 0.0,
-        discount: 6.95,
-        total: 132.05,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 260)),
-        waiterName: 'Mesero',
-        waiterNotes: 'Separar cuenta para dos personas',
-        isPrinted: true,
-        printedBy: 'Ana Rodríguez',
-        requestedByWaiter: true,
-      ),
-      BillModel(
-        id: 'BILL-003',
-        items: [
-          BillItem(
-            name: 'Quesadilla de Barbacoa',
-            quantity: 2,
-            price: 40.0,
-            total: 80.0,
-          ),
-          BillItem(
-            name: 'Refresco',
-            quantity: 2,
-            price: 12.0,
-            total: 24.0,
-          ),
-        ],
-        subtotal: 104.0,
-        tax: 0.0,
-        discount: 0.0,
-        total: 104.0,
-        status: BillStatus.pending,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 180)),
-        isTakeaway: true,
-        customerName: 'Jahir',
-        customerPhone: '55 1234 5678',
-        waiterName: 'Mesero',
-      ),
-    ]);
+  // Cargar bills desde el backend (órdenes pendientes de pago)
+  Future<void> loadBills() async {
+    try {
+      // IMPORTANTE: NO limpiar bills existentes - preservar los que fueron recibidos por Socket.IO
+      // Solo agregar nuevas bills desde órdenes activas que aún no tienen bill
+
+      // Obtener órdenes del backend
+      final ordenes = await _ordenesService.getOrdenes();
+
+      // Filtrar órdenes que no estén pagadas ni canceladas
+      // Convertir órdenes a bills
+      final nuevasBills = <BillModel>[];
+
+      for (final ordenData in ordenes) {
+        final ordenId = ordenData['id'] as int;
+        final estadoNombre =
+            (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
+
+        // Solo crear bills para órdenes que estén listas y no pagadas
+        // (excluir órdenes canceladas y pagadas)
+        if (estadoNombre.contains('cancel') ||
+            estadoNombre.contains('pagada') ||
+            estadoNombre.contains('cerrada')) {
+          continue;
+        }
+
+        // IMPORTANTE: Verificar si ya existe un bill para esta orden por ordenId O por billId
+        final billId = 'BILL-ORD-$ordenId';
+        if (_bills.any((b) => b.id == billId || b.ordenId == ordenId)) {
+          continue; // Ya existe, no duplicar
+        }
+
+        // Obtener detalles completos de la orden
+        final ordenDetalle = await _ordenesService.getOrden(ordenId);
+        if (ordenDetalle == null) continue;
+
+        // Crear billItems desde los items de la orden
+        // IMPORTANTE: Calcular el total de cada item como precio * cantidad
+        // para asegurar que los totales sean correctos
+        final itemsData = ordenDetalle['items'] as List<dynamic>? ?? [];
+        final billItems = itemsData.map((itemJson) {
+          final cantidad = (itemJson['cantidad'] as num?)?.toInt() ?? 1;
+          final precioUnitario =
+              (itemJson['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+          // Calcular el total del item correctamente: precio * cantidad
+          final totalItem = precioUnitario * cantidad;
+          return BillItem(
+            name: itemJson['productoNombre'] as String? ?? 'Producto',
+            quantity: cantidad,
+            price: precioUnitario,
+            total: totalItem,
+          );
+        }).toList();
+
+        // Calcular el subtotal sumando los totales de cada item
+        // NO usar el subtotal del backend porque puede estar mal
+        final subtotalCalculado = billItems.fold<double>(
+          0.0,
+          (sum, item) => sum + item.total,
+        );
+
+        final descuento =
+            (ordenDetalle['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+        final impuesto =
+            (ordenDetalle['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
+
+        // Calcular el total final: subtotal - descuento + impuesto
+        final total = subtotalCalculado - descuento + impuesto;
+
+        final mesaId = ordenDetalle['mesaId'] as int?;
+        final mesaCodigo = ordenData['mesaCodigo'] as String?;
+        final tableNumber = mesaCodigo != null
+            ? int.tryParse(mesaCodigo)
+            : null;
+
+        final bill = BillModel(
+          id: billId,
+          tableNumber: tableNumber,
+          ordenId: ordenId,
+          items: billItems,
+          subtotal: subtotalCalculado,
+          tax: impuesto,
+          total: total,
+          discount: descuento,
+          status: BillStatus.pending,
+          createdAt: ordenDetalle['creadoEn'] != null
+              ? date_utils.AppDateUtils.parseToLocal(ordenDetalle['creadoEn'])
+              : DateTime.now(),
+          waiterName:
+              ordenDetalle['creadoPorNombre'] as String? ??
+              ordenDetalle['creadoPorUsuarioNombre'] as String? ??
+              'Mesero',
+          requestedByWaiter: true,
+          isTakeaway: mesaId == null,
+          customerName: ordenDetalle['clienteNombre'] as String?,
+        );
+
+        nuevasBills.add(bill);
+      }
+
+      // Agregar nuevas bills (sin duplicar por billId)
+      for (final bill in nuevasBills) {
+        if (!_bills.any((b) => b.id == bill.id)) {
+          _bills.add(bill);
+        }
+      }
+
+      // Ordenar por fecha de creación (más recientes primero)
+      _bills.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar bills desde el backend: $e');
+      // Si falla, mantener las bills existentes
+      notifyListeners();
+    }
   }
 }
-

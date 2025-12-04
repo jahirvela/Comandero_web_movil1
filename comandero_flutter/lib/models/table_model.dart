@@ -7,6 +7,7 @@ class TableModel {
   final double? orderValue;
   final String? reservation;
   final TablePosition position;
+  final String? section; // Área/sección de la mesa
 
   TableModel({
     required this.id,
@@ -17,6 +18,7 @@ class TableModel {
     this.orderValue,
     this.reservation,
     required this.position,
+    this.section,
   });
 
   factory TableModel.fromJson(Map<String, dynamic> json) {
@@ -29,6 +31,7 @@ class TableModel {
       orderValue: json['orderValue']?.toDouble(),
       reservation: json['reservation'],
       position: TablePosition.fromJson(json['position']),
+      section: json['section'],
     );
   }
 
@@ -42,6 +45,7 @@ class TableModel {
       'orderValue': orderValue,
       'reservation': reservation,
       'position': position.toJson(),
+      'section': section,
     };
   }
 
@@ -54,6 +58,7 @@ class TableModel {
     double? orderValue,
     String? reservation,
     TablePosition? position,
+    String? section,
   }) {
     return TableModel(
       id: id ?? this.id,
@@ -64,6 +69,7 @@ class TableModel {
       orderValue: orderValue ?? this.orderValue,
       reservation: reservation ?? this.reservation,
       position: position ?? this.position,
+      section: section ?? this.section,
     );
   }
 }

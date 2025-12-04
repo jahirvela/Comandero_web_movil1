@@ -10,16 +10,52 @@ import '../../widgets/logout_button.dart';
 import 'report_order_status_modal.dart';
 import '../cocinero/order_detail_modal.dart';
 import '../../services/kitchen_order_service.dart';
+import '../../services/alertas_service.dart';
 
-class CaptainApp extends StatelessWidget {
+class CaptainApp extends StatefulWidget {
   const CaptainApp({super.key});
+
+  @override
+  State<CaptainApp> createState() => _CaptainAppState();
+}
+
+class _CaptainAppState extends State<CaptainApp> {
+  late CaptainController _captainController;
+  late CocineroController _cocineroController;
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _captainController = CaptainController();
+    _cocineroController = CocineroController();
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    // Cargar órdenes del backend para el capitán
+    await _cocineroController.loadOrders();
+    await _captainController.loadTables();
+    if (mounted) {
+      setState(() {
+        _initialized = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _captainController.dispose();
+    _cocineroController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => CaptainController()),
-        ChangeNotifierProvider(create: (_) => CocineroController()),
+        ChangeNotifierProvider.value(value: _captainController),
+        ChangeNotifierProvider.value(value: _cocineroController),
       ],
       child: Consumer3<CaptainController, AuthController, CocineroController>(
         builder:
@@ -30,6 +66,28 @@ class CaptainApp extends StatelessWidget {
               cocineroController,
               child,
             ) {
+              if (!_initialized) {
+                return Scaffold(
+                  backgroundColor: AppColors.background,
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Cargando datos del capitán...',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
               return LayoutBuilder(
                 builder: (context, constraints) {
                   final isTablet = constraints.maxWidth > 600;
@@ -43,12 +101,15 @@ class CaptainApp extends StatelessWidget {
                       authController,
                       isTablet,
                     ),
-                    body: _buildBody(
-                      context,
-                      captainController,
-                      cocineroController,
-                      isTablet,
-                      isDesktop,
+                    body: RefreshIndicator(
+                      onRefresh: _initializeData,
+                      child: _buildBody(
+                        context,
+                        captainController,
+                        cocineroController,
+                        isTablet,
+                        isDesktop,
+                      ),
                     ),
                   );
                 },
@@ -1235,30 +1296,88 @@ class CaptainApp extends StatelessWidget {
     String? detalles,
     bool notifyCook,
     CocineroController cocineroController,
-  ) {
+  ) async {
     if (notifyCook) {
       final tableLabel = order.tableNumber != null
           ? order.tableNumber!.toString()
           : (order.isTakeaway ? 'Para llevar' : 'Sin mesa');
 
+      // Determinar prioridad según el tipo de alerta
+      final priority = tipo == 'Demora' ? 'Urgente' : 'Normal';
+
+      // Enviar alerta vía KitchenOrderService (usa Socket.IO internamente)
       KitchenOrderService().sendAlertToKitchen(
         tableNumber: tableLabel,
         orderId: order.id,
         alertType: tipo,
         reason: motivo,
         details: detalles,
-        priority: tipo == 'Demora' ? 'Urgente' : 'Normal',
+        priority: priority,
       );
+
+      // También enviar vía AlertasService para doble respaldo y persistencia
+      try {
+        await AlertasService().enviarAlertaDesdeModal(
+          tableNumber: tableLabel,
+          orderId: order.id,
+          alertType: tipo,
+          reason: motivo,
+          details: detalles,
+          priority: priority,
+        );
+        print('✅ Alerta enviada también vía AlertasService');
+      } catch (e) {
+        print('⚠️ Error al enviar vía AlertasService (no crítico): $e');
+        // Continuar, ya se envió por KitchenOrderService
+      }
     }
 
     // Mostrar mensaje de confirmación
+    if (!context.mounted) return;
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Notificación Enviada'),
-        content: Text('Notificación enviada a Cocina — $tipo'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green, size: 28),
+            const SizedBox(width: 8),
+            const Text('Notificación Enviada'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Se ha enviado la notificación a Cocina:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tipo: $tipo',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text('Motivo: $motivo'),
+                  if (detalles != null && detalles.isNotEmpty)
+                    Text('Detalles: $detalles'),
+                  Text('Orden: ${order.id}'),
+                  if (order.tableNumber != null)
+                    Text('Mesa: ${order.tableNumber}'),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(
+          ElevatedButton(
             onPressed: () {
               Navigator.of(dialogContext).pop();
               // Remover la alerta relacionada
@@ -1269,12 +1388,19 @@ class CaptainApp extends StatelessWidget {
               captainController.removeAlertByOrderId(order.id);
               // Mostrar mensaje de éxito
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Notificación enviada y alerta eliminada'),
-                  backgroundColor: AppColors.success,
+                const SnackBar(
+                  content: Text(
+                    '✅ Notificación enviada correctamente a Cocina',
+                  ),
+                  backgroundColor: Colors.green,
+                  duration: Duration(seconds: 3),
                 ),
               );
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Aceptar'),
           ),
         ],

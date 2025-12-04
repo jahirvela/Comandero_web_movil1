@@ -1,0 +1,23 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000057
+Fecha: 2025-11-28T19:57:45.000Z
+Mesa: 9
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  2  Taco de Barbacoa             50.00
+  Nota: Salsa: Salsa Verde
+------------------------------------------
+Subtotal:                    $   50.00
+E1TOTAL:                      $   50.00
+E0==========================================
+a1
+k4k10ORD-000057
+ORD-000057
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

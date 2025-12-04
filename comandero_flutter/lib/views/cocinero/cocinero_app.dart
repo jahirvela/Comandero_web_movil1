@@ -181,12 +181,12 @@ class CocineroApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Navegación rápida
-          _buildQuickNavigation(context, cocineroController, isTablet),
-          const SizedBox(height: 24),
-
           // Filtros
           _buildFiltersCard(context, cocineroController, isTablet),
+          const SizedBox(height: 24),
+
+          // Sección de Alertas (del capitán, mesero, etc.)
+          _buildAlertsSection(context, cocineroController, isTablet),
           const SizedBox(height: 24),
 
           // Estadísticas rápidas
@@ -200,16 +200,23 @@ class CocineroApp extends StatelessWidget {
     );
   }
 
-  Widget _buildQuickNavigation(
+  Widget _buildAlertsSection(
     BuildContext context,
     CocineroController controller,
     bool isTablet,
   ) {
+    final alerts = controller.filteredAlerts;
+
+    // Si no hay alertas, no mostrar la sección
+    if (alerts.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
+        side: BorderSide(color: Colors.orange.withValues(alpha: 0.3)),
       ),
       child: Padding(
         padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
@@ -219,105 +226,222 @@ class CocineroApp extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  Icons.dashboard,
-                  color: AppColors.primary,
-                  size: isTablet ? 20.0 : 18.0,
+                  Icons.notification_important,
+                  color: Colors.orange,
+                  size: isTablet ? 24.0 : 20.0,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Navegación Rápida',
+                  'Alertas',
                   style: TextStyle(
                     fontSize: isTablet ? 18.0 : 16.0,
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${alerts.length}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 12.0 : 10.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () {
+                    controller.clearAlerts();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Alertas limpiadas'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  },
+                  icon: Icon(Icons.clear_all, size: isTablet ? 18.0 : 16.0),
+                  label: Text(
+                    'Limpiar',
+                    style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildNavigationCard(
-                    'Consumo de Ingredientes',
-                    Icons.inventory,
-                    AppColors.warning,
-                    () => controller.setCurrentView('ingredients'),
-                    isTablet,
+            // Lista de alertas (máximo 5 visibles)
+            ...alerts.take(5).map((alert) => _buildAlertCard(alert, isTablet)),
+            if (alerts.length > 5)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '+ ${alerts.length - 5} alertas más',
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    color: AppColors.textSecondary,
+                    fontStyle: FontStyle.italic,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildNavigationCard(
-                    'Notas Críticas',
-                    Icons.warning,
-                    AppColors.error,
-                    () => controller.setCurrentView('notes'),
-                    isTablet,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildNavigationCard(
-                    'Gestión de Estaciones',
-                    Icons.restaurant,
-                    AppColors.info,
-                    () => controller.setCurrentView('stations'),
-                    isTablet,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildNavigationCard(
-                    'Gestión de Personal',
-                    Icons.people,
-                    AppColors.success,
-                    () => controller.setCurrentView('staff'),
-                    isTablet,
-                  ),
-                ),
-              ],
-            ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildNavigationCard(
-    String title,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-    bool isTablet,
-  ) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: isTablet ? 24.0 : 20.0),
-            const SizedBox(height: 8),
+  Widget _buildAlertCard(dynamic alert, bool isTablet) {
+    // Determinar color según prioridad
+    Color priorityColor;
+    final priority = alert.priority?.toString().toLowerCase() ?? 'medium';
+    switch (priority) {
+      case 'high':
+      case 'urgente':
+        priorityColor = Colors.red;
+        break;
+      case 'low':
+      case 'baja':
+        priorityColor = Colors.blue;
+        break;
+      default:
+        priorityColor = Colors.orange;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+      decoration: BoxDecoration(
+        color: priorityColor.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: priorityColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: priorityColor,
+                size: isTablet ? 20.0 : 18.0,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  alert.type ?? 'Alerta',
+                  style: TextStyle(
+                    fontSize: isTablet ? 14.0 : 12.0,
+                    fontWeight: FontWeight.w600,
+                    color: priorityColor,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: priorityColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: priorityColor.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Text(
+                  priority == 'high' || priority == 'urgente'
+                      ? 'URGENTE'
+                      : 'Normal',
+                  style: TextStyle(
+                    fontSize: isTablet ? 10.0 : 8.0,
+                    fontWeight: FontWeight.bold,
+                    color: priorityColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            alert.reason ?? 'Sin motivo especificado',
+            style: TextStyle(
+              fontSize: isTablet ? 13.0 : 11.0,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          if (alert.details != null && alert.details!.isNotEmpty) ...[
+            const SizedBox(height: 4),
             Text(
-              title,
+              'Detalles: ${alert.details}',
               style: TextStyle(
                 fontSize: isTablet ? 12.0 : 10.0,
-                fontWeight: FontWeight.w500,
-                color: color,
+                color: AppColors.textSecondary,
+                fontStyle: FontStyle.italic,
               ),
-              textAlign: TextAlign.center,
             ),
           ],
-        ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              if (alert.tableNumber != null && alert.tableNumber != 'N/A') ...[
+                Icon(Icons.table_bar, size: 14, color: AppColors.textSecondary),
+                const SizedBox(width: 4),
+                Text(
+                  'Mesa ${alert.tableNumber}',
+                  style: TextStyle(
+                    fontSize: isTablet ? 11.0 : 9.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              if (alert.orderId != null && alert.orderId != 'N/A') ...[
+                Icon(
+                  Icons.receipt_long,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Orden ${alert.orderId}',
+                  style: TextStyle(
+                    fontSize: isTablet ? 11.0 : 9.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              const Spacer(),
+              Icon(Icons.access_time, size: 14, color: AppColors.textSecondary),
+              const SizedBox(width: 4),
+              Text(
+                _formatAlertTime(alert.timestamp),
+                style: TextStyle(
+                  fontSize: isTablet ? 11.0 : 9.0,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  String _formatAlertTime(DateTime? timestamp) {
+    if (timestamp == null) return 'Ahora';
+    final now = DateTime.now();
+    final diff = now.difference(timestamp);
+
+    if (diff.inMinutes < 1) return 'Ahora';
+    if (diff.inMinutes < 60) return 'Hace ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'Hace ${diff.inHours} h';
+    return '${timestamp.day}/${timestamp.month} ${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildFiltersCard(
@@ -1009,11 +1133,11 @@ class CocineroApp extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
 
-                // ETA clickeable
+                // Tiempo de salida clickeable
                 Row(
                   children: [
                     Text(
-                      'ETA:',
+                      'Tiempo de Salida:',
                       style: TextStyle(
                         fontSize: isTablet ? 14.0 : 12.0,
                         color: AppColors.textSecondary,
@@ -1044,11 +1168,7 @@ class CocineroApp extends StatelessWidget {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              Icons.access_time,
-                              size: 16,
-                              color: Colors.blue,
-                            ),
+                            Icon(Icons.schedule, size: 16, color: Colors.blue),
                             const SizedBox(width: 4),
                             Text(
                               '${order.estimatedTime} min',
@@ -1299,17 +1419,33 @@ class CocineroApp extends StatelessWidget {
         if (order.status == OrderStatus.pendiente) ...[
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: () {
-                controller.updateOrderStatus(
-                  order.id,
-                  OrderStatus.enPreparacion,
-                );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Pedido ${order.id} en preparación'),
-                    backgroundColor: AppColors.warning,
-                  ),
-                );
+              onPressed: () async {
+                try {
+                  await controller.updateOrderStatus(
+                    order.id,
+                    OrderStatus.enPreparacion,
+                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Pedido ${order.id} en preparación'),
+                        backgroundColor: AppColors.warning,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Error al actualizar pedido: ${e.toString()}',
+                        ),
+                        backgroundColor: AppColors.error,
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                }
               },
               icon: const Icon(Icons.play_arrow),
               label: Text(
@@ -1328,31 +1464,41 @@ class CocineroApp extends StatelessWidget {
         ] else if (order.status == OrderStatus.enPreparacion) ...[
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: () {
-                final newStatus = order.isTakeaway
-                    ? OrderStatus.listoParaRecoger
-                    : OrderStatus.listo;
-                controller.updateOrderStatus(order.id, newStatus);
+              onPressed: () async {
+                try {
+                  final newStatus = order.isTakeaway
+                      ? OrderStatus.listoParaRecoger
+                      : OrderStatus.listo;
+                  await controller.updateOrderStatus(order.id, newStatus);
 
-                // Notificar al mesero que el pedido está listo
-                final service = KitchenOrderService();
-                service.notifyOrderReady(
-                  orderId: order.id,
-                  isTakeaway: order.isTakeaway,
-                  tableNumber: order.tableNumber,
-                  customerName: order.customerName,
-                );
+                  // La alerta en tiempo real se envía automáticamente desde el backend
+                  // cuando se actualiza el estado a "listo"
 
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      order.isTakeaway
-                          ? 'Pedido ${order.id} listo para recoger'
-                          : 'Pedido ${order.id} listo',
-                    ),
-                    backgroundColor: AppColors.success,
-                  ),
-                );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          order.isTakeaway
+                              ? 'Pedido ${order.id} listo para recoger'
+                              : 'Pedido ${order.id} listo',
+                        ),
+                        backgroundColor: AppColors.success,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Error al actualizar pedido: ${e.toString()}',
+                        ),
+                        backgroundColor: AppColors.error,
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                }
               },
               icon: const Icon(Icons.check),
               label: Text(
@@ -1765,7 +1911,7 @@ class CocineroApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
           ),
           title: Text(
-            'Modificar tiempo de salida (ETA)',
+            'Modificar Tiempo de Salida',
             style: TextStyle(
               fontSize: isTablet ? 20.0 : 18.0,
               fontWeight: FontWeight.bold,
@@ -1960,7 +2106,7 @@ class CocineroApp extends StatelessWidget {
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Actualizar ETA'),
+              child: const Text('Actualizar Tiempo'),
             ),
           ],
         ),

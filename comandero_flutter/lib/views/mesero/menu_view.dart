@@ -17,190 +17,62 @@ class _MenuViewState extends State<MenuView> {
   String searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
 
-  // Datos del menú basados en las imágenes de referencia
-  final List<Map<String, dynamic>> menuItems = [
-    // Tacos
-    {
-      'name': 'Taco de Barbacoa',
-      'price': 22,
-      'description':
-          '2 tortillas de maíz con barbacoa de res, cebolla, cilantro y salsa',
-      'category': 'Tacos',
-      'image': 'taco_barbacoa',
-      'hot': false,
-    },
-    {
-      'name': 'Taco de Maciza',
-      'price': 25,
-      'description':
-          '2 tortillas con carne maciza, cebolla asada y salsa verde',
-      'category': 'Tacos',
-      'image': 'taco_maciza',
-      'hot': true,
-    },
-    {
-      'name': 'Taco de Costilla',
-      'price': 28,
-      'description': '2 tortillas con costilla deshebrada, cebolla curtida',
-      'category': 'Tacos',
-      'image': 'taco_costilla',
-      'hot': false,
-    },
-    // Platos Especiales
-    {
-      'name': 'Mix Barbacoa',
-      'price': 95,
-      'description': '3 tacos mixtos + consomé + cebolla asada + salsas',
-      'category': 'Platos Especiales',
-      'image': 'mix_barbacoa',
-      'hot': false,
-      'specialty': true,
-    },
-    {
-      'name': 'Costilla en Salsa',
-      'price': 130,
-      'description': 'Costilla bañada en salsa roja con tortillas y guarnición',
-      'category': 'Platos Especiales',
-      'image': 'costilla_salsa',
-      'hot': true,
-      'specialty': true,
-    },
-    {
-      'name': 'Orden de Barbacoa',
-      'price': 110,
-      'description': '250g de barbacoa, tortillas, consomé y salsas',
-      'category': 'Platos Especiales',
-      'image': 'orden_barbacoa',
-      'hot': false,
-      'specialty': true,
-    },
-    // Acompañamientos
-    {
-      'name': 'Tortillas Hechas a Mano',
-      'price': 15,
-      'description': '10 tortillas de maíz recién hechas',
-      'category': 'Acompañamientos',
-      'image': 'tortillas',
-      'hot': false,
-    },
-    {
-      'name': 'Cebolla Curtida',
-      'price': 10,
-      'description': 'Cebolla morada encurtida con especias',
-      'category': 'Acompañamientos',
-      'image': 'cebolla',
-      'hot': false,
-    },
-    {
-      'name': 'Frijoles Charros',
-      'price': 25,
-      'description': 'Frijoles bayos cocidos con especias y chile',
-      'category': 'Acompañamientos',
-      'image': 'frijoles',
-      'hot': true,
-    },
-    // Bebidas
-    {
-      'name': 'Agua de Horchata',
-      'price': 18,
-      'description': 'Agua fresca de arroz con canela',
-      'category': 'Bebidas',
-      'image': 'horchata',
-      'hot': false,
-    },
-    {
-      'name': 'Agua de Jamaica',
-      'price': 18,
-      'description': 'Agua fresca de flor de jamaica',
-      'category': 'Bebidas',
-      'image': 'jamaica',
-      'hot': false,
-    },
-    {
-      'name': 'Refresco en Lata',
-      'price': 15,
-      'description': 'Coca-Cola, Sprite, Fanta',
-      'category': 'Bebidas',
-      'image': 'refresco',
-      'hot': false,
-    },
-    {
-      'name': 'Cerveza Nacional',
-      'price': 25,
-      'description': 'Corona, Dos Equis, Tecate',
-      'category': 'Bebidas',
-      'image': 'cerveza',
-      'hot': false,
-    },
-    // Consomés
-    {
-      'name': 'Consomé de Pollo',
-      'price': 25,
-      'description': 'Caldo nutritivo de pollo con verduras y especias',
-      'category': 'Consomes',
-      'image': 'consome_pollo',
-      'hot': false,
-      'sizes': true,
-    },
-    {
-      'name': 'Consomé de Res',
-      'price': 30,
-      'description': 'Caldo sustancioso de huesos de res con vegetales',
-      'category': 'Consomes',
-      'image': 'consome_res',
-      'hot': false,
-      'sizes': true,
-    },
-    {
-      'name': 'Consomé Mixto',
-      'price': 35,
-      'description': 'Combinación de caldo de pollo y res con hierbas',
-      'category': 'Consomes',
-      'image': 'consome_mixto',
-      'hot': false,
-      'sizes': true,
-    },
-    // Salsas
-    {
-      'name': 'Salsa Roja',
-      'price': 5,
-      'description': 'Salsa de chile guajillo picante',
-      'category': 'Salsas',
-      'image': 'salsa_roja',
-      'hot': true,
-    },
-    {
-      'name': 'Salsa Verde',
-      'price': 5,
-      'description': 'Salsa de chile serrano',
-      'category': 'Salsas',
-      'image': 'salsa_verde',
-      'hot': true,
-    },
-    {
-      'name': 'Salsa de Chile de Árbol',
-      'price': 8,
-      'description': 'Muy picante - para valientes',
-      'category': 'Salsas',
-      'image': 'salsa_arbol',
-      'hot': true,
-    },
-  ];
-
-  final List<String> categories = [
-    'Todo el Menú',
-    'Tacos',
-    'Platos Especiales',
-    'Acompañamientos',
-    'Bebidas',
-    'Consomes',
-    'Salsas',
-  ];
+  @override
+  void initState() {
+    super.initState();
+    // Cargar productos y categorías cuando se inicializa la vista
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final controller = context.read<MeseroController>();
+      controller.loadProducts();
+      controller.loadCategories();
+    });
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  // Obtener productos del controller
+  List<ProductModel> get products {
+    final controller = context.watch<MeseroController>();
+    return controller.products;
+  }
+
+  // Obtener categorías del controller
+  List<String> get categories {
+    final controller = context.watch<MeseroController>();
+    final backendCategories = controller.categories;
+    
+    // Crear lista de categorías: "Todo el Menú" + categorías del backend
+    final categoryNames = ['Todo el Menú'];
+    for (final cat in backendCategories) {
+      final nombre = cat['nombre'] as String?;
+      if (nombre != null && !categoryNames.contains(nombre)) {
+        categoryNames.add(nombre);
+      }
+    }
+    
+    return categoryNames;
+  }
+
+  // Convertir ProductModel a Map para compatibilidad con el código existente
+  List<Map<String, dynamic>> get menuItems {
+    return products.map((product) {
+      return {
+        'id': product.id,
+        'name': product.name,
+        'price': product.price,
+        'description': product.description,
+        'category': ProductCategory.getCategoryName(product.category),
+        'image': product.image,
+        'hot': product.hot,
+        'available': product.available,
+        'hasSizes': false, // Se puede mejorar después si hay tamaños
+        'sizes': null,
+      };
+    }).toList();
   }
 
   List<Map<String, dynamic>> get filteredItems {
@@ -279,15 +151,25 @@ class _MenuViewState extends State<MenuView> {
 
   Widget _buildHeader(BuildContext context, bool isTablet) {
     final controller = context.watch<MeseroController>();
-    final tableText = controller.selectedTable != null
-        ? 'Mesa ${controller.selectedTable!.number} • Atendiendo'
-        : 'Mesero';
+    String tableText;
+    if (controller.selectedTable != null) {
+      tableText = 'Mesa ${controller.selectedTable!.number} • Atendiendo';
+    } else if (controller.isTakeawayMode) {
+      tableText = '🛍️ Para Llevar • ${controller.takeawayCustomerName ?? "Cliente"}';
+    } else {
+      tableText = 'Mesero';
+    }
 
     return Row(
       children: [
         IconButton(
           onPressed: () {
-            controller.setCurrentView('table');
+            // Navegar a la vista correcta según el modo
+            if (controller.isTakeawayMode) {
+              controller.setCurrentView('takeaway');
+            } else {
+              controller.setCurrentView('table');
+            }
           },
           icon: const Icon(Icons.arrow_back),
           style: IconButton.styleFrom(
@@ -362,10 +244,15 @@ class _MenuViewState extends State<MenuView> {
   }
 
   Widget _buildCategoryFilters(bool isTablet) {
+    final categoryList = categories;
+    if (categoryList.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: categories.map((category) {
+        children: categoryList.map((category) {
           final isSelected = selectedCategory == category;
           return Container(
             margin: const EdgeInsets.only(right: 12),
@@ -455,6 +342,38 @@ class _MenuViewState extends State<MenuView> {
 
   Widget _buildProductsGrid(double maxWidth, bool isTablet, bool isDesktop) {
     final items = filteredItems;
+    
+    if (items.isEmpty) {
+      return Container(
+        padding: EdgeInsets.all(isTablet ? 40.0 : 32.0),
+        child: Column(
+          children: [
+            Icon(
+              Icons.restaurant_menu,
+              size: isTablet ? 64.0 : 48.0,
+              color: AppColors.textSecondary.withValues(alpha: 0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No hay productos disponibles',
+              style: TextStyle(
+                fontSize: isTablet ? 16.0 : 14.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Agrega productos desde el panel de administrador',
+              style: TextStyle(
+                fontSize: isTablet ? 14.0 : 12.0,
+                color: AppColors.textSecondary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
     final horizontalPadding = isTablet ? 48.0 : 32.0;
     final availableWidth = (maxWidth - horizontalPadding).clamp(
       240.0,
@@ -643,8 +562,8 @@ class _MenuViewState extends State<MenuView> {
   void _addToCart(Map<String, dynamic> item) async {
     final controller = context.read<MeseroController>();
 
-    // Verificar que hay una mesa seleccionada
-    if (controller.selectedTable == null) {
+    // Verificar que hay una mesa seleccionada O estamos en modo takeaway
+    if (controller.selectedTable == null && !controller.isTakeawayMode) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Por favor, selecciona una mesa primero'),
@@ -655,26 +574,34 @@ class _MenuViewState extends State<MenuView> {
       return;
     }
 
+    // Buscar el producto real en la lista de productos del controller
+    final productId = item['id'] as int;
+    final product = controller.products.firstWhere(
+      (p) => p.id == productId,
+      orElse: () => ProductModel(
+        id: productId,
+        name: item['name'] as String,
+        description: item['description'] as String? ?? '',
+        price: (item['price'] as num?)?.toDouble() ?? 0.0,
+        category: _getCategoryId(item['category'] as String? ?? ''),
+        available: true,
+        hot: item['hot'] as bool? ?? false,
+      ),
+    );
+
     // Abrir modal de modificadores
     final result = await ProductModifierModal.show(context, item);
 
     if (result != null && mounted) {
-      // Crear ProductModel desde el item
-      final product = ProductModel(
-        id: DateTime.now().millisecondsSinceEpoch,
-        name: item['name'] as String,
-        description: item['description'] as String? ?? '',
-        price: result['totalPrice'] as double,
-        category: _getCategoryId(item['category'] as String? ?? ''),
-        available: true,
-        hot: item['hot'] as bool? ?? false,
-        extras: result['extras'] as List<String>?,
-      );
+      // IMPORTANTE: Usar el precio unitario del producto, NO el totalPrice
+      // totalPrice ya incluye cantidad*precio, lo cual causaría doble multiplicación
+      final productWithPrice = product;
 
       // Crear mapa de customizations
       final customizations = <String, dynamic>{
         'quantity': result['quantity'] as int,
         'sauce': result['sauce'] as String?,
+        'saucePrice': (result['saucePrice'] as num?)?.toDouble() ?? 0.0, // Precio de la salsa
         'size': result['size'] as String?,
         'temperature': result['temperature'] as String?,
         'kitchenNotes': result['kitchenNotes'] as String? ?? '',
@@ -683,7 +610,7 @@ class _MenuViewState extends State<MenuView> {
       };
 
       // Agregar al carrito
-      controller.addToCart(product, customizations: customizations);
+      controller.addToCart(productWithPrice, customizations: customizations);
 
       // Mostrar confirmación
       ScaffoldMessenger.of(context).showSnackBar(
@@ -693,7 +620,12 @@ class _MenuViewState extends State<MenuView> {
         ),
       );
 
-      controller.setCurrentView('table');
+      // Navegar a la vista correcta según el modo
+      if (controller.isTakeawayMode) {
+        controller.setCurrentView('cart');
+      } else {
+        controller.setCurrentView('table');
+      }
     }
   }
 

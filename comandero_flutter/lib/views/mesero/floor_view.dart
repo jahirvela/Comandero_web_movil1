@@ -37,6 +37,10 @@ class FloorView extends StatelessWidget {
                     _buildTablesGrid(context, controller, isTablet, isDesktop),
                     const SizedBox(height: 24),
 
+                    // Sección Para Llevar
+                    _buildTakeawaySection(context, controller, isTablet),
+                    const SizedBox(height: 24),
+
                     // Estadísticas rápidas
                     _buildQuickStats(stats, isTablet),
                     const SizedBox(height: 16),
@@ -89,7 +93,7 @@ class FloorView extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              '${occupancyRate.toInt()}%',
+              '${(occupancyRate.isNaN || occupancyRate.isInfinite ? 0.0 : occupancyRate).toInt()}%',
               style: TextStyle(
                 fontSize: isTablet ? 28.0 : 24.0,
                 fontWeight: FontWeight.bold,
@@ -221,22 +225,29 @@ class FloorView extends StatelessWidget {
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               // Icono y número de mesa
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    statusIcon,
-                    style: TextStyle(fontSize: isTablet ? 20.0 : 16.0),
+                  Flexible(
+                    child: Text(
+                      statusIcon,
+                      style: TextStyle(fontSize: isTablet ? 20.0 : 16.0),
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    'Mesa ${table.number}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 18.0 : 16.0,
-                      fontWeight: FontWeight.w600,
-                      color: statusColor,
+                  Flexible(
+                    child: Text(
+                      'Mesa ${table.number}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.w600,
+                        color: statusColor,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
@@ -258,12 +269,14 @@ class FloorView extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                     color: statusColor,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(height: 8),
 
               // Información adicional
               Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     '${table.seats} lugares',
@@ -271,6 +284,7 @@ class FloorView extends StatelessWidget {
                       fontSize: isTablet ? 14.0 : 12.0,
                       color: AppColors.textSecondary,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                   if (table.customers != null) ...[
                     const SizedBox(height: 2),
@@ -281,6 +295,7 @@ class FloorView extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                         color: statusColor,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                   if (table.orderValue != null) ...[
@@ -292,18 +307,25 @@ class FloorView extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                         color: AppColors.primary,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
-                  if (table.reservation != null) ...[
+                  if (table.reservation != null && table.reservation!.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Text(
-                      table.reservation!.split(' - ').last,
+                      () {
+                        final reservation = table.reservation!;
+                        final parts = reservation.split(' - ');
+                        return parts.isNotEmpty ? parts.last : reservation;
+                      }(),
                       style: TextStyle(
                         fontSize: isTablet ? 12.0 : 10.0,
                         fontWeight: FontWeight.w500,
                         color: AppColors.warning,
                       ),
                       textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
                   ],
                 ],
@@ -312,45 +334,84 @@ class FloorView extends StatelessWidget {
               const SizedBox(height: 12),
 
               // Selector de estado
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: table.status,
-                    isExpanded: true,
-                    style: TextStyle(
-                      fontSize: isTablet ? 12.0 : 10.0,
-                      color: statusColor,
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return Container(
+                    constraints: BoxConstraints(
+                      maxWidth: constraints.maxWidth,
                     ),
-                    onChanged: (newStatus) {
-                      if (newStatus != null) {
-                        controller.changeTableStatus(table.id, newStatus);
-                      }
-                    },
-                    items: [
-                      DropdownMenuItem(
-                        value: TableStatus.libre,
-                        child: Text('Libre'),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: table.status,
+                        isExpanded: true,
+                        style: TextStyle(
+                          fontSize: isTablet ? 12.0 : 10.0,
+                          color: statusColor,
+                        ),
+                        onChanged: (newStatus) async {
+                          if (newStatus != null) {
+                            try {
+                              await controller.changeTableStatus(table.id, newStatus);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Estado de mesa actualizado'),
+                                    backgroundColor: AppColors.success,
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Error al actualizar estado: ${e.toString()}'),
+                                    backgroundColor: AppColors.error,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+                              }
+                            }
+                          }
+                        },
+                        items: [
+                          DropdownMenuItem(
+                            value: TableStatus.libre,
+                            child: Text(
+                              'Libre',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: TableStatus.ocupada,
+                            child: Text(
+                              'Ocupada',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: TableStatus.enLimpieza,
+                            child: Text(
+                              'En Limpieza',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: TableStatus.reservada,
+                            child: Text(
+                              'Reservada',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                      DropdownMenuItem(
-                        value: TableStatus.ocupada,
-                        child: Text('Ocupada'),
-                      ),
-                      DropdownMenuItem(
-                        value: TableStatus.enLimpieza,
-                        child: Text('En Limpieza'),
-                      ),
-                      DropdownMenuItem(
-                        value: TableStatus.reservada,
-                        child: Text('Reservada'),
-                      ),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -474,6 +535,111 @@ class FloorView extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTakeawaySection(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    // Obtener órdenes para llevar pendientes (ya filtradas por el controller)
+    final takeawayOrders = controller.getTakeawayOrderHistory();
+    final pendingCount = takeawayOrders.length;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.warning.withValues(alpha: 0.3)),
+      ),
+      child: InkWell(
+        onTap: () => controller.selectTakeawayView(),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: isTablet ? 16.0 : 12.0,
+            vertical: isTablet ? 12.0 : 10.0,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: AppColors.warning.withValues(alpha: 0.05),
+          ),
+          child: Row(
+            children: [
+              // Icono
+              Container(
+                padding: EdgeInsets.all(isTablet ? 10.0 : 8.0),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.shopping_bag,
+                  size: isTablet ? 24.0 : 20.0,
+                  color: AppColors.warning,
+                ),
+              ),
+              SizedBox(width: isTablet ? 12.0 : 10.0),
+              
+              // Información
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Para Llevar',
+                      style: TextStyle(
+                        fontSize: isTablet ? 16.0 : 14.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      pendingCount > 0 
+                          ? '$pendingCount pendiente${pendingCount > 1 ? 's' : ''}'
+                          : 'Sin pedidos',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 10.0,
+                        color: pendingCount > 0 ? AppColors.warning : AppColors.textSecondary,
+                        fontWeight: pendingCount > 0 ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Badge de pendientes
+              if (pendingCount > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.error,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$pendingCount',
+                    style: TextStyle(
+                      fontSize: isTablet ? 12.0 : 10.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              
+              // Flecha
+              Icon(
+                Icons.arrow_forward_ios,
+                size: isTablet ? 16.0 : 14.0,
+                color: AppColors.textSecondary,
+              ),
+            ],
+          ),
         ),
       ),
     );

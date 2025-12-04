@@ -1,0 +1,25 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000065
+Fecha: 2025-12-01T19:04:25.000Z
+Mesa: 11
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  3  Taco de Barbacoa             90.00
+  Nota: Sin grasa | Extras: Quesillo (+$5) | Salsa: Salsa Verde
+------------------------------------------
+Subtotal:                    $   90.00
+Descuento:                   $    5.25
+Propina sugerida:           $    9.98
+E1TOTAL:                      $   94.73
+E0==========================================
+a1
+k4k10ORD-000065
+ORD-000065
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

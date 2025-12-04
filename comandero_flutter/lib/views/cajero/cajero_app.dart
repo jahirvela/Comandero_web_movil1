@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/payment_model.dart';
+import '../../models/admin_model.dart';
 import '../../services/payment_repository.dart';
 import '../../services/bill_repository.dart';
 import '../../utils/app_colors.dart';
@@ -16,6 +17,70 @@ import 'card_payment_modal.dart';
 
 class CajeroApp extends StatelessWidget {
   const CajeroApp({super.key});
+
+  // Consolidar items de bill por nombre (sumar cantidades)
+  /// Consolida items con el mismo nombre y calcula el total correctamente
+  /// Total = precio unitario * cantidad total
+  static List<Map<String, dynamic>> _consolidateBillItems(
+    List<BillItem> items,
+  ) {
+    final Map<String, Map<String, dynamic>> consolidated = {};
+
+    for (var item in items) {
+      final key = item.name.toLowerCase();
+      if (consolidated.containsKey(key)) {
+        // Sumar cantidades
+        consolidated[key]!['quantity'] += item.quantity;
+        // Recalcular total basado en precio unitario * cantidad total
+        final newQuantity = consolidated[key]!['quantity'] as int;
+        final price = consolidated[key]!['price'] as double;
+        consolidated[key]!['total'] = price * newQuantity;
+      } else {
+        consolidated[key] = {
+          'name': item.name,
+          'quantity': item.quantity,
+          'price': item.price, // Guardar precio unitario para recalcular
+          'total': item.price * item.quantity, // Calcular total correctamente
+        };
+      }
+    }
+
+    return consolidated.values.toList();
+  }
+
+  /// Calcula el total real de una cuenta sumando precio * cantidad de cada item
+  /// Esto asegura que siempre se muestre el precio correcto
+  static double _calculateBillTotal(BillModel bill) {
+    // Calcular total sumando precio * cantidad de cada item
+    final totalFromItems = bill.items.fold<double>(
+      0.0,
+      (sum, item) => sum + (item.price * item.quantity),
+    );
+    // Aplicar descuento si existe
+    return totalFromItems - bill.discount + bill.tax;
+  }
+
+  /// Extrae los IDs de órdenes del billId y los formatea para mostrar de forma clara
+  /// Ejemplo: "BILL-MESA-2-30-31-32" -> "Órdenes: ORD-000030, ORD-000031, ORD-000032"
+  static String _getOrdenIdsFromBillId(String billId) {
+    if (billId.contains('BILL-MESA-') && billId.contains('-')) {
+      final parts = billId.split('-');
+      if (parts.length >= 4) {
+        // Obtener todas las partes después de "BILL-MESA-X" (las órdenes)
+        final ordenIds = parts.sublist(3);
+        if (ordenIds.length > 1) {
+          // Formatear cada orden como ORD-XXXXXX de forma más clara
+          final ordenIdsFormateados = ordenIds
+              .map((id) {
+                return 'ORD-${id.padLeft(6, '0')}';
+              })
+              .join(', ');
+          return '$ordenIdsFormateados';
+        }
+      }
+    }
+    return '';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,11 +113,6 @@ class CajeroApp extends StatelessWidget {
                   cajeroController,
                   isTablet,
                   isDesktop,
-                ),
-                floatingActionButton: _buildFloatingActionButton(
-                  context,
-                  cajeroController,
-                  isTablet,
                 ),
               );
             },
@@ -184,10 +244,6 @@ class CajeroApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Tarjetas de resumen principales
-          _buildSummaryCards(cajeroController, isTablet),
-          const SizedBox(height: 24),
-
           // Botones de acción
           _buildActionButtons(context, cajeroController, isTablet),
           const SizedBox(height: 24),
@@ -208,240 +264,7 @@ class CajeroApp extends StatelessWidget {
     );
   }
 
-  // Tarjetas de resumen principales (Ventas en Local, Para llevar, Efectivo, etc.)
-  Widget _buildSummaryCards(CajeroController controller, bool isTablet) {
-    final stats = controller.getPaymentStats();
-    final pendingBills = controller.getPendingBills();
-    final pendingTotal = pendingBills.fold(
-      0.0,
-      (sum, bill) => sum + bill.total,
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            if (constraints.maxWidth > 600) {
-              return Row(
-                children: [
-                  Expanded(
-                    child: _buildSummaryCard(
-                      'Ventas en Local',
-                      stats['totalCash']! +
-                          stats['totalCard']! -
-                          (stats['totalCash']! * 0.4),
-                      Colors.green,
-                      Icons.trending_up,
-                      isTablet,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSummaryCard(
-                      'Ventas Para llevar',
-                      stats['totalCard']! * 0.5,
-                      Colors.blue,
-                      Icons.shopping_bag,
-                      isTablet,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSummaryCard(
-                      'Ventas Efectivo',
-                      stats['totalCash']!,
-                      Colors.yellow,
-                      Icons.calculate,
-                      isTablet,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSummaryCard(
-                      'Tarjeta Débito',
-                      stats['totalCard']! * 0.55,
-                      Colors.purple.shade300,
-                      Icons.credit_card,
-                      isTablet,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSummaryCard(
-                      'Tarjeta Crédito',
-                      stats['totalCard']! * 0.45,
-                      Colors.purple.shade400,
-                      Icons.payment,
-                      isTablet,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSummaryCard(
-                      'Por Cobrar',
-                      pendingTotal,
-                      Colors.red,
-                      Icons.error_outline,
-                      isTablet,
-                      subtitle: '${pendingBills.length} cuentas',
-                    ),
-                  ),
-                ],
-              );
-            } else {
-              return Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Ventas en Local',
-                          stats['totalCash']! +
-                              stats['totalCard']! -
-                              (stats['totalCash']! * 0.4),
-                          Colors.green,
-                          Icons.trending_up,
-                          isTablet,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Para llevar',
-                          stats['totalCard']! * 0.5,
-                          Colors.blue,
-                          Icons.shopping_bag,
-                          isTablet,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Efectivo',
-                          stats['totalCash']!,
-                          Colors.yellow,
-                          Icons.calculate,
-                          isTablet,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Débito',
-                          stats['totalCard']! * 0.55,
-                          Colors.purple.shade300,
-                          Icons.credit_card,
-                          isTablet,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Crédito',
-                          stats['totalCard']! * 0.45,
-                          Colors.purple.shade400,
-                          Icons.payment,
-                          isTablet,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Por Cobrar',
-                          pendingTotal,
-                          Colors.red,
-                          Icons.error_outline,
-                          isTablet,
-                          subtitle: '${pendingBills.length} cuentas',
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              );
-            }
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSummaryCard(
-    String title,
-    double value,
-    Color color,
-    IconData icon,
-    bool isTablet, {
-    String? subtitle,
-  }) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Container(
-        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Icon(icon, color: color, size: isTablet ? 24.0 : 20.0),
-                if (color == Colors.red)
-                  Icon(
-                    Icons.error_outline,
-                    color: color,
-                    size: isTablet ? 20.0 : 18.0,
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '\$${value.toStringAsFixed(2)}',
-              style: TextStyle(
-                fontSize: isTablet ? 20.0 : 18.0,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: isTablet ? 12.0 : 10.0,
-                color: color,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            if (subtitle != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: TextStyle(fontSize: isTablet ? 10.0 : 8.0, color: color),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Botones de acción (Cerrar Caja, Descargar CSV, Descargar PDF)
+  // Botones de acción (Apertura de Caja, Cerrar Caja, Descargar CSV, Descargar PDF)
   Widget _buildActionButtons(
     BuildContext context,
     CajeroController controller,
@@ -449,6 +272,22 @@ class CajeroApp extends StatelessWidget {
   ) {
     return Row(
       children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => _showCashOpenModal(context, controller, isTablet),
+            icon: const Icon(Icons.lock_open),
+            label: Text(
+              'Apertura de Caja',
+              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: ElevatedButton.icon(
             onPressed: () => _showCashCloseModal(context, controller, isTablet),
@@ -529,7 +368,11 @@ class CajeroApp extends StatelessWidget {
                   ),
                 ),
                 TextButton.icon(
-                  onPressed: () => controller.setCurrentView('closures'),
+                  onPressed: () {
+                    controller.setCurrentView('closures');
+                    // Cargar cierres al cambiar de vista
+                    controller.loadCashClosures();
+                  },
                   icon: const Icon(Icons.open_in_new),
                   label: const Text('Ver en Cierre de Caja'),
                   style: TextButton.styleFrom(
@@ -906,62 +749,148 @@ class CajeroApp extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    if (!bill.isTakeaway && bill.tableNumber != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade700,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Mesa ${bill.tableNumber}',
-                          style: TextStyle(
-                            fontSize: isTablet ? 13.0 : 11.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!bill.isTakeaway && bill.tableNumber != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade700,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'Mesa ${bill.tableNumber}',
+                            style: TextStyle(
+                              fontSize: isTablet ? 13.0 : 11.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        )
+                      else if (bill.isTakeaway)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade700,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.blue.shade900.withValues(
+                                  alpha: 0.3,
+                                ),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.shopping_bag,
+                                size: isTablet ? 16.0 : 14.0,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'PARA LLEVAR',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      )
-                    else if (bill.isTakeaway)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade700,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Para llevar',
-                          style: TextStyle(
-                            fontSize: isTablet ? 13.0 : 11.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Si hay múltiples órdenes con badge de mesa, mostrar solo info de agrupación
+                            if (bill.id.contains('BILL-MESA-') &&
+                                bill.id.split('-').length > 4 &&
+                                !bill.isTakeaway &&
+                                bill.tableNumber != null)
+                              // Para múltiples órdenes: mostrar contador claro
+                              Text(
+                                bill.displayId,
+                                style: TextStyle(
+                                  fontSize: isTablet ? 15.0 : 13.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.info,
+                                ),
+                              )
+                            else if (!(!bill.isTakeaway &&
+                                bill.tableNumber != null))
+                              // Si no hay badge de mesa, mostrar el displayId completo
+                              Text(
+                                bill.displayId,
+                                style: TextStyle(
+                                  fontSize: isTablet ? 16.0 : 14.0,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.textPrimary,
+                                ),
+                              )
+                            else
+                              // Para una sola orden con mesa, mostrar el ID formateado
+                              Text(
+                                bill.displayId,
+                                style: TextStyle(
+                                  fontSize: isTablet ? 16.0 : 14.0,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            // Mostrar información adicional si hay múltiples órdenes
+                            if (bill.id.contains('BILL-MESA-') &&
+                                bill.id.split('-').length > 4)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.receipt_long,
+                                      size: isTablet ? 12.0 : 10.0,
+                                      color: AppColors.info,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: Text(
+                                        _getOrdenIdsFromBillId(bill.id),
+                                        style: TextStyle(
+                                          fontSize: isTablet ? 11.0 : 9.0,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    const SizedBox(width: 12),
-                    Text(
-                      bill.id,
-                      style: TextStyle(
-                        fontSize: isTablet ? 16.0 : 14.0,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      controller.formatCurrency(bill.total),
+                      controller.formatCurrency(bill.calculatedTotal),
                       style: TextStyle(
                         fontSize: isTablet ? 22.0 : 20.0,
                         fontWeight: FontWeight.bold,
@@ -1043,41 +972,64 @@ class CajeroApp extends StatelessWidget {
                 if (bill.isPrinted || bill.requestedByWaiter)
                   const SizedBox(height: 16),
 
-                // Items del ticket
-                ...bill.items.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${item.quantity}x',
-                          style: TextStyle(
-                            fontSize: isTablet ? 15.0 : 13.0,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
+                // Resumen consolidado de productos en un solo recuadro
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Resumen de Productos',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Consolidar productos por nombre
+                      ...CajeroApp._consolidateBillItems(bill.items).map(
+                        (consolidatedItem) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${consolidatedItem['quantity']}x',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  consolidatedItem['name'] as String,
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 14.0 : 12.0,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '\$${consolidatedItem['total'].toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            item.name,
-                            style: TextStyle(
-                              fontSize: isTablet ? 15.0 : 13.0,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '\$${item.total.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: isTablet ? 15.0 : 13.0,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
 
@@ -1092,28 +1044,7 @@ class CajeroApp extends StatelessWidget {
                   ),
                   child: Column(
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Subtotal:',
-                            style: TextStyle(
-                              fontSize: isTablet ? 15.0 : 13.0,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                          Text(
-                            controller.formatCurrency(bill.subtotal),
-                            style: TextStyle(
-                              fontSize: isTablet ? 15.0 : 13.0,
-                              fontWeight: FontWeight.w500,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                        ],
-                      ),
                       if (bill.discount > 0) ...[
-                        const SizedBox(height: 8),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -1134,8 +1065,8 @@ class CajeroApp extends StatelessWidget {
                             ),
                           ],
                         ),
+                        const SizedBox(height: 12),
                       ],
-                      const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         decoration: BoxDecoration(
@@ -1162,7 +1093,10 @@ class CajeroApp extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              controller.formatCurrency(bill.total),
+                              // Calcular total desde los items para asegurar que sea correcto
+                              controller.formatCurrency(
+                                CajeroApp._calculateBillTotal(bill),
+                              ),
                               style: TextStyle(
                                 fontSize: isTablet ? 18.0 : 16.0,
                                 fontWeight: FontWeight.bold,
@@ -1172,9 +1106,106 @@ class CajeroApp extends StatelessWidget {
                           ],
                         ),
                       ),
+                      if (bill.splitCount > 1) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: AppColors.primary.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Total por persona (${bill.splitCount} ${bill.splitCount == 1 ? 'persona' : 'personas'}):',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 16.0 : 14.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                              Text(
+                                controller.formatCurrency(
+                                  CajeroApp._calculateBillTotal(bill) /
+                                      bill.splitCount,
+                                ),
+                                style: TextStyle(
+                                  fontSize: isTablet ? 18.0 : 16.0,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
+
+                // Información del cliente para pedidos para llevar
+                if (bill.isTakeaway && bill.customerName != null) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.blue.shade200,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.person,
+                              size: isTablet ? 18.0 : 16.0,
+                              color: Colors.blue.shade700,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Cliente: ${bill.customerName}',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (bill.customerPhone != null &&
+                            bill.customerPhone!.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.phone,
+                                size: isTablet ? 16.0 : 14.0,
+                                color: Colors.blue.shade600,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                bill.customerPhone!,
+                                style: TextStyle(
+                                  fontSize: isTablet ? 13.0 : 11.0,
+                                  color: Colors.blue.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
 
                 // Notas del mesero si existen
                 if (bill.waiterNotes != null &&
@@ -1201,7 +1232,7 @@ class CajeroApp extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Notas del mesero: ${bill.waiterNotes}',
+                            'Nota del pedido: ${bill.waiterNotes}',
                             style: TextStyle(
                               fontSize: isTablet ? 13.0 : 11.0,
                               color: Colors.purple.shade700,
@@ -1347,14 +1378,22 @@ class CajeroApp extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.of(context).pop();
-              // Marcar como impreso
-              controller.markBillAsPrinted(
+              // Obtener nombre del usuario del AuthController
+              final authController = Provider.of<AuthController>(
+                context,
+                listen: false,
+              );
+              final userName = authController.userName.isNotEmpty
+                  ? authController.userName
+                  : 'Cajero';
+              // Marcar como impreso e imprimir ticket
+              await controller.markBillAsPrinted(
                 bill.id,
-                'Ana Rodríguez',
-              ); // TODO: Obtener del AuthController
-              // TODO: Implementar impresión real con impresora térmica
+                userName,
+                ordenId: bill.ordenId,
+              );
             },
             child: const Text('Aceptar'),
           ),
@@ -1363,29 +1402,19 @@ class CajeroApp extends StatelessWidget {
     );
   }
 
-  Widget _buildFloatingActionButton(
+  // Método removido - ahora se usa CashPaymentModal.show directamente
+
+  void _showCashOpenModal(
     BuildContext context,
     CajeroController controller,
     bool isTablet,
   ) {
-    return Container(
-      margin: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-      child: FloatingActionButton.extended(
-        onPressed: () {
-          _showCashCloseModal(context, controller, isTablet);
-        },
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.account_balance_wallet),
-        label: Text(
-          isTablet ? 'Cierre de Caja' : 'Cierre',
-          style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
-        ),
-      ),
+    showDialog(
+      context: context,
+      builder: (context) =>
+          _CashOpenModal(controller: controller, isTablet: isTablet),
     );
   }
-
-  // Método removido - ahora se usa CashPaymentModal.show directamente
 
   void _showCashCloseModal(
     BuildContext context,
@@ -1423,6 +1452,155 @@ class _DashedLinePainter extends CustomPainter {
 }
 
 // Modal antiguo removido - ahora se usa CashPaymentModal y CardPaymentModal
+
+// Modal de Apertura de Caja
+class _CashOpenModal extends StatefulWidget {
+  final CajeroController controller;
+  final bool isTablet;
+
+  const _CashOpenModal({required this.controller, required this.isTablet});
+
+  @override
+  State<_CashOpenModal> createState() => _CashOpenModalState();
+}
+
+class _CashOpenModalState extends State<_CashOpenModal> {
+  final _efectivoInicialController = TextEditingController();
+  final _notaController = TextEditingController();
+
+  @override
+  void dispose() {
+    _efectivoInicialController.dispose();
+    _notaController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: Container(
+        width: widget.isTablet ? 500 : double.infinity,
+        padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Apertura de Caja',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 20.0 : 18.0,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Registra el efectivo inicial para comenzar el día',
+              style: TextStyle(
+                fontSize: widget.isTablet ? 14.0 : 12.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _efectivoInicialController,
+              decoration: const InputDecoration(
+                labelText: 'Efectivo inicial *',
+                hintText: '5000',
+                prefixIcon: Icon(Icons.money),
+                helperText: 'Cantidad de efectivo con la que inicias el día',
+              ),
+              keyboardType: TextInputType.number,
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _notaController,
+              decoration: const InputDecoration(
+                labelText: 'Nota (opcional)',
+                prefixIcon: Icon(Icons.note),
+                hintText: 'Observaciones sobre la apertura',
+              ),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _openCashRegister,
+                    icon: const Icon(Icons.lock_open),
+                    label: const Text('Abrir Caja'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCashRegister() async {
+    final efectivoInicial =
+        double.tryParse(_efectivoInicialController.text) ?? 0;
+
+    if (efectivoInicial <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ingresa un monto válido para el efectivo inicial'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await widget.controller.openCashRegister(
+        efectivoInicial: efectivoInicial,
+        nota: _notaController.text.trim().isEmpty
+            ? null
+            : _notaController.text.trim(),
+      );
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Caja abierta con \$${efectivoInicial.toStringAsFixed(2)}',
+          ),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al abrir caja: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+}
 
 class _CashCloseModal extends StatefulWidget {
   final CajeroController controller;
@@ -1616,25 +1794,34 @@ class _CashCloseModalState extends State<_CashCloseModal> {
     );
   }
 
-  void _sendCashClose() {
+  Future<void> _sendCashClose() async {
     final efectivo = double.tryParse(_efectivoContadoController.text) ?? 0;
     final tarjeta = double.tryParse(_totalTarjetaController.text) ?? 0;
     final otros = double.tryParse(_otrosIngresosController.text) ?? 0;
 
-    if (efectivo <= 0 || tarjeta <= 0) {
+    // Validar que al menos uno de los campos tenga valor
+    if (efectivo <= 0 && tarjeta <= 0 && otros <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Completa los campos obligatorios')),
+        const SnackBar(
+          content: Text('Ingresa al menos un monto para el cierre'),
+        ),
       );
       return;
     }
 
     final totalDeclarado = efectivo + tarjeta + otros;
 
+    // Obtener nombre del usuario del AuthController
+    final authController = Provider.of<AuthController>(context, listen: false);
+    final userName = authController.userName.isNotEmpty
+        ? authController.userName
+        : 'Cajero';
+
     final cashClose = CashCloseModel(
       id: 'close_${DateTime.now().millisecondsSinceEpoch}',
       fecha: DateTime.now(),
       periodo: 'Día',
-      usuario: 'Cajero', // TODO: Obtener del AuthController
+      usuario: userName,
       totalNeto: totalDeclarado,
       efectivo: efectivo,
       tarjeta: tarjeta,
@@ -1657,14 +1844,26 @@ class _CashCloseModalState extends State<_CashCloseModal> {
           id: 'log_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
           action: 'enviado',
-          usuario: 'Cajero', // TODO: Obtener del AuthController
-          mensaje: 'Cierre enviado por Cajero',
+          usuario: userName,
+          mensaje: 'Cierre enviado por $userName',
         ),
       ],
     );
 
-    widget.controller.sendCashClose(cashClose);
-    Navigator.of(context).pop();
+    try {
+      await widget.controller.sendCashClose(cashClose);
+      Navigator.of(context).pop();
+    } catch (e) {
+      // Si falla, aún cerrar el modal pero mostrar error
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al enviar cierre: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

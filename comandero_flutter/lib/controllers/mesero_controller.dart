@@ -1,12 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/table_model.dart';
 import '../models/product_model.dart';
 import '../models/payment_model.dart';
 import '../services/kitchen_order_service.dart';
 import '../services/bill_repository.dart';
+import '../services/ordenes_service.dart';
+import '../services/mesas_service.dart';
+import '../services/productos_service.dart';
+import '../services/categorias_service.dart';
+import '../services/socket_service.dart';
+import '../services/alertas_service.dart';
+import '../utils/date_utils.dart' as date_utils;
 
 class MeseroController extends ChangeNotifier {
   final BillRepository _billRepository;
+  final OrdenesService _ordenesService = OrdenesService();
+  final MesasService _mesasService = MesasService();
+  final ProductosService _productosService = ProductosService();
+  final CategoriasService _categoriasService = CategoriasService();
+  final AlertasService _alertasService = AlertasService();
 
   // Estado de las mesas
   List<TableModel> _tables = [];
@@ -18,22 +31,58 @@ class MeseroController extends ChangeNotifier {
   // Historial de pedidos por mesa (pedidos enviados a cocina)
   final Map<String, List<Map<String, dynamic>>> _tableOrderHistory = {};
 
+  // Bandera para controlar si se debe recargar el historial automáticamente
+  final Map<String, bool> _historyCleared = {};
+
+  // Storage para persistir el estado de historial limpiado
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
   // Notificaciones pendientes
   final List<Map<String, dynamic>> _pendingNotifications = [];
 
+  // Notificaciones limpiadas (guardadas en storage para persistencia)
+  final Set<String> _clearedNotifications = {};
+
+  // Órdenes para llevar ya enviadas al cajero (para filtrar del historial)
+  // Se persiste en storage para mantener después de logout/login
+  final Set<int> _sentToCashierOrders = {};
+
   // Estado de la vista actual
   String _currentView = 'floor';
+
+  // Información del cliente para pedidos "Para llevar"
+  String? _takeawayCustomerName;
+  String? _takeawayCustomerPhone;
+
+  // Estado de productos y categorías
+  List<ProductModel> _products = [];
+  List<Map<String, dynamic>> _categories = [];
 
   // Getters
   List<TableModel> get tables => _tables;
   TableModel? get selectedTable => _selectedTable;
   String get currentView => _currentView;
   List<Map<String, dynamic>> get pendingNotifications => _pendingNotifications;
+  String? get takeawayCustomerName => _takeawayCustomerName;
+  String? get takeawayCustomerPhone => _takeawayCustomerPhone;
+  bool get isTakeawayMode =>
+      _currentView == 'takeaway' ||
+      (_selectedTable == null && _takeawayCustomerName != null);
+  List<ProductModel> get products => _products;
+  List<Map<String, dynamic>> get categories => _categories;
 
-  // Obtener carrito de la mesa actual
+  // Obtener carrito de la mesa actual o del modo takeaway
   List<CartItem> getCurrentCart() {
-    if (_selectedTable == null) return [];
-    return _tableOrders[_selectedTable!.id.toString()] ?? [];
+    // Determinar la clave del carrito
+    String? cartKey;
+    if (_selectedTable != null) {
+      cartKey = _selectedTable!.id.toString();
+    } else if (isTakeawayMode) {
+      cartKey = 'takeaway';
+    }
+
+    if (cartKey == null) return [];
+    return _tableOrders[cartKey] ?? [];
   }
 
   // Obtener total de artículos en todos los carritos
@@ -42,82 +91,982 @@ class MeseroController extends ChangeNotifier {
   }
 
   MeseroController({required BillRepository billRepository})
-      : _billRepository = billRepository {
-    _initializeTables();
+    : _billRepository = billRepository {
+    // Inicialización simplificada para mejor rendimiento
+    _initializeAsync();
   }
 
-  void _initializeTables() {
-    _tables = [
-      TableModel(
-        id: 1,
-        number: 1,
-        status: TableStatus.libre,
-        seats: 4,
-        position: TablePosition(x: 1, y: 1),
-      ),
-      TableModel(
-        id: 2,
-        number: 2,
-        status: TableStatus.ocupada,
-        seats: 2,
-        customers: 2,
-        position: TablePosition(x: 2, y: 1),
-      ),
-      TableModel(
-        id: 3,
-        number: 3,
-        status: TableStatus.reservada,
-        seats: 6,
-        reservation: 'Familia López - 14:30',
-        position: TablePosition(x: 3, y: 1),
-      ),
-      TableModel(
-        id: 4,
-        number: 4,
-        status: TableStatus.enLimpieza,
-        seats: 4,
-        position: TablePosition(x: 1, y: 2),
-      ),
-      TableModel(
-        id: 5,
-        number: 5,
-        status: TableStatus.libre,
-        seats: 2,
-        position: TablePosition(x: 2, y: 2),
-      ),
-      TableModel(
-        id: 6,
-        number: 6,
-        status: TableStatus.ocupada,
-        seats: 8,
-        customers: 6,
-        position: TablePosition(x: 3, y: 2),
-      ),
-      TableModel(
-        id: 7,
-        number: 7,
-        status: TableStatus.libre,
-        seats: 4,
-        position: TablePosition(x: 1, y: 3),
-      ),
-      TableModel(
-        id: 8,
-        number: 8,
-        status: TableStatus.ocupada,
-        seats: 4,
-        customers: 4,
-        orderValue: 180,
-        position: TablePosition(x: 2, y: 3),
-      ),
-      TableModel(
-        id: 9,
-        number: 9,
-        status: TableStatus.libre,
-        seats: 2,
-        position: TablePosition(x: 3, y: 3),
-      ),
+  // Inicialización asíncrona optimizada
+  Future<void> _initializeAsync() async {
+    try {
+      // 1. PRIMERO cargar órdenes enviadas al cajero (CRÍTICO - antes de todo)
+      await _loadSentToCashierOrders();
+      print('✅ Órdenes enviadas al cajero cargadas: $_sentToCashierOrders');
+
+      // 2. Cargar mesas y productos en paralelo
+      await Future.wait([_initializeTables(), _loadProductsAndCategories()]);
+
+      // 3. DESPUÉS cargar historial de para llevar (para que el filtro funcione)
+      await loadTakeawayOrderHistory();
+
+      // 4. Cargar historial de todas las mesas con órdenes activas
+      await _loadAllTablesHistory();
+
+      // 5. CONECTAR Socket.IO PRIMERO antes de configurar listeners
+      print('🔌 Mesero: Conectando Socket.IO...');
+      try {
+        final socketService = SocketService();
+        if (!socketService.isConnected) {
+          await socketService.connect();
+          print('✅ Mesero: Socket.IO conectado exitosamente');
+        } else {
+          print('✅ Mesero: Socket.IO ya estaba conectado');
+        }
+      } catch (e) {
+        print('⚠️ Mesero: Error al conectar Socket.IO (continuando): $e');
+      }
+
+      // 6. Configurar listeners (ahora que Socket.IO está conectado)
+      _setupSocketListeners();
+
+      // 5. Cargar flags y notificaciones en background
+      _loadClearedHistoryFlags()
+          .then((_) {
+            _historyCleared.forEach((tableKey, isCleared) {
+              if (isCleared == true) {
+                _tableOrderHistory[tableKey] = [];
+              }
+            });
+          })
+          .catchError((e) {
+            print('Error cargando flags: $e');
+            return null;
+          });
+
+      _loadClearedNotifications().catchError((e) {
+        print('Error cargando notificaciones: $e');
+        return null;
+      });
+
+      // 6. Cargar alertas no leídas desde la BD (importante para cuando el usuario hace logout/login)
+      // IMPORTANTE: Esperar a que se carguen las alertas para asegurar que aparezcan
+      await _loadAlertasNoLeidas().catchError((e) {
+        print('❌ Error cargando alertas no leídas: $e');
+        return null;
+      });
+
+      print('✅ Mesero: Inicialización completada');
+    } catch (e) {
+      print('❌ Error en inicialización del mesero: $e');
+    }
+  }
+
+  // Cargar notificaciones limpiadas desde storage
+  Future<void> _loadClearedNotifications() async {
+    try {
+      final clearedData = await _storage.read(
+        key: 'mesero_cleared_notifications',
+      );
+      if (clearedData != null) {
+        final List<dynamic> clearedList = clearedData
+            .split(',')
+            .where((id) => id.isNotEmpty)
+            .toList();
+        _clearedNotifications.addAll(clearedList.map((id) => id.toString()));
+      }
+    } catch (e) {
+      print('Error al cargar notificaciones limpiadas: $e');
+    }
+  }
+
+  // Guardar notificaciones limpiadas en storage
+  Future<void> _saveClearedNotifications() async {
+    try {
+      final clearedData = _clearedNotifications.join(',');
+      await _storage.write(
+        key: 'mesero_cleared_notifications',
+        value: clearedData,
+      );
+    } catch (e) {
+      print('Error al guardar notificaciones limpiadas: $e');
+    }
+  }
+
+  // Verificar si una notificación fue limpiada
+  bool _isNotificationCleared(int ordenId, String tipo) {
+    final key = '$ordenId-$tipo';
+    return _clearedNotifications.contains(key);
+  }
+
+  // Marcar notificación como limpiada
+  Future<void> _markNotificationAsCleared(int ordenId, String tipo) async {
+    final key = '$ordenId-$tipo';
+    _clearedNotifications.add(key);
+    await _saveClearedNotifications();
+  }
+
+  // Cargar alertas no leídas desde la BD al iniciar sesión
+  // Esto es importante para cuando el usuario hace logout/login
+  // Las alertas que llegaron mientras estaba desconectado se cargan aquí
+  Future<void> _loadAlertasNoLeidas() async {
+    try {
+      print('📥 Mesero: Cargando alertas no leídas desde la BD...');
+      final alertas = await _alertasService.obtenerAlertasNoLeidas();
+
+      print(
+        '📊 Mesero: Respuesta del servicio de alertas: ${alertas.length} alertas',
+      );
+
+      if (alertas.isEmpty) {
+        print('📭 Mesero: No hay alertas no leídas para cargar');
+        // Aún así notificar cambios para actualizar UI
+        notifyListeners();
+        return;
+      }
+
+      print('📬 Mesero: ${alertas.length} alertas no leídas encontradas');
+      print(
+        '📋 Mesero: Detalles de alertas: ${alertas.map((a) => 'Orden ${a['ordenId']}: ${a['mensaje']}').join(', ')}',
+      );
+
+      // Procesar cada alerta y convertirla en notificación
+      for (final alerta in alertas) {
+        final ordenId = alerta['ordenId'] as int?;
+        final mensaje = alerta['mensaje'] as String?;
+        final metadata = alerta['metadata'] as Map<String, dynamic>? ?? {};
+
+        if (ordenId == null || mensaje == null) continue;
+
+        // Usar metadata.estado si está disponible, si no, inferir del mensaje
+        String tipo = 'listo';
+        String? estado = metadata['estado'] as String?;
+
+        if (estado == null) {
+          // Intentar determinar el tipo de alerta desde el mensaje (compatibilidad hacia atrás)
+          final mensajeLower = mensaje.toLowerCase();
+          if (mensajeLower.contains('preparación') ||
+              mensajeLower.contains('preparacion')) {
+            tipo = 'preparacion';
+            estado = 'preparacion';
+          } else if (mensajeLower.contains('listo')) {
+            tipo = 'listo';
+            estado = 'listo';
+          }
+        } else {
+          tipo = estado == 'preparacion' ? 'preparacion' : 'listo';
+        }
+
+        // Verificar si la notificación ya fue limpiada
+        if (_isNotificationCleared(ordenId, tipo)) {
+          print(
+            '🚫 Mesero: Alerta de orden $ordenId (tipo: $tipo) ya fue limpiada, ignorando',
+          );
+          continue;
+        }
+
+        // Determinar si es para llevar o de mesa
+        final mesaId = alerta['mesaId'] as int?;
+        final isTakeaway = metadata['isTakeaway'] as bool? ?? (mesaId == null);
+        final mesaCodigo = metadata['mesaCodigo'] as String?;
+
+        // Crear título y mensaje de notificación
+        String tituloNotificacion;
+        String mensajeNotificacion;
+
+        if (estado == 'preparacion') {
+          tituloNotificacion = 'Pedido en Preparación';
+          mensajeNotificacion = mensaje;
+        } else {
+          // Es "listo"
+          if (isTakeaway) {
+            tituloNotificacion = 'Pedido Para Llevar Listo';
+            mensajeNotificacion = 'Pedido #$ordenId está listo para recoger';
+          } else if (mesaCodigo != null) {
+            tituloNotificacion = 'Pedido Listo';
+            mensajeNotificacion =
+                'Pedido #$ordenId de Mesa $mesaCodigo está listo para servir';
+          } else {
+            tituloNotificacion = 'Pedido Listo';
+            mensajeNotificacion = mensaje;
+          }
+        }
+
+        // Agregar notificación
+        print(
+          '📝 Mesero: Agregando notificación - Título: $tituloNotificacion, Mensaje: $mensajeNotificacion, OrdenId: $ordenId, Tipo: $tipo',
+        );
+
+        addNotification(
+          tituloNotificacion,
+          mensajeNotificacion,
+          ordenId: ordenId,
+          tipo: tipo,
+        );
+
+        print(
+          '✅ Mesero: Notificación agregada exitosamente - $tituloNotificacion: $mensajeNotificacion (estado: $estado)',
+        );
+      }
+
+      // SIEMPRE notificar cambios para actualizar UI, incluso si no hay alertas
+      notifyListeners();
+      print(
+        '📊 Mesero: Total de notificaciones después de cargar alertas: ${_pendingNotifications.length}',
+      );
+      print(
+        '📊 Mesero: Notificaciones actuales: ${_pendingNotifications.map((n) => '${n['title']}: ${n['message']}').join(', ')}',
+      );
+    } catch (e) {
+      print('❌ Error al cargar alertas no leídas: $e');
+    }
+  }
+
+  // Cargar órdenes enviadas al cajero desde storage
+  Future<void> _loadSentToCashierOrders() async {
+    try {
+      final data = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+      print('📋 Storage data leído: $data');
+      if (data != null && data.isNotEmpty) {
+        final ids = data.split(',').where((id) => id.isNotEmpty);
+        for (final id in ids) {
+          final parsed = int.tryParse(id);
+          if (parsed != null) {
+            _sentToCashierOrders.add(parsed);
+          }
+        }
+        print(
+          '📋 Cargadas ${_sentToCashierOrders.length} órdenes enviadas al cajero: $_sentToCashierOrders',
+        );
+      } else {
+        print('📋 No hay órdenes enviadas al cajero guardadas');
+      }
+    } catch (e) {
+      print('Error al cargar órdenes enviadas al cajero: $e');
+    }
+  }
+
+  // Guardar órdenes enviadas al cajero en storage
+  Future<void> _saveSentToCashierOrders() async {
+    try {
+      final data = _sentToCashierOrders.map((id) => id.toString()).join(',');
+      await _storage.write(key: 'mesero_sent_to_cashier_orders', value: data);
+    } catch (e) {
+      print('Error al guardar órdenes enviadas al cajero: $e');
+    }
+  }
+
+  // Helper: Marcar orden como cerrada en el backend
+  // Esta es la FUENTE DE VERDAD para persistir entre reinicios de la app
+  Future<bool> _marcarOrdenComoCerradaEnBackend(int ordenId) async {
+    try {
+      final estados = await _ordenesService.getEstadosOrden();
+      print(
+        '📋 Estados disponibles en backend: ${estados.map((e) => e['nombre']).toList()}',
+      );
+
+      // Buscar estado "cerrada", "enviada", "cobrada" o similar
+      final estadoCerrada = estados.firstWhere((e) {
+        final nombre = (e['nombre'] as String?)?.toLowerCase() ?? '';
+        return nombre.contains('cerrada') ||
+            nombre.contains('enviada') ||
+            nombre.contains('cobrada') ||
+            nombre.contains('entregada') ||
+            nombre.contains('pagada');
+      }, orElse: () => {'id': null});
+
+      final estadoId = estadoCerrada['id'] as int?;
+      if (estadoId != null) {
+        await _ordenesService.cambiarEstado(ordenId, estadoId);
+        print(
+          '✅ Orden $ordenId marcada como "${estadoCerrada['nombre']}" en backend (ID: $estadoId)',
+        );
+        return true;
+      } else {
+        print(
+          '⚠️ No se encontró estado "cerrada" en backend. Estados disponibles: ${estados.map((e) => e['nombre']).toList()}',
+        );
+        return false;
+      }
+    } catch (e) {
+      print('❌ Error al marcar orden como cerrada en backend: $e');
+      return false;
+    }
+  }
+
+  // Cargar flags de historial limpiado desde storage
+  Future<void> _loadClearedHistoryFlags() async {
+    try {
+      final clearedTablesJson =
+          await _storage.read(key: 'cleared_table_history') ?? '{}';
+      // Parsear JSON simple: {"1":true,"2":true}
+      final clearedTables = <String, bool>{};
+      if (clearedTablesJson != '{}' && clearedTablesJson.isNotEmpty) {
+        final entries = clearedTablesJson
+            .replaceAll('{', '')
+            .replaceAll('}', '')
+            .split(',');
+        for (final entry in entries) {
+          if (entry.isNotEmpty) {
+            final parts = entry.split(':');
+            if (parts.length == 2) {
+              final tableId = parts[0]
+                  .trim()
+                  .replaceAll('"', '')
+                  .replaceAll("'", '');
+              final isCleared = parts[1].trim() == 'true';
+              if (tableId.isNotEmpty) {
+                clearedTables[tableId] = isCleared;
+              }
+            }
+          }
+        }
+      }
+      _historyCleared.addAll(clearedTables);
+      final clearedTablesList = _historyCleared.entries
+          .where((e) => e.value == true)
+          .map((e) => e.key)
+          .toList();
+      print('📋 Mesero: Historiales limpiados cargados: $clearedTablesList');
+      print(
+        '📋 Mesero: Total de mesas con historial limpiado: ${clearedTablesList.length}',
+      );
+
+      // Limpiar el historial en memoria para las mesas que fueron limpiadas
+      for (final tableKey in clearedTablesList) {
+        _tableOrderHistory[tableKey] = [];
+      }
+    } catch (e) {
+      print('Error al cargar flags de historial limpiado: $e');
+    }
+  }
+
+  // No guardar historial localmente - Backend es fuente de verdad
+  Future<void> _savePersistedHistory() async {
+    // No hacer nada - el historial se carga siempre del backend
+  }
+
+  // Guardar flags de historial limpiado en storage
+  Future<void> _saveClearedHistoryFlags() async {
+    try {
+      // Convertir mapa a JSON simple
+      final clearedEntries = _historyCleared.entries
+          .where((e) => e.value == true) // Solo guardar los que están limpiados
+          .toList();
+
+      if (clearedEntries.isEmpty) {
+        await _storage.write(key: 'cleared_table_history', value: '{}');
+        print('💾 Mesero: No hay historiales limpiados para guardar');
+        return;
+      }
+
+      final entries = clearedEntries
+          .map((e) => '"${e.key}":${e.value}')
+          .join(',');
+      final json = '{$entries}';
+
+      print(
+        '💾 Mesero: Guardando historiales limpiados: ${clearedEntries.map((e) => e.key).toList()}',
+      );
+      await _storage.write(key: 'cleared_table_history', value: json);
+
+      // Verificar que se guardó correctamente
+      final verification = await _storage.read(key: 'cleared_table_history');
+      print(
+        '✅ Mesero: Historiales limpiados guardados: ${clearedEntries.map((e) => e.key).toList()}',
+      );
+      print('✅ Mesero: Verificación de storage: $verification');
+    } catch (e) {
+      print('❌ Mesero: Error al guardar flags de historial limpiado: $e');
+      rethrow; // Re-lanzar para que se pueda manejar el error
+    }
+  }
+
+  // Configurar listeners de Socket.IO
+  // NUEVO SISTEMA SIMPLIFICADO: Backend es fuente de verdad
+  void _setupSocketListeners() {
+    final socketService = SocketService();
+
+    // Estados FINALIZADOS que deben remover la orden del historial
+    final estadosFinalizados = [
+      'pagada',
+      'cancelada',
+      'cerrada',
+      'cobrada',
+      'entregada',
+      'enviada',
     ];
-    notifyListeners();
+
+    // Escuchar actualizaciones de órdenes
+    socketService.onOrderUpdated((data) async {
+      try {
+        final ordenId = data['id'] as int?;
+        final estadoNombre = data['estadoNombre'] as String?;
+        final mesaId = data['mesaId'] as int?;
+        final mesaCodigo = data['mesaCodigo'] as String?;
+
+        if (ordenId != null && estadoNombre != null) {
+          final estadoLower = estadoNombre.toLowerCase();
+
+          // Verificar si es un estado finalizado
+          bool esEstadoFinalizado = false;
+          for (final estadoFinal in estadosFinalizados) {
+            if (estadoLower.contains(estadoFinal)) {
+              esEstadoFinalizado = true;
+              break;
+            }
+          }
+
+          // Actualizar o remover orden del historial
+          bool ordenActualizada = false;
+          _tableOrderHistory.forEach((tableId, orders) {
+            // Actualizar el estado de la orden
+            for (var order in orders) {
+              if (order['ordenId'] == ordenId) {
+                order['status'] = estadoNombre;
+                ordenActualizada = true;
+                break;
+              }
+            }
+
+            // Si es estado finalizado, remover del historial
+            if (esEstadoFinalizado) {
+              final antes = orders.length;
+              orders.removeWhere((o) => o['ordenId'] == ordenId);
+              if (orders.length < antes) {
+                print(
+                  '🗑️ Orden $ordenId removida del historial (estado: $estadoLower)',
+                );
+              }
+            }
+          });
+
+          // Si no se encontró y es para llevar, recargar historial de takeaway
+          if (!ordenActualizada && mesaId == null && !esEstadoFinalizado) {
+            await loadTakeawayOrderHistory();
+          }
+
+          notifyListeners();
+
+          // Mostrar notificación para estados importantes
+          final esEstadoImportante =
+              estadoLower.contains('preparacion') ||
+              estadoLower.contains('preparación') ||
+              estadoLower.contains('cooking') ||
+              estadoLower.contains('iniciar') ||
+              estadoLower.contains('listo');
+
+          if (esEstadoImportante) {
+            // Intentar determinar si es para llevar desde el historial local o del evento
+            final isTakeawayFromData =
+                data['isTakeaway'] as bool? ??
+                data['esParaLlevar'] as bool? ??
+                estadoLower.contains('recoger');
+
+            // Buscar también en el historial local
+            bool isTakeaway = isTakeawayFromData;
+            if (!isTakeaway) {
+              for (var orders in _tableOrderHistory.values) {
+                final orderFound = orders.firstWhere(
+                  (o) => o['ordenId'] == ordenId,
+                  orElse: () => <String, dynamic>{},
+                );
+                if (orderFound.isNotEmpty) {
+                  isTakeaway = orderFound['isTakeaway'] == true;
+                  break;
+                }
+              }
+            }
+
+            final notificacion = _crearNotificacionOrden(
+              ordenId: ordenId,
+              estadoNombre: estadoNombre,
+              mesaId: mesaId,
+              mesaCodigo: mesaCodigo,
+              isTakeaway: isTakeaway,
+            );
+
+            final tipoNotif = estadoLower.contains('listo')
+                ? 'listo'
+                : 'preparacion';
+
+            if (!_isNotificationCleared(ordenId, tipoNotif)) {
+              addNotification(
+                notificacion['titulo']!,
+                notificacion['mensaje']!,
+                ordenId: ordenId,
+                tipo: tipoNotif,
+              );
+            }
+          }
+        }
+      } catch (e) {
+        print('Error al procesar actualización de orden: $e');
+      }
+    });
+
+    // Escuchar cancelaciones de órdenes
+    socketService.onOrderCancelled((data) {
+      try {
+        final ordenId = data['id'] as int?;
+
+        if (ordenId != null) {
+          // Remover de todos los historiales
+          _tableOrderHistory.forEach((tableId, orders) {
+            orders.removeWhere((order) => order['ordenId'] == ordenId);
+          });
+          notifyListeners();
+
+          addNotification(
+            '❌ Orden Cancelada',
+            'La orden #$ordenId ha sido cancelada',
+            ordenId: ordenId,
+            tipo: 'cancelada',
+          );
+        }
+      } catch (e) {
+        print('Error al procesar cancelación de orden: $e');
+      }
+    });
+
+    // Escuchar actualizaciones de mesas
+    socketService.onAlertaMesa((data) {
+      try {
+        // Recargar mesas cuando haya cambios
+        loadTables();
+      } catch (e) {
+        print('Error al procesar actualización de mesa: $e');
+      }
+    });
+
+    // Escuchar eventos de mesas
+    socketService.onTableCreated((data) {
+      try {
+        final mesaId = data['id'] as int?;
+        final ubicacion = data['ubicacion'] as String?;
+        print(
+          '📢 Mesero: Mesa creada recibida vía socket - Mesa ID: $mesaId, Área: $ubicacion',
+        );
+        // Recargar mesas cuando se crea una nueva (puede tener un área nueva)
+        // Esto asegura que las áreas nuevas creadas en admin se reflejen en mesero
+        loadTables();
+        notifyListeners();
+        print(
+          '✅ Mesero: Mesas recargadas después de creación (área nueva sincronizada)',
+        );
+      } catch (e) {
+        print('Error al procesar mesa creada en mesero: $e');
+      }
+    });
+
+    socketService.onTableUpdated((data) {
+      try {
+        final mesaId = data['id'] as int?;
+        final estadoNombre = data['estadoNombre'] as String?;
+        final ubicacion = data['ubicacion'] as String?;
+        print(
+          '📢 Mesero: Mesa actualizada recibida vía socket - Mesa ID: $mesaId, Estado: $estadoNombre, Área: $ubicacion',
+        );
+
+        // Recargar mesas cuando se actualiza una mesa (desde otro rol)
+        // Esto asegura que los cambios del admin (incluyendo cambios de área) se reflejen en mesero
+        // Usar un pequeño delay para agrupar múltiples actualizaciones si vienen en rápida sucesión
+        Future.delayed(const Duration(milliseconds: 200), () async {
+          try {
+            await loadTables();
+            notifyListeners();
+            print(
+              '✅ Mesero: Mesas recargadas después de actualización de área',
+            );
+          } catch (e) {
+            print('❌ Error al recargar mesas en mesero: $e');
+          }
+        });
+      } catch (e) {
+        print('Error al procesar mesa actualizada en mesero: $e');
+      }
+    });
+
+    socketService.onTableDeleted((data) {
+      try {
+        final mesaId = data['id'] as int?;
+        print(
+          '📢 Mesero: Mesa eliminada recibida vía socket - Mesa ID: $mesaId',
+        );
+
+        // Eliminar la mesa de la lista local inmediatamente
+        if (mesaId != null) {
+          _tables.removeWhere((t) => t.id == mesaId);
+          // Si la mesa eliminada estaba seleccionada, deseleccionarla
+          if (_selectedTable?.id == mesaId) {
+            _selectedTable = null;
+          }
+          notifyListeners();
+          print('✅ Mesero: Mesa $mesaId eliminada de la lista local');
+        }
+
+        // Recargar mesas desde el backend para asegurar sincronización completa
+        loadTables();
+      } catch (e) {
+        print('❌ Error al procesar mesa eliminada en mesero: $e');
+        // Si hay error, recargar desde el backend
+        loadTables();
+      }
+    });
+
+    // Escuchar alertas de cocina (pedido listo/preparación) - OPTIMIZADO
+    socketService.onAlertaCocina((data) {
+      try {
+        print('🔔 Mesero: Alerta de cocina recibida: $data');
+
+        // Verificar si es una alerta de preparación o de listo
+        // El estado puede venir directamente en data['estado'] O en data['metadata']['estado']
+        final metadata = data['metadata'] as Map<String, dynamic>?;
+        final estado =
+            (data['estado'] as String?) ?? (metadata?['estado'] as String?);
+        final ordenId = data['ordenId'] as int?;
+        final mensaje = data['mensaje'] as String?;
+
+        print('📋 Mesero: Estado parseado: $estado, ordenId: $ordenId');
+
+        // Si es alerta de preparación, agregar notificación Y actualizar historial
+        if (estado == 'preparacion' && ordenId != null && mensaje != null) {
+          final mesaId = data['mesaId'] as int?;
+          final isTakeaway = metadata?['isTakeaway'] as bool? ?? false;
+
+          // Actualizar estado en el historial INMEDIATAMENTE
+          bool estadoActualizado = false;
+          _tableOrderHistory.forEach((tableId, orders) {
+            for (var order in orders) {
+              if (order['ordenId'] == ordenId) {
+                order['status'] = 'En Preparación';
+                estadoActualizado = true;
+                notifyListeners(); // Notificar cambios inmediatamente
+                break;
+              }
+            }
+          });
+
+          // Si la orden no está en el historial, intentar agregarla
+          if (!estadoActualizado) {
+            // Para órdenes "para llevar", buscar en historial de takeaway
+            if (isTakeaway || mesaId == null) {
+              _tableOrderHistory.forEach((tableId, orders) {
+                if (tableId.startsWith('takeaway-')) {
+                  for (var order in orders) {
+                    if (order['ordenId'] == ordenId) {
+                      order['status'] = 'En Preparación';
+                      estadoActualizado = true;
+                      notifyListeners();
+                      break;
+                    }
+                  }
+                }
+              });
+            }
+          }
+
+          // Verificar si la notificación ya fue limpiada
+          if (!_isNotificationCleared(ordenId, 'preparacion')) {
+            addNotification(
+              'Pedido en Preparación',
+              mensaje,
+              ordenId: ordenId,
+              tipo: 'preparacion',
+            );
+            print(
+              '✅ Mesero: Notificación de preparación agregada desde alerta.cocina - $mensaje',
+            );
+            print(
+              '✅ Mesero: Estado actualizado en historial para orden $ordenId',
+            );
+          } else {
+            print(
+              '🚫 Mesero: Notificación de preparación ignorada porque ya fue limpiada',
+            );
+          }
+          return; // No procesar más si es alerta de preparación
+        }
+
+        // Continuar con el procesamiento normal de alertas de "listo"
+        // (si estado es 'listo' o no hay estado especificado - compatibilidad hacia atrás)
+        // Si el estado es algo diferente de 'listo' o null, y NO es 'preparacion' (ya procesado arriba), ignorar
+        if (estado != null && estado != 'listo') {
+          // Si ya se procesó como preparación, no debería llegar aquí
+          if (estado == 'preparacion') {
+            return; // Ya se procesó arriba, esto no debería pasar
+          }
+          print('⚠️ Mesero: Estado desconocido: $estado, ignorando alerta');
+          return;
+        }
+
+        // Si llegamos aquí, es una alerta de "listo" (estado == 'listo' o null)
+
+        final mesaId = data['mesaId'] as int?;
+        final mesaCodigo = metadata?['mesaCodigo'] as String?;
+        final isTakeaway = metadata?['isTakeaway'] as bool? ?? false;
+
+        if (ordenId != null) {
+          print(
+            '🔔 Mesero: Procesando alerta de LISTO para orden $ordenId (isTakeaway: $isTakeaway)',
+          );
+
+          // Actualizar estado en el historial INMEDIATAMENTE
+          bool estadoActualizado = false;
+          final nuevoStatus = isTakeaway ? 'Listo para Recoger' : 'Listo';
+
+          _tableOrderHistory.forEach((tableId, orders) {
+            for (var order in orders) {
+              if (order['ordenId'] == ordenId) {
+                order['status'] = nuevoStatus;
+                estadoActualizado = true;
+                print(
+                  '✅ Mesero: Estado actualizado a "$nuevoStatus" para orden $ordenId en historial "$tableId"',
+                );
+                break;
+              }
+            }
+          });
+
+          if (!estadoActualizado) {
+            print(
+              '⚠️ Mesero: Orden $ordenId no encontrada en ningún historial local',
+            );
+          }
+
+          // Crear mensaje más descriptivo para la notificación
+          String tituloNotificacion;
+          String mensajeNotificacion;
+
+          if (isTakeaway) {
+            tituloNotificacion = 'Pedido Para Llevar Listo';
+            mensajeNotificacion = 'Pedido #$ordenId está listo para recoger';
+          } else if (mesaCodigo != null) {
+            tituloNotificacion = 'Pedido Listo';
+            mensajeNotificacion =
+                'Pedido #$ordenId de Mesa $mesaCodigo está listo para servir';
+          } else if (mesaId != null) {
+            tituloNotificacion = 'Pedido Listo';
+            mensajeNotificacion =
+                'Pedido #$ordenId de Mesa $mesaId está listo para servir';
+          } else {
+            tituloNotificacion = 'Pedido Listo';
+            mensajeNotificacion = 'Pedido #$ordenId está listo';
+          }
+
+          // Verificar si la notificación ya fue limpiada antes de agregarla
+          if (!_isNotificationCleared(ordenId, 'listo')) {
+            // Agregar notificación INMEDIATAMENTE (esto actualiza el icono de campanita)
+            // Usar ordenId y tipo para evitar duplicados
+            addNotification(
+              tituloNotificacion,
+              mensajeNotificacion,
+              ordenId: ordenId,
+              tipo:
+                  'listo', // Tipo fijo porque alerta.cocina siempre es para pedido listo
+            );
+          } else {
+            print(
+              '🚫 Mesero: Notificación de orden $ordenId (tipo: listo) ignorada porque ya fue limpiada',
+            );
+          }
+
+          print(
+            '✅ Mesero: Notificación agregada - $tituloNotificacion: $mensajeNotificacion (ordenId: $ordenId)',
+          );
+          print(
+            '📊 Total de notificaciones pendientes: ${_pendingNotifications.length}',
+          );
+
+          // Notificar cambios INMEDIATAMENTE
+          if (estadoActualizado) {
+            notifyListeners();
+          }
+
+          // Si hay mesaId, recargar el historial de esa mesa (en background)
+          // Siempre recargar historial del backend para obtener órdenes activas
+          if (mesaId != null) {
+            loadTableOrderHistory(mesaId);
+          }
+        } else {
+          print('⚠️ Mesero: Alerta recibida sin ordenId: $data');
+        }
+      } catch (e, stackTrace) {
+        print('❌ Error al procesar alerta de cocina en mesero: $e');
+        print('Stack trace: $stackTrace');
+      }
+    });
+  }
+
+  // Mapa para guardar ordenId por mesa
+  final Map<String, int> _tableOrderIds = {};
+
+  // Cargar mesas desde el backend
+  Future<void> loadTables() async {
+    try {
+      final backendMesas = await _mesasService.getMesas();
+      // Filtrar mesas inactivas (activo = false) - el backend marca como inactivo en lugar de eliminar
+      final mesasActivas = backendMesas.where((m) {
+        final data = m as Map<String, dynamic>;
+        return (data['activo'] as bool?) ?? true; // Solo incluir mesas activas
+      }).toList();
+
+      _tables = mesasActivas
+          .map((json) => _mapBackendToTableModel(json as Map<String, dynamic>))
+          .toList();
+      notifyListeners();
+      print('✅ Mesero: ${_tables.length} mesas activas cargadas');
+    } catch (e) {
+      print('❌ Error al cargar mesas: $e');
+      _tables = []; // Mantener lista vacía si falla la carga
+      notifyListeners();
+    }
+  }
+
+  // Helper para mapear datos del backend a TableModel
+  TableModel _mapBackendToTableModel(Map<String, dynamic> data) {
+    final codigo = data['codigo'] as String?;
+    final numero = codigo != null
+        ? int.tryParse(codigo) ?? 0
+        : (data['id'] as int? ?? 0);
+    final estadoNombre =
+        (data['estadoNombre'] as String?)?.toLowerCase() ?? 'libre';
+
+    // Mapear estado del backend a estado del frontend
+    String status = TableStatus.libre;
+    final estadoLower = estadoNombre.toLowerCase().trim();
+
+    if (estadoLower.contains('ocupad') || estadoLower == 'ocupada') {
+      status = TableStatus.ocupada;
+    } else if (estadoLower.contains('limpieza') ||
+        estadoLower == 'en limpieza' ||
+        estadoLower == 'en-limpieza') {
+      status = TableStatus.enLimpieza;
+    } else if (estadoLower.contains('reservad') || estadoLower == 'reservada') {
+      status = TableStatus.reservada;
+    } else if (estadoLower.contains('libre') || estadoLower == 'libre') {
+      status = TableStatus.libre;
+    }
+
+    // Calcular posición basada en el número de mesa (simple grid layout)
+    final tableId = data['id'] as int;
+    final tableNumber = numero;
+    final x = ((tableNumber - 1) % 3) + 1;
+    final y = ((tableNumber - 1) ~/ 3) + 1;
+
+    return TableModel(
+      id: tableId,
+      number: tableNumber,
+      status: status,
+      seats: data['capacidad'] as int? ?? 4,
+      customers: null,
+      orderValue: null,
+      reservation: null,
+      position: TablePosition(x: x, y: y),
+      section: data['ubicacion'] as String?,
+    );
+  }
+
+  // Inicializar mesas (ahora desde el backend)
+  Future<void> _initializeTables() async {
+    await loadTables();
+  }
+
+  // Cargar productos y categorías desde el backend
+  Future<void> _loadProductsAndCategories() async {
+    await Future.wait([loadProducts(), loadCategories()]);
+  }
+
+  // Cargar productos desde el backend
+  Future<void> loadProducts() async {
+    try {
+      final backendProducts = await _productosService.getProductos();
+      _products = backendProducts
+          .map((p) => _mapBackendToProductModel(p as Map<String, dynamic>))
+          .where((p) => p.available) // Solo productos disponibles
+          .toList();
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar productos: $e');
+      _products = [];
+      notifyListeners();
+    }
+  }
+
+  // Cargar categorías desde el backend
+  Future<void> loadCategories() async {
+    try {
+      final backendCategories = await _categoriasService.getCategorias();
+      _categories = backendCategories
+          .map((c) => c as Map<String, dynamic>)
+          .toList();
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar categorías: $e');
+      _categories = [];
+      notifyListeners();
+    }
+  }
+
+  // Mapear producto del backend a ProductModel
+  ProductModel _mapBackendToProductModel(Map<String, dynamic> data) {
+    // Obtener el nombre de la categoría
+    final categoriaNombre =
+        data['categoriaNombre'] as String? ??
+        data['categoria'] as String? ??
+        'Otros';
+
+    // Mapear nombre de categoría a ID de categoría
+    int categoryId = _getCategoryIdFromName(categoriaNombre);
+
+    // Obtener precio (puede venir de tamanos si tiene tamaños)
+    double price = 0.0;
+    if (data['tamanos'] != null && (data['tamanos'] as List).isNotEmpty) {
+      // Si tiene tamaños, usar el precio del primer tamaño
+      final tamanos = data['tamanos'] as List;
+      if (tamanos.isNotEmpty) {
+        price =
+            (tamanos[0]['precio'] as num?)?.toDouble() ??
+            (data['precio'] as num?)?.toDouble() ??
+            0.0;
+      }
+    } else {
+      price = (data['precio'] as num?)?.toDouble() ?? 0.0;
+    }
+
+    return ProductModel(
+      id: data['id'] as int,
+      name: data['nombre'] as String,
+      description: data['descripcion'] as String? ?? '',
+      price: price,
+      image: null,
+      category: categoryId,
+      available: data['disponible'] as bool? ?? true,
+      hot: data['picante'] as bool? ?? false,
+      extras: null,
+      customizations: null,
+    );
+  }
+
+  // Obtener ID de categoría desde el nombre
+  int _getCategoryIdFromName(String categoryName) {
+    final normalized = categoryName.toLowerCase();
+    if (normalized.contains('taco')) {
+      return ProductCategory.tacos;
+    } else if (normalized.contains('plato') ||
+        normalized.contains('especial')) {
+      return ProductCategory.platosEspeciales;
+    } else if (normalized.contains('acompañamiento') ||
+        normalized.contains('acompanamiento')) {
+      return ProductCategory.acompanamientos;
+    } else if (normalized.contains('bebida')) {
+      return ProductCategory.bebidas;
+    } else if (normalized.contains('consom') ||
+        normalized.contains('consome')) {
+      return ProductCategory.consomes;
+    } else if (normalized.contains('salsa') || normalized.contains('extra')) {
+      return ProductCategory.extras;
+    }
+    return ProductCategory.tacos; // Default
   }
 
   // Cambiar vista actual
@@ -130,55 +1079,176 @@ class MeseroController extends ChangeNotifier {
   void selectTable(TableModel table) {
     _selectedTable = table;
     setCurrentView('table');
+
+    // Notificar cambio inmediatamente para actualizar la UI
+    notifyListeners();
+
+    // Cargar historial de forma asíncrona respetando los flags
+    _loadHistoryForTable(table.id);
+  }
+
+  // Seleccionar vista de Para Llevar
+  void selectTakeawayView() {
+    _selectedTable = null; // No hay mesa seleccionada para "Para llevar"
+    setCurrentView('takeaway');
+
+    // Notificar cambio inmediatamente para actualizar la UI
+    notifyListeners();
+
+    // Cargar historial de órdenes para llevar
+    loadTakeawayOrderHistory();
+  }
+
+  // Establecer información del cliente para pedido "Para llevar"
+  void setTakeawayCustomerInfo(String name, String phone) {
+    _takeawayCustomerName = name;
+    _takeawayCustomerPhone = phone;
+    _selectedTable = null; // Asegurar que no hay mesa seleccionada
+    notifyListeners();
+    print('📦 Mesero: Cliente para llevar: $name, Tel: $phone');
+  }
+
+  // Limpiar información del cliente "Para llevar"
+  void clearTakeawayCustomerInfo() {
+    _takeawayCustomerName = null;
+    _takeawayCustomerPhone = null;
     notifyListeners();
   }
 
+  // Método auxiliar para cargar historial desde el backend
+  // SIEMPRE carga del backend para obtener órdenes activas
+  // El flag _historyCleared ya no bloquea la carga - las órdenes activas siempre deben mostrarse
+  Future<void> _loadHistoryForTable(int tableId) async {
+    // Siempre cargar historial desde el backend
+    // Las órdenes activas (abierta, en_preparacion, listo) siempre deben aparecer
+    await loadTableOrderHistory(tableId);
+  }
+
   // Cambiar estado de mesa
-  void changeTableStatus(int tableId, String newStatus) {
-    _tables = _tables.map((table) {
-      if (table.id == tableId) {
-        return table.copyWith(
+  Future<void> changeTableStatus(int tableId, String newStatus) async {
+    try {
+      // Obtener estados de mesa disponibles
+      final estados = await _mesasService.getEstadosMesa();
+
+      // Mapear estado del frontend al ID del backend
+      int? estadoMesaId;
+      final statusLower = newStatus.toLowerCase();
+
+      if (statusLower.contains('libre')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('libre'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 1},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('ocupada') ||
+          statusLower.contains('ocupado')) {
+        final estado = estados.firstWhere(
+          (e) =>
+              (e['nombre'] as String).toLowerCase().contains('ocupada') ||
+              (e['nombre'] as String).toLowerCase().contains('ocupado'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 2},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('limpieza')) {
+        final estado = estados.firstWhere(
+          (e) => (e['nombre'] as String).toLowerCase().contains('limpieza'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 3},
+        );
+        estadoMesaId = estado['id'] as int;
+      } else if (statusLower.contains('reservada') ||
+          statusLower.contains('reservado')) {
+        final estado = estados.firstWhere(
+          (e) =>
+              (e['nombre'] as String).toLowerCase().contains('reservada') ||
+              (e['nombre'] as String).toLowerCase().contains('reservado'),
+          orElse: () => estados.isNotEmpty ? estados[0] : {'id': 4},
+        );
+        estadoMesaId = estado['id'] as int;
+      }
+
+      if (estadoMesaId == null) {
+        throw Exception('Estado de mesa no encontrado: $newStatus');
+      }
+
+      // Actualizar estado en BD
+      await _mesasService.cambiarEstadoMesa(tableId, estadoMesaId);
+
+      // Actualizar estado localmente después de confirmar en el backend
+      final mesaIndex = _tables.indexWhere((t) => t.id == tableId);
+      if (mesaIndex != -1) {
+        final mesaActual = _tables[mesaIndex];
+        final mesaActualizada = TableModel(
+          id: mesaActual.id,
+          number: mesaActual.number,
           status: newStatus,
-          customers:
-              (newStatus == TableStatus.libre ||
-                  newStatus == TableStatus.enLimpieza)
-              ? null
-              : table.customers,
-          orderValue:
-              (newStatus == TableStatus.libre ||
-                  newStatus == TableStatus.enLimpieza)
-              ? null
-              : table.orderValue,
+          seats: mesaActual.seats,
+          customers: mesaActual.customers,
+          orderValue: mesaActual.orderValue,
+          reservation: mesaActual.reservation,
+          position: mesaActual.position,
+          section: mesaActual.section,
+        );
+        _tables[mesaIndex] = mesaActualizada;
+        notifyListeners(); // Notificar inmediatamente para actualizar UI
+        print(
+          '✅ Mesero: Estado de mesa ${mesaActual.number} actualizado a "$newStatus"',
         );
       }
-      return table;
-    }).toList();
-    notifyListeners();
+
+      // NO recargar inmediatamente - el estado ya está actualizado localmente
+      // El evento de socket se encargará de sincronizar con otros roles
+      // Solo recargar en segundo plano después de un delay para verificar sincronización
+      Future.delayed(const Duration(seconds: 2), () async {
+        try {
+          await loadTables();
+        } catch (e) {
+          print('⚠️ Error al recargar mesas en segundo plano (mesero): $e');
+        }
+      });
+    } catch (e) {
+      print('Error al cambiar estado de mesa: $e');
+      rethrow;
+    }
   }
 
   // Agregar producto al carrito
   void addToCart(ProductModel product, {Map<String, dynamic>? customizations}) {
-    if (_selectedTable == null) return;
+    // Determinar la clave del carrito: mesa seleccionada o "takeaway" para pedidos para llevar
+    String cartKey;
+    if (_selectedTable != null) {
+      cartKey = _selectedTable!.id.toString();
+    } else if (isTakeawayMode) {
+      cartKey = 'takeaway';
+    } else {
+      // Si no hay mesa ni modo takeaway, no hacer nada
+      return;
+    }
 
     final cartItem = CartItem(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       product: product,
       customizations: customizations ?? {},
-      tableId: _selectedTable!.id.toString(),
+      tableId: cartKey,
     );
 
-    final tableId = _selectedTable!.id.toString();
-    _tableOrders[tableId] = [...(_tableOrders[tableId] ?? []), cartItem];
+    _tableOrders[cartKey] = [...(_tableOrders[cartKey] ?? []), cartItem];
     notifyListeners();
   }
 
   // Remover producto del carrito
   void removeFromCart(String itemId) {
-    if (_selectedTable == null) return;
+    // Determinar la clave del carrito
+    String? cartKey;
+    if (_selectedTable != null) {
+      cartKey = _selectedTable!.id.toString();
+    } else if (isTakeawayMode) {
+      cartKey = 'takeaway';
+    }
 
-    final tableId = _selectedTable!.id.toString();
-    if (_tableOrders[tableId] != null) {
-      _tableOrders[tableId] = _tableOrders[tableId]!
+    if (cartKey == null) return;
+
+    if (_tableOrders[cartKey] != null) {
+      _tableOrders[cartKey] = _tableOrders[cartKey]!
           .where((item) => item.id != itemId)
           .toList();
       notifyListeners();
@@ -187,10 +1257,17 @@ class MeseroController extends ChangeNotifier {
 
   // Limpiar carrito de la mesa actual
   void clearCart() {
-    if (_selectedTable == null) return;
+    // Determinar la clave del carrito
+    String? cartKey;
+    if (_selectedTable != null) {
+      cartKey = _selectedTable!.id.toString();
+    } else if (isTakeawayMode) {
+      cartKey = 'takeaway';
+    }
 
-    final tableId = _selectedTable!.id.toString();
-    _tableOrders[tableId] = [];
+    if (cartKey == null) return;
+
+    _tableOrders[cartKey] = [];
     notifyListeners();
   }
 
@@ -209,10 +1286,32 @@ class MeseroController extends ChangeNotifier {
     );
   }
 
-  // Calcular total del carrito actual
+  // Calcular total del carrito actual (incluyendo extras y salsas)
   double calculateTotal() {
     final cart = getCurrentCart();
-    return cart.fold(0.0, (total, item) => total + item.product.price);
+    return cart.fold(0.0, (total, item) {
+      final qty = (item.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
+      double itemTotal = item.product.price * qty;
+
+      // Agregar precio de extras si existen
+      final extraPrices =
+          item.customizations['extraPrices'] as List<dynamic>? ?? [];
+      for (var priceEntry in extraPrices) {
+        if (priceEntry is Map) {
+          final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
+          itemTotal += precio * qty; // Multiplicar por cantidad
+        }
+      }
+
+      // Agregar precio de salsa si existe (usando el precio real guardado)
+      final saucePrice =
+          (item.customizations['saucePrice'] as num?)?.toDouble() ?? 0.0;
+      if (saucePrice > 0) {
+        itemTotal += saucePrice * qty;
+      }
+
+      return total + itemTotal;
+    });
   }
 
   // Obtener estadísticas de ocupación
@@ -231,10 +1330,14 @@ class MeseroController extends ChangeNotifier {
 
   // Calcular porcentaje de ocupación
   double getOccupancyRate() {
+    if (_tables.isEmpty) return 0.0;
     final occupiedTables = _tables
         .where((t) => t.status != TableStatus.libre)
         .length;
-    return (occupiedTables / _tables.length) * 100;
+    final totalTables = _tables.length;
+    if (totalTables == 0) return 0.0;
+    final rate = (occupiedTables / totalTables) * 100;
+    return rate.isNaN || rate.isInfinite ? 0.0 : rate;
   }
 
   // Actualizar número de comensales en una mesa
@@ -256,13 +1359,188 @@ class MeseroController extends ChangeNotifier {
   }
 
   // Obtener historial de pedidos de una mesa
+  // NUEVO SISTEMA: Siempre obtiene del backend como fuente de verdad
+  // Solo incluye órdenes con estados ACTIVOS (abierta, en_preparacion, listo)
   List<Map<String, dynamic>> getTableOrderHistory(int tableId) {
-    return _tableOrderHistory[tableId.toString()] ?? [];
+    final tableKey = tableId.toString();
+
+    // Obtener historial de memoria
+    final historial = _tableOrderHistory[tableKey] ?? [];
+
+    // FILTRADO ESTRICTO: Solo órdenes con estados activos
+    // Estados válidos: abierta, en_preparacion, listo, pendiente
+    // Estados EXCLUIDOS: pagada, cancelada, cerrada, cobrada
+    final historialFiltrado = historial.where((order) {
+      final status = (order['status'] as String?)?.toLowerCase() ?? '';
+
+      // Lista de estados FINALIZADOS que NO deben aparecer
+      final estadosFinalizados = [
+        'pagada',
+        'cancelada',
+        'cerrada',
+        'cobrada',
+        'entregada',
+        'enviada',
+      ];
+
+      // Verificar si el estado está finalizado
+      for (final estadoFinal in estadosFinalizados) {
+        if (status.contains(estadoFinal)) {
+          print(
+            '🚫 Historial: Orden ${order['ordenId']} EXCLUIDA (estado: $status)',
+          );
+          return false;
+        }
+      }
+
+      return true;
+    }).toList();
+
+    // Actualizar historial si se filtraron órdenes
+    if (historialFiltrado.length != historial.length) {
+      _tableOrderHistory[tableKey] = historialFiltrado;
+    }
+
+    return historialFiltrado;
+  }
+
+  // Obtener historial de órdenes "para llevar"
+  // FILTRADO ESTRICTO: Solo órdenes con estados activos y NO enviadas al cajero
+  List<Map<String, dynamic>> getTakeawayOrderHistory() {
+    // Buscar en todas las claves de takeaway
+    final allTakeawayOrders = <Map<String, dynamic>>[];
+    _tableOrderHistory.forEach((tableId, orders) {
+      if (tableId.startsWith('takeaway-') || tableId == 'takeaway-all') {
+        allTakeawayOrders.addAll(orders);
+      }
+    });
+
+    // Estados FINALIZADOS que NO deben aparecer
+    final estadosFinalizados = [
+      'pagada',
+      'cancelada',
+      'cerrada',
+      'cobrada',
+      'entregada',
+      'enviada',
+      'pending',
+    ];
+
+    // Filtrar órdenes ACTIVAS y NO enviadas al cajero
+    final historialFiltrado = allTakeawayOrders.where((order) {
+      final ordenId = order['ordenId'] as int?;
+
+      // Excluir órdenes ya enviadas al cajero (registro local)
+      if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
+        return false;
+      }
+
+      // Excluir órdenes con estados finalizados
+      final status = (order['status'] as String?)?.toLowerCase() ?? '';
+      for (final estadoFinal in estadosFinalizados) {
+        if (status.contains(estadoFinal)) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+
+    // Eliminar duplicados por ordenId
+    final ordenIdsVistos = <int>{};
+    final historialSinDuplicados = historialFiltrado.where((order) {
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId == null) return false;
+      if (ordenIdsVistos.contains(ordenId)) return false;
+      ordenIdsVistos.add(ordenId);
+      return true;
+    }).toList();
+
+    // Ordenar por fecha (más recientes primero)
+    historialSinDuplicados.sort((a, b) {
+      try {
+        final fechaA = date_utils.AppDateUtils.parseToLocal(a['date']);
+        final fechaB = date_utils.AppDateUtils.parseToLocal(b['date']);
+        return fechaB.compareTo(fechaA);
+      } catch (e) {
+        return 0;
+      }
+    });
+
+    return historialSinDuplicados;
+  }
+
+  // Forzar recarga del historial desde el backend
+  // NUEVO SISTEMA: Siempre consulta el backend como fuente de verdad
+  Future<void> forceReloadTableHistory(int tableId) async {
+    final tableKey = tableId.toString();
+
+    // Limpiar historial local
+    _tableOrderHistory[tableKey] = [];
+
+    // Cargar desde el backend (fuente de verdad)
+    await loadTableOrderHistory(tableId);
+
+    print('✅ Historial de mesa $tableId recargado desde backend');
+    notifyListeners();
+  }
+
+  // Obtener detalles de una orden del backend
+  Future<Map<String, dynamic>?> getOrdenDetalle(int ordenId) async {
+    try {
+      return await _ordenesService.getOrden(ordenId);
+    } catch (e) {
+      print('Error al obtener detalles de orden: $e');
+      return null;
+    }
   }
 
   // Limpiar historial de una mesa
-  void clearTableHistory(int tableId) {
-    _tableOrderHistory[tableId.toString()] = [];
+  // IMPORTANTE: Marca TODAS las órdenes activas como cerradas en el backend
+  // para que no vuelvan a aparecer después de login/logout
+  Future<void> clearTableHistory(int tableId) async {
+    final tableKey = tableId.toString();
+
+    // Obtener todas las órdenes activas del historial
+    final historial = _tableOrderHistory[tableKey] ?? [];
+    final ordenesActivas = historial.where((order) {
+      final status = (order['status'] as String?)?.toLowerCase() ?? '';
+      final esFinalizada =
+          status.contains('pagada') ||
+          status.contains('cancelada') ||
+          status.contains('cerrada');
+      return !esFinalizada;
+    }).toList();
+
+    // Marcar TODAS las órdenes activas como cerradas en el backend
+    for (var order in ordenesActivas) {
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId != null) {
+        await _marcarOrdenComoCerradaEnBackend(ordenId);
+        print('🗑️ Orden $ordenId marcada como cerrada al limpiar historial');
+      }
+    }
+
+    // Limpiar historial en memoria
+    _tableOrderHistory[tableKey] = [];
+
+    // NO marcar como "limpiada" porque las órdenes ya están cerradas
+    // El historial se limpiará automáticamente porque las órdenes están cerradas
+
+    print(
+      '🗑️ Historial de mesa $tableId limpiado. ${ordenesActivas.length} órdenes marcadas como cerradas en backend.',
+    );
+    notifyListeners();
+  }
+
+  // Verificar si el historial está vacío
+  bool isHistoryCleared(int tableId) {
+    final historial = _tableOrderHistory[tableId.toString()] ?? [];
+    return historial.isEmpty;
+  }
+
+  // Resetear historial (simplemente recargar desde backend)
+  Future<void> resetHistoryClearedFlag(int tableId) async {
+    await forceReloadTableHistory(tableId);
     notifyListeners();
   }
 
@@ -273,7 +1551,16 @@ class MeseroController extends ChangeNotifier {
 
     final selectedTable = _tables.firstWhere(
       (table) => table.id == tableId,
-      orElse: () => _selectedTable ?? _tables.first,
+      orElse: () {
+        if (_selectedTable != null) {
+          return _selectedTable!;
+        }
+        // Si no hay tabla seleccionada y la lista está vacía, lanzar excepción
+        if (_tables.isEmpty) {
+          throw Exception('No hay mesas disponibles');
+        }
+        return _tables.first;
+      },
     );
     _billRepository.removeBillsForTable(selectedTable.number);
 
@@ -299,159 +1586,1649 @@ class MeseroController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Restaurar historial demo
-  void restoreDemoHistory(int tableId) {
-    final demoHistory = [
-      {
-        'id': 'ORD-034',
-        'items': ['3x Taco Barbacoa'],
-        'status': 'Listo',
-        'time': '14:20',
-        'date': DateTime.now().toString(),
-      },
-      {
-        'id': 'ORD-029',
-        'items': ['1x Mix Barbacoa', '2x Agua Horchata'],
-        'status': 'En preparación',
-        'time': '13:45',
-        'date': DateTime.now().toString(),
-      },
-      {
-        'id': 'ORD-025',
-        'items': ['2x Quesadilla Barbacoa'],
-        'status': 'Entregado',
-        'time': '13:15',
-        'date': DateTime.now().toString(),
-      },
-    ];
-    _tableOrderHistory[tableId.toString()] = demoHistory;
-    notifyListeners();
+  // Cargar historial de órdenes "para llevar" desde el backend
+  // SIMPLIFICADO: Usa datos de la lista sin hacer peticiones individuales
+  Future<void> loadTakeawayOrderHistory() async {
+    try {
+      print('📋 Cargando historial de órdenes para llevar...');
+
+      // Estados FINALIZADOS que NO deben aparecer
+      final estadosFinalizados = [
+        'pagada',
+        'cancelada',
+        'cerrada',
+        'cobrada',
+        'entregada',
+        'enviada',
+      ];
+
+      // Obtener todas las órdenes del backend
+      final ordenes = await _ordenesService.getOrdenes();
+
+      // Filtrar solo órdenes "para llevar" (mesaId == null) y con estados activos
+      final takeawayOrdenesActivas = ordenes.where((o) {
+        final ordenData = o as Map<String, dynamic>;
+        final mesaId = ordenData['mesaId'];
+        if (mesaId != null) return false;
+
+        // Filtrar por ID (registro local de órdenes ya enviadas)
+        final ordenId = ordenData['id'] as int?;
+        if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
+          print(
+            '🚫 Orden $ordenId filtrada (registro local de enviada al cajero)',
+          );
+          return false;
+        }
+
+        // Filtrar por estado del backend
+        final estadoNombre =
+            (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
+        for (final estadoFinal in estadosFinalizados) {
+          if (estadoNombre.contains(estadoFinal)) {
+            print(
+              '🚫 Orden ${ordenData['id']} filtrada por estado: $estadoNombre',
+            );
+            return false;
+          }
+        }
+        return true;
+      }).toList();
+
+      print('📋 ${takeawayOrdenesActivas.length} órdenes para llevar ACTIVAS');
+
+      // Convertir órdenes al formato de historial (sin peticiones adicionales)
+      final history = <Map<String, dynamic>>[];
+      for (final orden in takeawayOrdenesActivas) {
+        final ordenData = orden as Map<String, dynamic>;
+        final ordenId = ordenData['id'] as int?;
+        if (ordenId == null) continue;
+
+        final createdAt = ordenData['creadoEn'] as String?;
+        DateTime fecha;
+        if (createdAt != null) {
+          try {
+            fecha = date_utils.AppDateUtils.parseToLocal(createdAt);
+          } catch (e) {
+            fecha = DateTime.now();
+          }
+        } else {
+          fecha = DateTime.now();
+        }
+
+        history.add({
+          'id': 'ORD-${ordenId.toString().padLeft(6, '0')}',
+          'ordenId': ordenId,
+          'items': <String>[], // Items se cargarán al ver el detalle
+          'status': ordenData['estadoNombre'] as String? ?? 'Pendiente',
+          'time': date_utils.AppDateUtils.formatTime(fecha),
+          'date': fecha.toIso8601String(),
+          'subtotal': (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0,
+          'total': (ordenData['total'] as num?)?.toDouble() ?? 0.0,
+          'isTakeaway': true,
+          'customerName': ordenData['clienteNombre'] as String? ?? 'Cliente',
+          'customerPhone': ordenData['clienteTelefono'] as String? ?? '',
+          'tableNumber': null,
+        });
+      }
+
+      // Ordenar por fecha (más recientes primero)
+      history.sort((a, b) {
+        try {
+          final fechaA = date_utils.AppDateUtils.parseToLocal(a['date']);
+          final fechaB = date_utils.AppDateUtils.parseToLocal(b['date']);
+          return fechaB.compareTo(fechaA);
+        } catch (e) {
+          return 0;
+        }
+      });
+
+      // Filtrar órdenes que ya fueron enviadas al cajero ANTES de guardar
+      final historyFiltrado = history.where((order) {
+        final ordenId = order['ordenId'] as int?;
+        if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
+          print('🚫 Orden $ordenId filtrada (ya enviada al cajero)');
+          return false;
+        }
+        return true;
+      }).toList();
+
+      // Guardar en historial de takeaway (ya filtrado)
+      _tableOrderHistory['takeaway-all'] = historyFiltrado;
+      print(
+        '📋 Mesero: Historial para llevar cargado: ${historyFiltrado.length} órdenes (${history.length - historyFiltrado.length} filtradas)',
+      );
+
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar historial de órdenes para llevar: $e');
+      // Asegurar que hay una lista vacía para evitar errores
+      _tableOrderHistory['takeaway-all'] = [];
+      notifyListeners();
+    }
   }
 
-  // Enviar cuenta al cajero
-  void sendToCashier(int tableId) {
-    final cart = _tableOrders[tableId.toString()] ?? [];
-    if (cart.isEmpty) return;
+  // Cargar historial de todas las mesas con órdenes activas
+  Future<void> _loadAllTablesHistory() async {
+    try {
+      print('📋 Cargando historial de todas las mesas con órdenes activas...');
+
+      // Obtener todas las órdenes del backend
+      final ordenes = await _ordenesService.getOrdenes();
+
+      // Estados finalizados que debemos excluir
+      final estadosFinalizados = [
+        'pagada',
+        'cancelada',
+        'cerrada',
+        'cobrada',
+        'entregada',
+        'completada',
+        'finalizada',
+        'enviada',
+      ];
+
+      // Filtrar órdenes activas de mesas (excluir para llevar)
+      final ordenesMesas = ordenes.where((o) {
+        final ordenData = o as Map<String, dynamic>;
+        final mesaId = ordenData['mesaId'];
+
+        // Solo órdenes de mesas (no para llevar)
+        if (mesaId == null) return false;
+
+        final estadoNombre =
+            (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
+
+        // Excluir órdenes finalizadas
+        for (final estadoFinal in estadosFinalizados) {
+          if (estadoNombre.contains(estadoFinal)) {
+            return false;
+          }
+        }
+
+        return true;
+      }).toList();
+
+      // Agrupar órdenes por mesa
+      final mesasConOrdenes = <int>{};
+      for (final orden in ordenesMesas) {
+        final ordenData = orden as Map<String, dynamic>;
+        final mesaId = ordenData['mesaId'];
+        if (mesaId != null) {
+          final mesaIdInt = mesaId is int
+              ? mesaId
+              : int.tryParse(mesaId.toString());
+          if (mesaIdInt != null) {
+            mesasConOrdenes.add(mesaIdInt);
+          }
+        }
+      }
+
+      print(
+        '📋 Encontradas ${mesasConOrdenes.length} mesas con órdenes activas',
+      );
+
+      // Filtrar mesas que NO estén marcadas como limpiadas
+      final mesasParaCargar = mesasConOrdenes.where((mesaId) {
+        final tableKey = mesaId.toString();
+        final isCleared = _historyCleared[tableKey] == true;
+        if (isCleared) {
+          print('⏭️ Mesa $mesaId está marcada como limpiada, omitiendo carga');
+        }
+        return !isCleared;
+      }).toList();
+
+      print(
+        '📋 ${mesasParaCargar.length} mesas para cargar (${mesasConOrdenes.length - mesasParaCargar.length} omitidas por estar limpiadas)',
+      );
+
+      // Cargar historial solo para mesas que NO están marcadas como limpiadas
+      // (limitado a 5 a la vez para no sobrecargar)
+      for (var i = 0; i < mesasParaCargar.length; i += 5) {
+        final batch = mesasParaCargar.skip(i).take(5).toList();
+        await Future.wait(batch.map((mesaId) => loadTableOrderHistory(mesaId)));
+      }
+
+      print('✅ Historial de todas las mesas cargado');
+    } catch (e) {
+      print('❌ Error al cargar historial de todas las mesas: $e');
+    }
+  }
+
+  // Cargar historial de órdenes desde el backend para una mesa
+  // NUEVO SISTEMA: Fuente de verdad es el backend, no el historial local
+  Future<void> loadTableOrderHistory(int tableId) async {
+    try {
+      final tableKey = tableId.toString();
+
+      // Verificar si el historial de esta mesa está marcado como limpiado
+      if (_historyCleared[tableKey] == true) {
+        print(
+          '⏭️ Mesa $tableId está marcada como limpiada, no cargando historial',
+        );
+        _tableOrderHistory[tableKey] = [];
+        return;
+      }
+
+      print('📋 Cargando historial para mesa $tableId desde backend...');
+
+      // Obtener todas las órdenes del backend
+      final ordenes = await _ordenesService.getOrdenes();
+
+      // Filtrar órdenes de esta mesa
+      final ordenesEstaMesa = ordenes.where((o) {
+        final ordenData = o as Map<String, dynamic>;
+        final mesaId = ordenData['mesaId'];
+
+        // Si mesaId es null, es orden para llevar, no pertenece a esta mesa
+        if (mesaId == null) return false;
+
+        // Comparación robusta del mesaId
+        if (mesaId == tableId) return true;
+        if (mesaId is num) return mesaId.toInt() == tableId;
+        if (mesaId is int) return mesaId == tableId;
+        if (mesaId is String) {
+          final parsed = int.tryParse(mesaId);
+          return parsed != null && parsed == tableId;
+        }
+        return false;
+      }).toList();
+
+      print(
+        '📋 Encontradas ${ordenesEstaMesa.length} órdenes para mesa $tableId',
+      );
+
+      // Filtrar SOLO órdenes con estados ACTIVOS
+      // Solo excluir órdenes con estados FINALIZADOS (cerradas por mesero/cajero)
+      // NO filtrar por antigüedad - las órdenes activas aparecen sin importar cuándo se crearon
+      final estadosFinalizados = [
+        'pagada',
+        'cancelada',
+        'cerrada',
+        'cobrada',
+        'entregada',
+        'completada',
+        'finalizada',
+        'enviada',
+      ];
+
+      final ordenesActivas = ordenesEstaMesa.where((o) {
+        final ordenData = o as Map<String, dynamic>;
+        final ordenId = ordenData['id'] as int? ?? 0;
+        final estadoNombre =
+            (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
+
+        // SOLO verificar si está en estados finalizados (cerradas por mesero/cajero)
+        for (final estadoFinal in estadosFinalizados) {
+          if (estadoNombre.contains(estadoFinal)) {
+            print(
+              '🚫 Orden $ordenId EXCLUIDA (estado finalizado: $estadoNombre)',
+            );
+            return false;
+          }
+        }
+
+        // Si no está en estado finalizado, incluirla (sin importar la antigüedad)
+        return true;
+      }).toList();
+
+      print('📋 ${ordenesActivas.length} órdenes ACTIVAS para mesa $tableId');
+
+      // Construir historial con detalles completos
+      final history = <Map<String, dynamic>>[];
+
+      for (final orden in ordenesActivas) {
+        final ordenData = orden as Map<String, dynamic>;
+        final ordenId = ordenData['id'] as int?;
+
+        if (ordenId == null) continue;
+
+        // Obtener detalle completo
+        final ordenDetalle = await _ordenesService.getOrden(ordenId);
+        if (ordenDetalle == null) continue;
+
+        // Verificar estado REAL del detalle
+        final estadoReal =
+            (ordenDetalle['estadoNombre'] as String?)?.toLowerCase() ?? '';
+        bool esEstadoFinalizado = false;
+        for (final estadoFinal in estadosFinalizados) {
+          if (estadoReal.contains(estadoFinal)) {
+            esEstadoFinalizado = true;
+            break;
+          }
+        }
+
+        if (esEstadoFinalizado) {
+          print(
+            '🚫 Orden $ordenId EXCLUIDA tras verificar detalle (estado finalizado: $estadoReal)',
+          );
+          continue;
+        }
+
+        // NO filtrar por antigüedad - si la orden está activa, incluirla
+
+        // Construir datos de la orden
+        final items = (ordenDetalle['items'] as List<dynamic>?) ?? [];
+        final itemsText = items.map((item) {
+          final itemData = item as Map<String, dynamic>;
+          final cantidad = itemData['cantidad'] as int? ?? 1;
+          final nombre = itemData['productoNombre'] as String? ?? 'Producto';
+          return '${cantidad}x $nombre';
+        }).toList();
+
+        final createdAt = ordenDetalle['creadoEn'] as String?;
+        DateTime fecha;
+        if (createdAt != null) {
+          fecha = date_utils.AppDateUtils.parseToLocal(createdAt);
+        } else {
+          fecha = DateTime.now();
+        }
+
+        history.add({
+          'id': 'ORD-${ordenId.toString().padLeft(6, '0')}',
+          'ordenId': ordenId,
+          'items': itemsText,
+          'status': ordenDetalle['estadoNombre'] as String? ?? 'Pendiente',
+          'time': date_utils.AppDateUtils.formatTime(fecha),
+          'date': fecha.toIso8601String(),
+          'subtotal': (ordenDetalle['subtotal'] as num?)?.toDouble() ?? 0.0,
+          'discount':
+              (ordenDetalle['descuentoTotal'] as num?)?.toDouble() ?? 0.0,
+          'tip': (ordenDetalle['propinaSugerida'] as num?)?.toDouble() ?? 0.0,
+          'total': (ordenDetalle['total'] as num?)?.toDouble() ?? 0.0,
+          'isTakeaway': ordenDetalle['mesaId'] == null,
+          'customerName': ordenDetalle['clienteNombre'] as String?,
+          'customerPhone': ordenDetalle['clienteTelefono'] as String?,
+          'tableNumber': ordenDetalle['mesaCodigo'] as String?,
+          'notes': ordenDetalle['notas'] as String?,
+        });
+      }
+
+      // También agregar órdenes locales recién creadas (que pueden no estar en backend aún)
+      final historialLocal = _tableOrderHistory[tableKey] ?? [];
+      final ordenIdsBackend = history
+          .map((o) => o['ordenId'] as int?)
+          .whereType<int>()
+          .toSet();
+
+      for (final ordenLocal in historialLocal) {
+        final ordenIdLocal = ordenLocal['ordenId'] as int?;
+        if (ordenIdLocal == null) continue;
+
+        // Si ya está en el backend, no duplicar
+        if (ordenIdsBackend.contains(ordenIdLocal)) continue;
+
+        // NO filtrar por antigüedad - si la orden está activa, incluirla
+
+        // Verificar estado de la orden local
+        final statusLocal =
+            (ordenLocal['status'] as String?)?.toLowerCase() ?? '';
+        bool esLocalFinalizada = false;
+        for (final estadoFinal in estadosFinalizados) {
+          if (statusLocal.contains(estadoFinal)) {
+            esLocalFinalizada = true;
+            break;
+          }
+        }
+
+        if (esLocalFinalizada) continue;
+
+        // Verificar estado REAL en el backend
+        try {
+          final ordenBackendCheck = await _ordenesService.getOrden(
+            ordenIdLocal,
+          );
+          if (ordenBackendCheck != null) {
+            final estadoBackend =
+                (ordenBackendCheck['estadoNombre'] as String?)?.toLowerCase() ??
+                '';
+            bool esBackendFinalizada = false;
+            for (final estadoFinal in estadosFinalizados) {
+              if (estadoBackend.contains(estadoFinal)) {
+                esBackendFinalizada = true;
+                break;
+              }
+            }
+            if (esBackendFinalizada) {
+              print(
+                '🚫 Orden local $ordenIdLocal está FINALIZADA en backend, no se agrega',
+              );
+              continue;
+            }
+          }
+        } catch (e) {
+          // Si hay error al verificar, agregar de todas formas
+        }
+
+        history.add(ordenLocal);
+        print('✅ Orden local $ordenIdLocal agregada (no está en backend aún)');
+      }
+
+      // Ordenar por fecha (más recientes primero)
+      history.sort((a, b) {
+        try {
+          final fechaA = date_utils.AppDateUtils.parseToLocal(a['date']);
+          final fechaB = date_utils.AppDateUtils.parseToLocal(b['date']);
+          return fechaB.compareTo(fechaA);
+        } catch (e) {
+          return 0;
+        }
+      });
+
+      // Eliminar duplicados
+      final ordenIdsVistos = <int>{};
+      history.removeWhere((orden) {
+        final ordenId = orden['ordenId'] as int?;
+        if (ordenId == null) return true;
+        if (ordenIdsVistos.contains(ordenId)) return true;
+        ordenIdsVistos.add(ordenId);
+        return false;
+      });
+
+      // Guardar historial
+      _tableOrderHistory[tableKey] = history;
+
+      print(
+        '✅ Historial mesa $tableId cargado: ${history.length} órdenes activas',
+      );
+
+      notifyListeners();
+    } catch (e) {
+      print('❌ Error al cargar historial de mesa $tableId: $e');
+    }
+  }
+
+  // Enviar orden "para llevar" al cajero
+  Future<void> sendTakeawayToCashier(int ordenId) async {
+    try {
+      // Cargar historial de órdenes "para llevar" si no está cargado
+      final takeawayHistory = getTakeawayOrderHistory();
+      if (takeawayHistory.isEmpty) {
+        await loadTakeawayOrderHistory();
+      }
+
+      // Buscar la orden específica en el historial
+      final orden = getTakeawayOrderHistory()
+          .where((o) => o['ordenId'] == ordenId)
+          .firstOrNull;
+
+      if (orden == null) {
+        // Si no está en el historial, obtenerla del backend
+        final ordenData = await _ordenesService.getOrden(ordenId);
+        if (ordenData == null) {
+          throw Exception('Orden no encontrada');
+        }
+
+        // Verificar que la orden no esté pagada/cancelada
+        final estadoNombre =
+            (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
+        if (estadoNombre == 'pagada' ||
+            estadoNombre == 'cancelada' ||
+            estadoNombre == 'cerrada') {
+          throw Exception('La orden ya fue pagada o cancelada');
+        }
+
+        // Crear bill desde la orden del backend
+        final items = ordenData['items'] as List<dynamic>? ?? [];
+        final allBillItems = items.map((item) {
+          final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+          final precioUnitario =
+              (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+          final totalLinea =
+              (item['totalLinea'] as num?)?.toDouble() ??
+              (precioUnitario * cantidad);
+
+          return BillItem(
+            name: item['productoNombre'] as String? ?? 'Producto',
+            quantity: cantidad,
+            price: precioUnitario,
+            total: totalLinea,
+          );
+        }).toList();
+
+        final subtotal = (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
+        final descuentoTotal =
+            (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+        final propinaSugerida =
+            (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+        final total = (ordenData['total'] as num?)?.toDouble() ?? 0.0;
+        final splitCount = (ordenData['splitCount'] as num?)?.toInt() ?? 1;
+        final clienteNombre = ordenData['clienteNombre'] as String?;
+        final clienteTelefono = ordenData['clienteTelefono'] as String?;
+        final waiterNotes = ordenData['notas'] as String?;
+
+        final createdAt = ordenData['creadoEn'] as String?;
+        DateTime fechaCreacion;
+        if (createdAt != null) {
+          fechaCreacion = date_utils.AppDateUtils.parseToLocal(createdAt);
+        } else {
+          fechaCreacion = DateTime.now();
+        }
+
+        final bill = BillModel(
+          id: 'BILL-ORD-$ordenId',
+          tableNumber: null, // null para órdenes "para llevar"
+          ordenId: ordenId,
+          items: allBillItems,
+          subtotal: subtotal,
+          tax: 0.0,
+          total: total,
+          discount: descuentoTotal,
+          splitCount: splitCount,
+          status: BillStatus.pending,
+          createdAt: fechaCreacion,
+          waiterName: 'Mesero',
+          requestedByWaiter: true,
+          isTakeaway: true,
+          customerName: clienteNombre,
+          customerPhone: clienteTelefono,
+          waiterNotes: waiterNotes,
+        );
+
+        _billRepository.addBill(bill);
+
+        // Emitir evento Socket.IO para notificar al cajero
+        final socketService = SocketService();
+        socketService.emit('cuenta.enviada', {
+          'id': bill.id,
+          'ordenId': ordenId,
+          'tableNumber': 'Para Llevar',
+          'items': allBillItems
+              .map(
+                (item) => {
+                  'name': item.name,
+                  'quantity': item.quantity,
+                  'price': item.price,
+                  'total': item.total,
+                },
+              )
+              .toList(),
+          'subtotal': subtotal,
+          'discount': descuentoTotal,
+          'tip': propinaSugerida,
+          'splitCount': splitCount,
+          'total': total,
+          'status': 'pending',
+          'createdAt': fechaCreacion.toIso8601String(),
+          'waiterName': 'Mesero',
+          'isTakeaway': true,
+          'customerName': clienteNombre,
+          'customerPhone': clienteTelefono,
+          'waiterNotes': waiterNotes,
+        });
+
+        notifyListeners();
+        print('✅ Mesero: Orden para llevar $ordenId enviada al cajero');
+      } else {
+        // Si está en el historial, obtener datos completos del backend para asegurar precisión
+        final ordenData = await _ordenesService.getOrden(ordenId);
+        if (ordenData != null) {
+          final itemsBackend = ordenData['items'] as List<dynamic>? ?? [];
+          final billItems = itemsBackend.map((item) {
+            final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+            final precioUnitario =
+                (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+            final totalLinea =
+                (item['totalLinea'] as num?)?.toDouble() ??
+                (precioUnitario * cantidad);
+
+            return BillItem(
+              name: item['productoNombre'] as String? ?? 'Producto',
+              quantity: cantidad,
+              price: precioUnitario,
+              total: totalLinea,
+            );
+          }).toList();
+
+          final subtotal = (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
+          final descuentoTotal =
+              (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+          final propinaSugerida =
+              (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+          final total = (ordenData['total'] as num?)?.toDouble() ?? 0.0;
+          final splitCount = (ordenData['splitCount'] as num?)?.toInt() ?? 1;
+          final clienteNombre = ordenData['clienteNombre'] as String?;
+          final clienteTelefono = ordenData['clienteTelefono'] as String?;
+          final waiterNotes = ordenData['notas'] as String?;
+
+          final createdAt = ordenData['creadoEn'] as String?;
+          DateTime fechaCreacion;
+          if (createdAt != null) {
+            fechaCreacion = date_utils.AppDateUtils.parseToLocal(createdAt);
+          } else {
+            fechaCreacion = DateTime.now();
+          }
+
+          final bill = BillModel(
+            id: 'BILL-ORD-$ordenId',
+            tableNumber: null, // null para órdenes "para llevar"
+            ordenId: ordenId,
+            items: billItems,
+            subtotal: subtotal,
+            tax: 0.0,
+            total: total,
+            discount: descuentoTotal,
+            splitCount: splitCount,
+            status: BillStatus.pending,
+            createdAt: fechaCreacion,
+            waiterName: 'Mesero',
+            requestedByWaiter: true,
+            isTakeaway: true,
+            customerName: clienteNombre,
+            customerPhone: clienteTelefono,
+            waiterNotes: waiterNotes,
+          );
+
+          _billRepository.addBill(bill);
+
+          // Emitir evento Socket.IO
+          final socketService = SocketService();
+          socketService.emit('cuenta.enviada', {
+            'id': bill.id,
+            'ordenId': ordenId,
+            'tableNumber': 'Para Llevar',
+            'items': billItems
+                .map(
+                  (item) => {
+                    'name': item.name,
+                    'quantity': item.quantity,
+                    'price': item.price,
+                    'total': item.total,
+                  },
+                )
+                .toList(),
+            'subtotal': subtotal,
+            'discount': descuentoTotal,
+            'tip': propinaSugerida,
+            'splitCount': splitCount,
+            'total': total,
+            'status': 'pending',
+            'createdAt': fechaCreacion.toIso8601String(),
+            'waiterName': 'Mesero',
+            'isTakeaway': true,
+            'customerName': clienteNombre,
+            'customerPhone': clienteTelefono,
+            'waiterNotes': waiterNotes,
+          });
+
+          print('✅ Mesero: Orden para llevar $ordenId enviada al cajero');
+        }
+      }
+
+      // IMPORTANTE: Cambiar estado de la orden en el backend a "cerrada"
+      // Esto es la FUENTE DE VERDAD - persiste entre reinicios de la app
+      await _marcarOrdenComoCerradaEnBackend(ordenId);
+
+      // Registrar también localmente como respaldo
+      _sentToCashierOrders.add(ordenId);
+      await _saveSentToCashierOrders();
+      print('📝 Orden $ordenId registrada localmente como enviada al cajero');
+
+      // Eliminar la orden del historial local
+      _removeTakeawayOrderFromHistory(ordenId);
+
+      // Forzar notificación inmediata para actualizar la UI
+      notifyListeners();
+    } catch (e) {
+      print('Error al enviar orden para llevar al cajero: $e');
+      rethrow;
+    }
+  }
+
+  // Eliminar orden para llevar del historial local
+  void _removeTakeawayOrderFromHistory(int ordenId) {
+    // Buscar y eliminar de todas las claves de takeaway
+    bool encontrada = false;
+    _tableOrderHistory.forEach((key, orders) {
+      if (key.startsWith('takeaway') || key == 'takeaway-all') {
+        final antes = orders.length;
+        orders.removeWhere((order) => order['ordenId'] == ordenId);
+        if (orders.length < antes) {
+          encontrada = true;
+        }
+      }
+    });
+
+    if (encontrada) {
+      print('🗑️ Orden $ordenId eliminada del historial de para llevar');
+    } else {
+      print('⚠️ Orden $ordenId no encontrada en historial local');
+    }
+  }
+
+  // Enviar cuenta al cajero (ahora obtiene la orden del backend si es necesario)
+  Future<void> sendToCashier(int tableId) async {
+    final tableIdStr = tableId.toString();
+    final cart = _tableOrders[tableIdStr] ?? [];
+
+    // Cargar historial si no está cargado
+    final history = _tableOrderHistory[tableIdStr] ?? [];
+    if (history.isEmpty) {
+      await loadTableOrderHistory(tableId);
+    }
+
+    // IMPORTANTE: Tomar TODAS las órdenes activas (no pagadas/cerradas) de la mesa
+    // Esto permite cerrar la cuenta con todas las órdenes del cliente actual
+    final historialCompleto = _tableOrderHistory[tableIdStr] ?? [];
+    final ordenesNoPagadas = historialCompleto.where((order) {
+      final status = (order['status'] as String?)?.toLowerCase() ?? '';
+      final esExcluida =
+          status.contains('pagada') ||
+          status.contains('cancelada') ||
+          status.contains('cerrada') ||
+          status.contains('enviada') ||
+          status.contains('cobrada');
+      return !esExcluida;
+    }).toList();
+
+    // Ordenar por fecha (más reciente primero)
+    ordenesNoPagadas.sort((a, b) {
+      try {
+        final fechaA = date_utils.AppDateUtils.parseToLocal(
+          a['date'] ?? '1970-01-01',
+        );
+        final fechaB = date_utils.AppDateUtils.parseToLocal(
+          b['date'] ?? '1970-01-01',
+        );
+        return fechaB.compareTo(fechaA);
+      } catch (e) {
+        return 0;
+      }
+    });
+
+    // Tomar TODAS las órdenes activas (no solo la primera)
+    final allOrders = ordenesNoPagadas;
+    print(
+      '📋 Mesero: ${allOrders.length} órdenes activas para cerrar cuenta: ${allOrders.map((o) => o['ordenId']).toList()}',
+    );
 
     final selectedTable = _tables.firstWhere(
       (table) => table.id == tableId,
-      orElse: () => _selectedTable ?? _tables.first,
+      orElse: () {
+        if (_selectedTable != null) {
+          return _selectedTable!;
+        }
+        // Si no hay tabla seleccionada y la lista está vacía, lanzar excepción
+        if (_tables.isEmpty) {
+          throw Exception('No hay mesas disponibles');
+        }
+        return _tables.first;
+      },
     );
-    final total = cart.fold(0.0, (sum, item) => sum + item.product.price);
 
-    final billItems = cart.map((item) {
-      final quantity = item.customizations['quantity'] as int? ?? 1;
-      final price = item.product.price;
-      return BillItem(
-        name: item.product.name,
-        quantity: quantity,
-        price: price,
-        total: price * quantity,
+    // Si hay órdenes en el historial, crear bill desde las órdenes
+    if (allOrders.isNotEmpty) {
+      // Obtener todos los items de todas las órdenes
+      final allBillItems = <BillItem>[];
+      double totalConsumo = 0.0;
+      int? lastOrdenId;
+
+      // IMPORTANTE: Obtener datos adicionales del historial (propina, descuento, etc.)
+      // Estos datos se guardaron cuando se creó la orden en sendOrderToKitchen
+      final firstOrder = allOrders.first;
+      final descuentoHistorial =
+          (firstOrder['discount'] as num?)?.toDouble() ?? 0.0;
+      final propinaHistorial = (firstOrder['tip'] as num?)?.toDouble() ?? 0.0;
+      final splitCountHistorial = (firstOrder['splitCount'] as int?) ?? 1;
+      final customerNameHistorial = firstOrder['customerName'] as String?;
+      final customerPhoneHistorial = firstOrder['customerPhone'] as String?;
+      final isTakeawayHistorial = firstOrder['isTakeaway'] as bool? ?? false;
+      final notesHistorial = firstOrder['notes'] as String?;
+
+      print(
+        '📋 Mesero: Datos del historial - Descuento: $descuentoHistorial, Propina: $propinaHistorial, SplitCount: $splitCountHistorial',
       );
-    }).toList();
 
-    final bill = BillModel(
-      id: 'BILL-${DateTime.now().millisecondsSinceEpoch}',
-      tableNumber: selectedTable.number,
-      items: billItems,
-      subtotal: total,
-      tax: 0.0,
-      total: total,
-      discount: 0.0,
-      status: BillStatus.pending,
-      createdAt: DateTime.now(),
-      waiterName: 'Mesero',
-      requestedByWaiter: true,
-    );
+      for (var order in allOrders) {
+        final ordenId = order['ordenId'] as int?;
+        if (ordenId != null) {
+          lastOrdenId = ordenId;
+          try {
+            final ordenData = await _ordenesService.getOrden(ordenId);
+            if (ordenData != null) {
+              final items = ordenData['items'] as List<dynamic>? ?? [];
+              for (var item in items) {
+                final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+                final precioUnitario =
+                    (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                final totalLinea =
+                    (item['totalLinea'] as num?)?.toDouble() ??
+                    (precioUnitario * cantidad);
+                totalConsumo += totalLinea;
 
-    _billRepository.addBill(bill);
-
-    // Actualizar valor de orden en la mesa
-    _tables = _tables.map((tableEntry) {
-      if (tableEntry.id == tableId) {
-        return tableEntry.copyWith(orderValue: total);
+                allBillItems.add(
+                  BillItem(
+                    name: item['productoNombre'] as String? ?? 'Producto',
+                    quantity: cantidad,
+                    price: precioUnitario,
+                    total: totalLinea,
+                  ),
+                );
+              }
+            }
+          } catch (e) {
+            print('Error al obtener detalles de orden $ordenId: $e');
+          }
+        }
       }
-      return tableEntry;
-    }).toList();
 
-    // Agregar al historial como "Enviado al Cajero"
-    final orderId = 'ACC-${DateTime.now().millisecondsSinceEpoch}';
-    final order = {
-      'id': orderId,
-      'items': cart.map((item) {
-        final qty = item.customizations['quantity'] as int? ?? 1;
-        return '${qty}x ${item.product.name}';
-      }).toList(),
-      'status': 'Enviado al Cajero',
-      'time':
-          '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      'date': DateTime.now().toString(),
-      'total': total,
-    };
+      if (allBillItems.isNotEmpty) {
+        // IMPORTANTE: Generar billId único basado en TODAS las órdenes agrupadas
+        // Si hay múltiples órdenes, usar un formato que incluya todas
+        final ordenIdsList =
+            allOrders.map((o) => o['ordenId'] as int?).whereType<int>().toList()
+              ..sort();
 
-    final history = _tableOrderHistory[tableId.toString()] ?? [];
-    _tableOrderHistory[tableId.toString()] = [order, ...history];
+        final billId = ordenIdsList.length > 1
+            ? 'BILL-MESA-${selectedTable.number}-${ordenIdsList.join('-')}'
+            : (ordenIdsList.isNotEmpty
+                  ? 'BILL-ORD-${ordenIdsList.first}'
+                  : 'BILL-TEMP-${DateTime.now().millisecondsSinceEpoch}');
 
-    notifyListeners();
+        // Verificar si ya existe un bill PENDIENTE para este billId (no solo por ordenId)
+        final existingBill = _billRepository.bills
+            .where((b) => b.id == billId && b.status == BillStatus.pending)
+            .toList();
+        if (existingBill.isNotEmpty) {
+          print(
+            '⚠️ Mesero: Ya existe un bill pendiente con ID $billId, no se crea duplicado',
+          );
+          notifyListeners();
+          return;
+        }
+
+        // Calcular total final: subtotal - descuento + propina
+        final subtotalConDescuento = totalConsumo - descuentoHistorial;
+        final totalFinal = subtotalConDescuento + propinaHistorial;
+
+        final bill = BillModel(
+          id: billId,
+          tableNumber: selectedTable.number,
+          ordenId: lastOrdenId,
+          items: allBillItems,
+          subtotal: totalConsumo,
+          tax: 0.0,
+          total: totalFinal,
+          discount: descuentoHistorial,
+          status: BillStatus.pending,
+          createdAt: DateTime.now(),
+          waiterName: 'Mesero',
+          waiterNotes: notesHistorial,
+          requestedByWaiter: true,
+          isTakeaway: isTakeawayHistorial,
+          customerName: customerNameHistorial,
+          customerPhone: customerPhoneHistorial,
+          splitCount: splitCountHistorial,
+        );
+
+        _billRepository.addBill(bill);
+
+        // Emitir evento Socket.IO para notificar al cajero
+        final socketService = SocketService();
+        socketService.emit('cuenta.enviada', {
+          'id': bill.id,
+          'tableNumber': bill.tableNumber,
+          'ordenId': lastOrdenId, // Orden principal para compatibilidad
+          'ordenIds': ordenIdsList, // TODAS las órdenes agrupadas
+          'items': allBillItems
+              .map(
+                (item) => ({
+                  'name': item.name,
+                  'quantity': item.quantity,
+                  'price': item.price,
+                  'total': item.total,
+                }),
+              )
+              .toList(),
+          'subtotal': totalConsumo,
+          'tax': 0.0,
+          'total': totalFinal,
+          'discount': descuentoHistorial,
+          'tip': propinaHistorial,
+          'status': 'pending',
+          'createdAt': DateTime.now().toIso8601String(),
+          'waiterName': bill.waiterName,
+          'splitCount': splitCountHistorial,
+          'isTakeaway': isTakeawayHistorial,
+          'customerName': customerNameHistorial,
+          'customerPhone': customerPhoneHistorial,
+          'waiterNotes': notesHistorial,
+          'multipleOrders':
+              ordenIdsList.length > 1, // Flag para indicar múltiples órdenes
+        });
+
+        print(
+          '✅ Mesero: Bill enviado al cajero - ID: $billId, Mesa: ${bill.tableNumber}, ${ordenIdsList.length} órdenes agrupadas: $ordenIdsList',
+        );
+
+        print(
+          '✅ Mesero: Bill creado con - Subtotal: $totalConsumo, Descuento: $descuentoHistorial, Propina: $propinaHistorial, Total: $totalFinal',
+        );
+
+        // IMPORTANTE: Remover las órdenes del historial INMEDIATAMENTE antes de cerrarlas
+        // Esto hace que desaparezcan instantáneamente de la UI
+        final ordenIdsACerrar = allOrders
+            .map((o) => o['ordenId'] as int?)
+            .whereType<int>()
+            .toSet();
+
+        // Remover órdenes del historial local INMEDIATAMENTE
+        final historialActual = _tableOrderHistory[tableIdStr] ?? [];
+        _tableOrderHistory[tableIdStr] = historialActual.where((order) {
+          final ordenId = order['ordenId'] as int?;
+          return ordenId == null || !ordenIdsACerrar.contains(ordenId);
+        }).toList();
+
+        // Notificar cambios INMEDIATAMENTE para actualizar la UI
+        notifyListeners();
+
+        print(
+          '✅ Mesero: ${ordenIdsACerrar.length} órdenes removidas del historial instantáneamente: $ordenIdsACerrar',
+        );
+
+        // IMPORTANTE: Cambiar estado de TODAS las órdenes en el backend a "cerrada"
+        // Esto es la FUENTE DE VERDAD - persiste entre reinicios de la app
+        for (var order in allOrders) {
+          final ordenId = order['ordenId'] as int?;
+          if (ordenId != null) {
+            await _marcarOrdenComoCerradaEnBackend(ordenId);
+            print('✅ Mesero: Orden $ordenId marcada como cerrada en backend');
+          }
+        }
+
+        // Actualizar valor de orden en la mesa
+        _tables = _tables.map((tableEntry) {
+          if (tableEntry.id == tableId) {
+            return tableEntry.copyWith(orderValue: totalFinal);
+          }
+          return tableEntry;
+        }).toList();
+
+        // Notificar cambios finales
+        notifyListeners();
+        return;
+      }
+    }
+
+    // Si no hay órdenes en el historial pero hay carrito, crear bill desde el carrito
+    if (cart.isNotEmpty) {
+      // Obtener el ordenId de la última orden enviada para esta mesa
+      final ordenId = _tableOrderIds[tableIdStr];
+
+      // Si ya hay una orden creada, usar su ID para el bill
+      // Si no, crear un ID temporal (se actualizará cuando se cree la orden)
+      final billId = ordenId != null
+          ? 'BILL-ORD-$ordenId'
+          : 'BILL-TEMP-${DateTime.now().millisecondsSinceEpoch}';
+
+      // Verificar si ya existe un bill para esta orden
+      if (ordenId != null) {
+        try {
+          final existingBill = _billRepository.bills.firstWhere(
+            (b) => b.ordenId == ordenId,
+            orElse: () => BillModel(
+              id: '',
+              tableNumber: 0,
+              items: [],
+              subtotal: 0,
+              tax: 0,
+              total: 0,
+              status: BillStatus.pending,
+              createdAt: DateTime.now(),
+            ),
+          );
+          // Si el bill existe y tiene un ID válido, no crear duplicado
+          if (existingBill.id.isNotEmpty) {
+            notifyListeners();
+            return;
+          }
+        } catch (e) {
+          // Si hay error al buscar, continuar con la creación
+          print('Error al verificar bill existente: $e');
+        }
+      }
+
+      // Calcular total incluyendo extras y salsas
+      final total = cart.fold(0.0, (sum, item) {
+        final qty =
+            (item.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
+        double itemTotal = item.product.price * qty;
+
+        // Agregar precio de extras si existen
+        final extraPrices =
+            item.customizations['extraPrices'] as List<dynamic>? ?? [];
+        for (var priceEntry in extraPrices) {
+          if (priceEntry is Map) {
+            final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
+            itemTotal += precio * qty;
+          }
+        }
+
+        // Agregar precio de salsa si existe
+        final saucePrice =
+            (item.customizations['saucePrice'] as num?)?.toDouble() ?? 0.0;
+        if (saucePrice > 0) {
+          itemTotal += saucePrice * qty;
+        }
+
+        return sum + itemTotal;
+      });
+
+      final billItems = cart.map((item) {
+        final quantity =
+            (item.customizations['quantity'] as num?)?.toInt() ?? 1;
+
+        // Calcular precio unitario incluyendo extras y salsas
+        double unitPrice = item.product.price;
+
+        // Agregar extras al precio unitario
+        final extraPrices =
+            item.customizations['extraPrices'] as List<dynamic>? ?? [];
+        for (var priceEntry in extraPrices) {
+          if (priceEntry is Map) {
+            final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
+            unitPrice += precio;
+          }
+        }
+
+        // Agregar precio de salsa al precio unitario
+        final saucePrice =
+            (item.customizations['saucePrice'] as num?)?.toDouble() ?? 0.0;
+        if (saucePrice > 0) {
+          unitPrice += saucePrice;
+        }
+
+        return BillItem(
+          name: item.product.name,
+          quantity: quantity,
+          price: unitPrice,
+          total: unitPrice * quantity,
+        );
+      }).toList();
+
+      final bill = BillModel(
+        id: billId,
+        tableNumber: selectedTable.number,
+        ordenId: ordenId, // Incluir ordenId de la orden creada
+        items: billItems,
+        subtotal: total,
+        tax: 0.0,
+        total: total,
+        discount: 0.0,
+        status: BillStatus.pending,
+        createdAt: DateTime.now(),
+        waiterName: 'Mesero',
+        requestedByWaiter: true,
+      );
+
+      _billRepository.addBill(bill);
+
+      // Emitir evento Socket.IO para notificar al cajero
+      final socketService = SocketService();
+      socketService.emit('cuenta.enviada', {
+        'id': bill.id,
+        'tableNumber': bill.tableNumber,
+        'ordenId': ordenId,
+        'items': billItems
+            .map(
+              (item) => ({
+                'name': item.name,
+                'quantity': item.quantity,
+                'price': item.price,
+                'total': item.total,
+              }),
+            )
+            .toList(),
+        'subtotal': total,
+        'tax': 0.0,
+        'total': total,
+        'status': 'pending',
+        'createdAt': DateTime.now().toIso8601String(),
+        'waiterName': bill.waiterName,
+        'splitCount': bill.splitCount,
+      });
+
+      // Actualizar valor de orden en la mesa
+      _tables = _tables.map((tableEntry) {
+        if (tableEntry.id == tableId) {
+          return tableEntry.copyWith(orderValue: total);
+        }
+        return tableEntry;
+      }).toList();
+
+      // Agregar al historial como "Enviado al Cajero"
+      final orderIdStr =
+          ordenId?.toString() ?? 'ACC-${DateTime.now().millisecondsSinceEpoch}';
+      final order = {
+        'id': orderIdStr,
+        'ordenId': ordenId,
+        'items': cart.map((item) {
+          final qty = (item.customizations['quantity'] as num?)?.toInt() ?? 1;
+          return '${qty}x ${item.product.name}';
+        }).toList(),
+        'status': 'Enviado al Cajero',
+        'time': date_utils.AppDateUtils.formatTime(DateTime.now()),
+        'date': DateTime.now().toIso8601String(),
+        'total': total,
+      };
+
+      final history = _tableOrderHistory[tableIdStr] ?? [];
+      // Siempre agregar órdenes nuevas al historial
+      _tableOrderHistory[tableIdStr] = [order, ...history];
+
+      notifyListeners();
+      return;
+    }
+
+    // Si no hay carrito ni órdenes en el historial, intentar obtener la orden del backend
+    int? ordenIdParaBill = _tableOrderIds[tableIdStr];
+
+    if (ordenIdParaBill == null) {
+      // Intentar obtenerlo del historial
+      final history = _tableOrderHistory[tableIdStr] ?? [];
+      if (history.isNotEmpty) {
+        final lastOrder = history.first;
+        ordenIdParaBill = lastOrder['ordenId'] as int?;
+      }
+    }
+
+    if (ordenIdParaBill == null) {
+      // No hay orden disponible, no se puede crear bill
+      throw Exception('No hay orden disponible para crear la cuenta');
+    }
+
+    // Obtener la orden del backend
+    try {
+      final ordenData = await _ordenesService.getOrden(ordenIdParaBill);
+      if (ordenData == null) {
+        throw Exception('No se pudo obtener la orden del backend');
+      }
+
+      // Crear billItems desde los items de la orden
+      final itemsData = ordenData['items'] as List<dynamic>? ?? [];
+      final billItems = itemsData.map((itemJson) {
+        return BillItem(
+          name: itemJson['productoNombre'] as String? ?? 'Producto',
+          quantity: (itemJson['cantidad'] as num?)?.toInt() ?? 1,
+          price: (itemJson['precioUnitario'] as num?)?.toDouble() ?? 0.0,
+          total: (itemJson['totalLinea'] as num?)?.toDouble() ?? 0.0,
+        );
+      }).toList();
+
+      final subtotal = (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
+      final descuento =
+          (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+      final impuesto = (ordenData['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
+      final total = (ordenData['total'] as num?)?.toDouble() ?? subtotal;
+
+      final bill = BillModel(
+        id: 'BILL-${DateTime.now().millisecondsSinceEpoch}',
+        tableNumber: selectedTable.number,
+        ordenId: ordenIdParaBill,
+        items: billItems,
+        subtotal: subtotal,
+        tax: impuesto,
+        total: total,
+        discount: descuento,
+        status: BillStatus.pending,
+        createdAt: DateTime.now(),
+        waiterName:
+            ordenData['creadoPorNombre'] as String? ??
+            ordenData['creadoPorUsuarioNombre'] as String? ??
+            'Mesero',
+        requestedByWaiter: true,
+      );
+
+      _billRepository.addBill(bill);
+
+      // Actualizar valor de orden en la mesa
+      _tables = _tables.map((tableEntry) {
+        if (tableEntry.id == tableId) {
+          return tableEntry.copyWith(orderValue: total);
+        }
+        return tableEntry;
+      }).toList();
+
+      notifyListeners();
+    } catch (e) {
+      print('Error al obtener orden del backend: $e');
+      rethrow;
+    }
   }
 
   // Mejorar sendToKitchen para agregar al historial y enviar a cocina
-  void sendOrderToKitchen({
+  Future<void> sendOrderToKitchen({
     bool isTakeaway = false,
     String? customerName,
     String? customerPhone,
     String? pickupTime,
-  }) {
-    if (_selectedTable == null) return;
+    String? waiterName,
+    double discount = 0.0,
+    String? orderNote,
+    double tip = 0.0,
+    int splitCount = 1,
+  }) async {
+    // Permitir pedidos para llevar sin mesa seleccionada
+    if (!isTakeaway && _selectedTable == null) return;
 
     final currentCart = getCurrentCart();
     if (currentCart.isEmpty) return;
 
-    final tableId = _selectedTable!.id.toString();
+    // Variables para el catch (necesarias para guardar historial en caso de error)
+    Map<String, dynamic>? ordenCreada;
+    int? ordenIdInt;
+    double discountAmount = discount;
+    double subtotal = 0.0;
+    double totalConPropina = 0.0;
+    List<String> itemsText = [];
+    DateTime fechaCreacion = DateTime.now();
+    String estadoRealOrden = 'abierta';
 
-    // Crear ID de orden único
-    final orderId =
-        'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+    try {
+      // Preparar items para la orden
+      final items = currentCart.map((cartItem) {
+        final quantity =
+            (cartItem.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
+        final price = cartItem.product.price;
 
-    // Crear pedido para historial
-    final order = {
-      'id': orderId,
-      'items': currentCart.map((item) {
+        // Extraer nota de customizations si existe
+        final nota = cartItem.customizations['nota'] as String?;
+        final kitchenNotes = cartItem.customizations['kitchenNotes'] as String?;
+        final notaCompleta = [
+          nota,
+          kitchenNotes,
+        ].where((n) => n != null && n.isNotEmpty).join(' | ');
+
+        // Extraer modificadores de extras si existen
+        // IMPORTANTE: No enviar modificadores con IDs temporales para evitar errores de foreign key
+        // En su lugar, agregar la información de extras a la nota del item
+        final modificadores = <Map<String, dynamic>>[];
+        final extras =
+            cartItem.customizations['extras'] as List<dynamic>? ?? [];
+        final extraPrices =
+            cartItem.customizations['extraPrices'] as List<dynamic>? ?? [];
+
+        // Construir texto de extras para agregar a la nota
+        final extrasText = <String>[];
+        for (var extraName in extras) {
+          if (extraName is String && extraName.isNotEmpty) {
+            // Buscar el precio correspondiente
+            double precio = 0.0;
+            for (var priceEntry in extraPrices) {
+              if (priceEntry is Map && priceEntry['name'] == extraName) {
+                precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
+                break;
+              }
+            }
+            if (precio > 0) {
+              extrasText.add('$extraName (+\$${precio.toStringAsFixed(0)})');
+            } else {
+              extrasText.add(extraName);
+            }
+          }
+        }
+
+        // Agregar extras a la nota si existen
+        String notaFinal = notaCompleta;
+        if (extrasText.isNotEmpty) {
+          final extrasStr = extrasText.join(', ');
+          if (notaFinal.isNotEmpty) {
+            notaFinal = '$notaFinal | Extras: $extrasStr';
+          } else {
+            notaFinal = 'Extras: $extrasStr';
+          }
+        }
+
+        // Agregar salsa a la nota si existe
+        final sauce = cartItem.customizations['sauce'] as String?;
+        if (sauce != null && sauce.isNotEmpty && sauce != 'Sin salsa') {
+          if (notaFinal.isNotEmpty) {
+            notaFinal = '$notaFinal | Salsa: $sauce';
+          } else {
+            notaFinal = 'Salsa: $sauce';
+          }
+        }
+
+        // Usar product.id directamente (ya es int)
+        final productoId = cartItem.product.id;
+
+        // Calcular precio unitario incluyendo extras
+        double precioUnitarioConExtras = price;
+        for (var priceEntry in extraPrices) {
+          if (priceEntry is Map) {
+            final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
+            precioUnitarioConExtras += precio;
+          }
+        }
+
+        // Agregar precio de salsa si tiene precio (buscar en productos de salsas)
+        // Nota: El precio de la salsa ya debería estar en el producto si es de la BD
+        // Por ahora, si la salsa tiene precio en el nombre o en los datos, se agrega
+        if (sauce != null && sauce != 'Sin salsa') {
+          // Si la salsa viene de la BD, el precio ya está incluido en el producto
+          // Si no, buscar si tiene precio en el nombre (formato: "Nombre +$X")
+          final match = RegExp(r'\+\$(\d+)').firstMatch(sauce);
+          if (match != null) {
+            final precioSalsa = double.tryParse(match.group(1) ?? '0') ?? 0.0;
+            precioUnitarioConExtras += precioSalsa;
+          }
+        }
+
+        return {
+          'productoId': productoId,
+          'productoTamanoId':
+              null, // Por ahora null, se puede expandir si hay tamaños
+          'cantidad': quantity,
+          'precioUnitario': precioUnitarioConExtras,
+          'nota': notaFinal.isNotEmpty ? notaFinal : null,
+          'modificadores':
+              modificadores, // Vacío por ahora, la info está en la nota
+        };
+      }).toList();
+
+      // Calcular totales (incluyendo extras y salsas)
+      subtotal = currentCart.fold(0.0, (sum, item) {
+        final qty =
+            (item.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
+        double itemTotal = item.product.price * qty;
+
+        // Agregar precio de extras si existen
+        final extraPrices =
+            item.customizations['extraPrices'] as List<dynamic>? ?? [];
+        for (var priceEntry in extraPrices) {
+          if (priceEntry is Map) {
+            final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
+            itemTotal += precio * qty;
+          }
+        }
+
+        // Agregar precio de salsa si existe (usando el precio real guardado)
+        final saucePrice =
+            (item.customizations['saucePrice'] as num?)?.toDouble() ?? 0.0;
+        if (saucePrice > 0) {
+          itemTotal += saucePrice * qty;
+        }
+
+        return sum + itemTotal;
+      });
+
+      // Aplicar descuento
+      discountAmount = discount;
+      final subtotalAfterDiscount = subtotal - discountAmount;
+
+      // Calcular tiempo estimado basado en items (aproximación: 5-8 min por item)
+      final estimatedTimeMinutes = (items.length * 6).clamp(5, 30);
+
+      // Crear orden en BD
+      // pickupTime puede venir como String (ISO) o necesitar ser parseado
+      String? pickupTimeISO;
+      if (pickupTime != null && pickupTime.isNotEmpty) {
+        // Si pickupTime es un String, intentar parsearlo y convertirlo a ISO
+        final parsed = DateTime.tryParse(pickupTime);
+        if (parsed != null) {
+          pickupTimeISO = parsed.toIso8601String();
+        } else {
+          // Si no se puede parsear, asumir que ya está en formato ISO
+          pickupTimeISO = pickupTime;
+        }
+      }
+
+      // Calcular total con propina
+      totalConPropina = subtotalAfterDiscount + tip;
+
+      // IMPORTANTE: Siempre guardar el mesaId si hay una mesa seleccionada
+      // Esto permite que las órdenes "para llevar" creadas desde una mesa
+      // aparezcan en el historial de esa mesa después del logout/login
+      final ordenData = {
+        'mesaId': _selectedTable?.id,
+        'clienteNombre': customerName,
+        'clienteTelefono': customerPhone,
+        'subtotal': subtotal,
+        'descuentoTotal': discountAmount,
+        'impuestoTotal': 0,
+        'propinaSugerida': tip > 0 ? tip : null,
+        'total': totalConPropina,
+        'items': items,
+        'pickupTime': pickupTimeISO,
+        'estimatedTime': estimatedTimeMinutes,
+      };
+
+      ordenCreada = await _ordenesService.createOrden(ordenData);
+
+      if (ordenCreada == null) {
+        throw Exception('No se pudo crear la orden en el backend');
+      }
+
+      // Obtener el ID real de la orden del backend
+      ordenIdInt = ordenCreada['id'] as int?;
+      if (ordenIdInt == null) {
+        throw Exception('La orden creada no tiene un ID válido');
+      }
+
+      final orderId = ordenIdInt.toString();
+
+      // Guardar el ordenId en el mapa de ordenes por mesa (solo si no es para llevar)
+      if (!isTakeaway && _selectedTable != null) {
+        final tableId = _selectedTable!.id.toString();
+        _tableOrderIds[tableId] = ordenIdInt;
+      }
+
+      // Obtener la fecha real de creación de la orden desde el backend
+      // Usar AppDateUtils para convertir correctamente a zona horaria local
+      final ordenCreadaFecha = ordenCreada['creadoEn'] as String?;
+      fechaCreacion = date_utils.AppDateUtils.parseToLocal(ordenCreadaFecha);
+
+      // Obtener el estado real de la orden desde el backend
+      estadoRealOrden = ordenCreada['estadoNombre'] as String? ?? 'abierta';
+
+      // Guardar items del carrito antes de limpiarlo (para el historial)
+      itemsText = currentCart.map((item) {
         final qty = item.customizations['quantity'] as int? ?? 1;
         return '${qty}x ${item.product.name}';
-      }).toList(),
-      'status': 'Enviado',
-      'time':
-          '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      'date': DateTime.now().toString(),
-      'isTakeaway': isTakeaway,
-      'customerName': customerName,
-      'customerPhone': customerPhone,
-      'pickupTime': pickupTime,
-    };
+      }).toList();
 
-    // Agregar al historial
-    final history = _tableOrderHistory[tableId] ?? [];
-    _tableOrderHistory[tableId] = [order, ...history];
+      // Crear pedido para historial local usando la fecha real del backend
+      // IMPORTANTE: Usar formato consistente para el ID: ORD-{numero}
+      final formattedOrderId = 'ORD-${ordenIdInt.toString().padLeft(6, '0')}';
+      final order = {
+        'id': formattedOrderId, // Formato estandarizado: ORD-000067
+        'ordenId': ordenIdInt, // ID real de la orden en BD
+        'items': itemsText, // Usar items guardados
+        'status': estadoRealOrden, // Usar el estado real del backend
+        'time': date_utils.AppDateUtils.formatTime(fechaCreacion),
+        'date': fechaCreacion.toIso8601String(),
+        'isTakeaway': isTakeaway,
+        'customerName': customerName,
+        'customerPhone': customerPhone,
+        'pickupTime': pickupTime,
+        'notes': orderNote ?? '',
+        'discount': discountAmount,
+        'tip': tip,
+        'splitCount': splitCount,
+        'subtotal': subtotal,
+        'total': totalConPropina,
+        'tableNumber': isTakeaway
+            ? null
+            : _selectedTable?.number, // Agregar número de mesa
+      };
 
-    // Enviar pedido a cocina a través del servicio
-    final service = KitchenOrderService();
-    service.sendOrderToKitchen(
-      orderId: orderId,
-      cartItems: currentCart,
-      tableNumber: isTakeaway ? null : _selectedTable!.number,
-      waiterName:
-          'Mesero', // TODO: Obtener del AuthController cuando esté disponible
-      isTakeaway: isTakeaway,
-      customerName: customerName,
-      customerPhone: customerPhone,
-      pickupTime: pickupTime,
-    );
+      // IMPORTANTE: Guardar en historial local INMEDIATAMENTE después de crear la orden
+      // Esto asegura que el historial se guarde incluso si hay errores posteriores
+      // Aplicar para TODOS los casos: pedidos normales Y pedidos para llevar (si hay mesa)
+      if (_selectedTable != null) {
+        final mesaTableId = _selectedTable!.id.toString();
 
-    // Limpiar carrito
-    clearCart();
+        // Desactivar el flag de limpieza porque hay una nueva orden
+        if (_historyCleared[mesaTableId] == true) {
+          _historyCleared[mesaTableId] = false;
+          await _saveClearedHistoryFlags();
+        }
 
-    notifyListeners();
+        // Agregar al historial local (asegurar que no haya duplicados)
+        final history = _tableOrderHistory[mesaTableId] ?? [];
+        // Verificar que no exista ya esta orden en el historial
+        final existeOrden = history.any((o) => o['ordenId'] == ordenIdInt);
+        if (!existeOrden) {
+          _tableOrderHistory[mesaTableId] = [order, ...history];
+        } else {
+          // Si ya existe, actualizarla con los datos más recientes
+          final index = history.indexWhere((o) => o['ordenId'] == ordenIdInt);
+          if (index != -1) {
+            history[index] = order;
+            _tableOrderHistory[mesaTableId] = history;
+          }
+        }
+
+        // Verificar que se guardó correctamente
+        final historialVerificado = _tableOrderHistory[mesaTableId] ?? [];
+        final ordenGuardada = historialVerificado.any(
+          (o) => o['ordenId'] == ordenIdInt,
+        );
+
+        if (!ordenGuardada) {
+          // Si no se guardó, intentar de nuevo
+          final historyRetry = _tableOrderHistory[mesaTableId] ?? [];
+          _tableOrderHistory[mesaTableId] = [order, ...historyRetry];
+        }
+
+        // Notificar cambios inmediatamente para actualizar la UI
+        notifyListeners();
+        // Guardar historial persistido después de agregar orden
+        _savePersistedHistory();
+      } else if (isTakeaway && _selectedTable == null) {
+        // Si es pedido para llevar sin mesa seleccionada, guardar con clave especial
+        final takeawayKey = 'takeaway-$ordenIdInt';
+        final history = _tableOrderHistory[takeawayKey] ?? [];
+        final existeOrden = history.any((o) => o['ordenId'] == ordenIdInt);
+        if (!existeOrden) {
+          _tableOrderHistory[takeawayKey] = [order, ...history];
+        } else {
+          // Si ya existe, actualizarla con los datos más recientes
+          final index = history.indexWhere((o) => o['ordenId'] == ordenIdInt);
+          if (index != -1) {
+            history[index] = order;
+            _tableOrderHistory[takeawayKey] = history;
+          }
+        }
+        // Notificar cambios inmediatamente para actualizar la UI
+        notifyListeners();
+        // Guardar historial persistido después de agregar orden
+        _savePersistedHistory();
+      }
+
+      // IMPORTANTE: NO crear bill automáticamente aquí
+      // El bill se crea cuando el mesero hace "cerrar cuenta" (sendToCashier)
+      // Esto permite que la orden aparezca en el historial del mesero primero
+      // y el mesero pueda revisarla antes de enviarla al cajero
+
+      // Nota: Los datos de propina, descuento, etc. están guardados en el historial
+      // y se usarán cuando se cree el bill en sendToCashier
+
+      print(
+        '📋 Mesero: Orden $ordenIdInt enviada a cocina. Aparecerá en historial.',
+      );
+      print(
+        '📋 Mesero: Para enviar al cajero, el mesero debe hacer "Cerrar cuenta".',
+      );
+
+      // Enviar pedido a cocina a través del servicio (para notificaciones en tiempo real)
+      final service = KitchenOrderService();
+      service.sendOrderToKitchen(
+        orderId: orderId,
+        cartItems: currentCart,
+        tableNumber: isTakeaway ? null : _selectedTable?.number,
+        waiterName: waiterName ?? 'Mesero',
+        isTakeaway: isTakeaway,
+        customerName: customerName,
+        customerPhone: customerPhone,
+        pickupTime: pickupTime,
+      );
+
+      // Limpiar carrito
+      clearCart();
+
+      // Verificación final: asegurar que el historial tenga la orden
+      // Esto es una medida de seguridad en caso de que algo haya fallado antes
+      // Incluir tanto pedidos normales como pedidos para llevar (si hay mesa seleccionada)
+      if (_selectedTable != null) {
+        final mesaTableId = _selectedTable!.id.toString();
+        final historialVerificado = _tableOrderHistory[mesaTableId] ?? [];
+        final ordenEnHistorial = historialVerificado.any(
+          (o) => o['ordenId'] == ordenIdInt,
+        );
+
+        if (!ordenEnHistorial) {
+          // Si no está, agregarla de nuevo usando el objeto order que ya creamos
+          final history = _tableOrderHistory[mesaTableId] ?? [];
+          _tableOrderHistory[mesaTableId] = [order, ...history];
+        }
+      }
+
+      // Notificar cambios finales
+      notifyListeners();
+
+      // Recargar bills para asegurar sincronización
+      await _billRepository.loadBills();
+    } catch (e, stackTrace) {
+      print('Error al enviar orden a cocina: $e');
+      print('Stack trace: $stackTrace');
+
+      // IMPORTANTE: Asegurar que el historial se guarde incluso si hay errores
+      // Si la orden se creó exitosamente pero falló algo después, guardar el historial
+      try {
+        if (ordenCreada != null &&
+            ordenIdInt != null &&
+            _selectedTable != null) {
+          final mesaTableId = _selectedTable!.id.toString();
+          final historialVerificado = _tableOrderHistory[mesaTableId] ?? [];
+          final ordenEnHistorial = historialVerificado.any(
+            (o) => o['ordenId'] == ordenIdInt,
+          );
+
+          if (!ordenEnHistorial) {
+            // Si no está en el historial, intentar agregarla
+            // Usar los datos que ya tenemos
+            // IMPORTANTE: Usar formato consistente para el ID: ORD-{numero}
+            final formattedOrderIdCatch =
+                'ORD-${ordenIdInt.toString().padLeft(6, '0')}';
+            final order = {
+              'id': formattedOrderIdCatch,
+              'ordenId': ordenIdInt,
+              'items': itemsText.isNotEmpty
+                  ? itemsText
+                  : (currentCart.isEmpty
+                        ? ['Error al obtener items']
+                        : currentCart.map((item) {
+                            final qty =
+                                item.customizations['quantity'] as int? ?? 1;
+                            return '${qty}x ${item.product.name}';
+                          }).toList()),
+              'status': estadoRealOrden,
+              'time': date_utils.AppDateUtils.formatTime(fechaCreacion),
+              'date': fechaCreacion.toIso8601String(),
+              'isTakeaway': isTakeaway,
+              'customerName': customerName,
+              'customerPhone': customerPhone,
+              'pickupTime': pickupTime,
+              'notes': orderNote ?? '',
+              'discount': discountAmount,
+              'tip': tip,
+              'splitCount': splitCount,
+              'subtotal': subtotal,
+              'total': totalConPropina,
+              'tableNumber': isTakeaway ? null : _selectedTable?.number,
+            };
+
+            final history = _tableOrderHistory[mesaTableId] ?? [];
+            _tableOrderHistory[mesaTableId] = [order, ...history];
+            notifyListeners();
+          }
+        }
+      } catch (historialError) {
+        print('Error al guardar historial en catch: $historialError');
+      }
+
+      rethrow;
+    }
   }
 
   // Actualizar estado de pedido (cuando cocinero lo tiene listo)
@@ -467,25 +3244,191 @@ class MeseroController extends ChangeNotifier {
     });
   }
 
-  // Métodos de notificaciones
-  void addNotification(String title, String message) {
-    _pendingNotifications.add({
-      'title': title,
-      'message': message,
-      'timestamp': DateTime.now(),
-    });
-    notifyListeners();
+  /// Crea una notificación descriptiva según el estado de la orden
+  Map<String, String> _crearNotificacionOrden({
+    required int ordenId,
+    required String estadoNombre,
+    int? mesaId,
+    String? mesaCodigo,
+    bool isTakeaway = false,
+  }) {
+    final estadoLower = estadoNombre.toLowerCase();
+    String titulo;
+    String mensaje;
+
+    // Determinar si es para llevar (por estado o por falta de mesa)
+    final esParaLlevar =
+        isTakeaway ||
+        estadoLower.contains('recoger') ||
+        (mesaId == null && mesaCodigo == null);
+
+    // Información de ubicación
+    final ubicacion = esParaLlevar
+        ? 'Para llevar'
+        : (mesaCodigo != null ? 'Mesa $mesaCodigo' : 'Mesa $mesaId');
+
+    // Determinar título y mensaje según el estado
+    if (estadoLower.contains('listo') || estadoLower.contains('ready')) {
+      if (esParaLlevar) {
+        titulo = '🛍️ ¡Pedido Para Llevar Listo!';
+        mensaje = 'Orden #$ordenId está lista para recoger';
+      } else {
+        titulo = '🍽️ ¡Pedido Listo!';
+        mensaje = 'Orden #$ordenId ($ubicacion) está lista para servir';
+      }
+    } else if (estadoLower.contains('preparacion') ||
+        estadoLower.contains('preparación') ||
+        estadoLower.contains('cooking')) {
+      if (esParaLlevar) {
+        titulo = '👨‍🍳 Pedido Para Llevar en Preparación';
+        mensaje = 'Orden #$ordenId para llevar se está preparando';
+      } else {
+        titulo = '👨‍🍳 En Preparación';
+        mensaje = 'Orden #$ordenId ($ubicacion) se está preparando';
+      }
+    } else if (estadoLower.contains('pendiente') ||
+        estadoLower.contains('pending')) {
+      titulo = '📝 Orden Recibida';
+      mensaje = 'Orden #$ordenId ($ubicacion) fue recibida';
+    } else if (estadoLower.contains('pagada') || estadoLower.contains('paid')) {
+      titulo = '✅ Orden Pagada';
+      mensaje = 'Orden #$ordenId ($ubicacion) fue pagada';
+    } else if (estadoLower.contains('cancelada') ||
+        estadoLower.contains('cancelled')) {
+      titulo = '❌ Orden Cancelada';
+      mensaje = 'Orden #$ordenId ($ubicacion) fue cancelada';
+    } else if (estadoLower.contains('entregada') ||
+        estadoLower.contains('delivered')) {
+      titulo = '🎉 Orden Entregada';
+      mensaje = 'Orden #$ordenId ($ubicacion) fue entregada';
+    } else if (estadoLower.contains('abierta') ||
+        estadoLower.contains('open')) {
+      titulo = '📋 Orden Abierta';
+      mensaje = 'Orden #$ordenId ($ubicacion) está en curso';
+    } else {
+      // Estado genérico
+      titulo = '📢 Actualización';
+      mensaje = 'Orden #$ordenId ($ubicacion): $estadoNombre';
+    }
+
+    return {'titulo': titulo, 'mensaje': mensaje};
   }
 
-  void removeNotification(int index) {
+  // Métodos de notificaciones
+  // ordenId es opcional pero si se proporciona, se usa para evitar duplicados
+  void addNotification(
+    String title,
+    String message, {
+    int? ordenId,
+    String? tipo,
+  }) {
+    final now = DateTime.now();
+
+    // Evitar duplicados: si hay ordenId, verificar que no exista una notificación
+    // para la misma orden con el mismo tipo en los últimos 30 segundos
+    bool isDuplicate = false;
+
+    if (ordenId != null) {
+      isDuplicate = _pendingNotifications.any((notif) {
+        final notifOrdenId = notif['ordenId'] as int?;
+        final notifTipo = notif['tipo'] as String?;
+        final notifTime = notif['timestamp'] as DateTime;
+        final timeDiff = now.difference(notifTime).inSeconds;
+
+        // Es duplicado si es la misma orden y mismo tipo (listo, preparacion, etc)
+        // en los últimos 30 segundos
+        return notifOrdenId == ordenId && notifTipo == tipo && timeDiff < 30;
+      });
+    } else {
+      // Si no hay ordenId, comparar por mensaje exacto en los últimos 5 segundos
+      isDuplicate = _pendingNotifications.any((notif) {
+        final notifTime = notif['timestamp'] as DateTime;
+        final timeDiff = now.difference(notifTime).inSeconds;
+        return notif['title'] == title &&
+            notif['message'] == message &&
+            timeDiff < 5;
+      });
+    }
+
+    if (!isDuplicate) {
+      _pendingNotifications.insert(0, {
+        'title': title,
+        'message': message,
+        'timestamp': now,
+        'ordenId': ordenId,
+        'tipo': tipo,
+        'read': false, // Para marcar si fue leída
+      });
+
+      // Mantener máximo 50 notificaciones
+      if (_pendingNotifications.length > 50) {
+        _pendingNotifications.removeRange(50, _pendingNotifications.length);
+      }
+
+      print(
+        '📬 Notificación agregada: $title - $message (ordenId: $ordenId, tipo: $tipo, Total: ${_pendingNotifications.length})',
+      );
+      notifyListeners();
+    } else {
+      print(
+        '⚠️ Notificación duplicada ignorada: $title - $message (ordenId: $ordenId, tipo: $tipo)',
+      );
+    }
+  }
+
+  void removeNotification(int index) async {
     if (index >= 0 && index < _pendingNotifications.length) {
+      final notif = _pendingNotifications[index];
+      final ordenId = notif['ordenId'] as int?;
+      final tipo = notif['tipo'] as String? ?? 'general';
+
+      // Marcar como limpiada antes de remover
+      if (ordenId != null) {
+        await _markNotificationAsCleared(ordenId, tipo);
+      }
+
       _pendingNotifications.removeAt(index);
       notifyListeners();
     }
   }
 
-  void clearAllNotifications() {
-    _pendingNotifications.clear();
-    notifyListeners();
+  void clearAllNotifications() async {
+    try {
+      print('🧹 Mesero: Limpiando todas las notificaciones...');
+
+      // IMPORTANTE: Primero marcar todas las alertas como leídas en el backend
+      // Esto asegura que no vuelvan a aparecer cuando se recarguen desde la BD
+      final alertasMarcadas = await _alertasService
+          .marcarTodasLasAlertasComoLeidas();
+      print(
+        '✅ Mesero: $alertasMarcadas alertas marcadas como leídas en el backend',
+      );
+
+      // También marcar todas las notificaciones actuales como limpiadas localmente (respaldo)
+      for (final notif in _pendingNotifications) {
+        final ordenId = notif['ordenId'] as int?;
+        final tipo = notif['tipo'] as String? ?? 'general';
+        if (ordenId != null) {
+          await _markNotificationAsCleared(ordenId, tipo);
+        }
+      }
+
+      // Limpiar la lista local de notificaciones
+      _pendingNotifications.clear();
+      await _saveClearedNotifications();
+
+      print('✅ Mesero: Todas las notificaciones limpiadas (backend y local)');
+      notifyListeners();
+    } catch (e) {
+      print('❌ Error al limpiar todas las notificaciones: $e');
+      // Aún así limpiar localmente para que la UI se actualice
+      _pendingNotifications.clear();
+      notifyListeners();
+    }
+  }
+
+  // Obtener solo notificaciones no leídas
+  int get unreadNotificationsCount {
+    return _pendingNotifications.where((n) => n['read'] != true).length;
   }
 }

@@ -1,0 +1,25 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000063
+Fecha: 2025-12-01T15:56:42.000Z
+a1E1d1*** PARA LLEVAR ***
+d0E0a0Cliente: Mariana
+Cajero: Administrador
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  2  Agua de Jamaica Hecha ...    40.00
+------------------------------------------
+Subtotal:                    $   40.00
+Descuento:                   $    2.00
+Propina sugerida:           $    7.60
+E1TOTAL:                      $   45.60
+E0==========================================
+a1
+k4k10ORD-000063
+ORD-000063
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

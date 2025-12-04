@@ -116,7 +116,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                               ),
                             ),
                             Text(
-                              '${widget.controller.formatCurrency(widget.bill.total)} MXN',
+                              '${widget.controller.formatCurrency(widget.bill.calculatedTotal)} MXN',
                               style: TextStyle(
                                 fontSize: widget.isTablet ? 18.0 : 16.0,
                                 fontWeight: FontWeight.w600,
@@ -139,7 +139,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                               children: [
                                 Text(
                                   widget.controller
-                                      .formatCurrency(widget.bill.total),
+                                      .formatCurrency(widget.bill.calculatedTotal),
                                   style: TextStyle(
                                     fontSize: widget.isTablet ? 18.0 : 16.0,
                                     fontWeight: FontWeight.bold,
@@ -340,30 +340,6 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              'Subtotal:',
-                              style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                            Text(
-                              widget.controller.formatCurrency(
-                                widget.bill.total,
-                              ),
-                              style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        const Divider(),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
                               'Total a cobrar:',
                               style: TextStyle(
                                 fontSize: widget.isTablet ? 16.0 : 14.0,
@@ -373,7 +349,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                             ),
                             Text(
                               widget.controller.formatCurrency(
-                                widget.bill.total,
+                                widget.bill.calculatedTotal,
                               ),
                               style: TextStyle(
                                 fontSize: widget.isTablet ? 18.0 : 16.0,

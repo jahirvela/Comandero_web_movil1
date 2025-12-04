@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../models/admin_model.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class CashClosureView extends StatefulWidget {
   const CashClosureView({super.key});
@@ -13,6 +15,17 @@ class CashClosureView extends StatefulWidget {
 class _CashClosureViewState extends State<CashClosureView> {
   String selectedPeriod = 'Día';
   String selectedStatus = 'Todos';
+  DateTime? selectedDate; // Fecha seleccionada del calendario
+
+  @override
+  void initState() {
+    super.initState();
+    // Cargar cierres cuando se inicia la vista
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final controller = context.read<CajeroController>();
+      controller.loadCashClosures();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +48,10 @@ class _CashClosureViewState extends State<CashClosureView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Banner de aclaraciones pendientes
+                      _buildClarificationBanner(isTablet),
+                      const SizedBox(height: 24),
+
                       // Resumen general
                       _buildGeneralSummary(isTablet),
                       const SizedBox(height: 24),
@@ -51,8 +68,6 @@ class _CashClosureViewState extends State<CashClosureView> {
               ),
             ],
           ),
-          // Botón flotante de nuevo corte
-          floatingActionButton: _buildFloatingActionButton(isTablet),
         );
       },
     );
@@ -292,7 +307,7 @@ class _CashClosureViewState extends State<CashClosureView> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        initialValue: selectedPeriod,
+                        value: selectedDate != null ? 'Personalizado' : selectedPeriod,
                         decoration: InputDecoration(
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -304,17 +319,27 @@ class _CashClosureViewState extends State<CashClosureView> {
                           ),
                         ),
                         items: const [
-                          DropdownMenuItem(value: 'Día', child: Text('Día')),
+                          DropdownMenuItem(value: 'Día', child: Text('Hoy')),
                           DropdownMenuItem(
                             value: 'Semana',
-                            child: Text('Semana'),
+                            child: Text('Esta Semana'),
                           ),
-                          DropdownMenuItem(value: 'Mes', child: Text('Mes')),
+                          DropdownMenuItem(value: 'Mes', child: Text('Este Mes')),
+                          DropdownMenuItem(
+                            value: 'Personalizado',
+                            child: Text('Seleccionar Fecha'),
+                          ),
                         ],
                         onChanged: (value) {
-                          setState(() {
-                            selectedPeriod = value!;
-                          });
+                          if (value == 'Personalizado') {
+                            // Abrir calendario para seleccionar fecha
+                            _selectDate(context);
+                          } else {
+                            setState(() {
+                              selectedPeriod = value!;
+                              selectedDate = null;
+                            });
+                          }
                         },
                       ),
                     ],
@@ -379,10 +404,92 @@ class _CashClosureViewState extends State<CashClosureView> {
                 ),
               ],
             ),
+            // Mostrar fecha seleccionada si hay una
+            if (selectedDate != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today,
+                      size: 16,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Fecha seleccionada: ${_formatDate(selectedDate!)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 13.0 : 11.0,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          selectedDate = null;
+                          selectedPeriod = 'Día';
+                        });
+                      },
+                      child: const Text('Limpiar'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 32),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      locale: const Locale('es', 'ES'),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.textPrimary,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        selectedDate = picked;
+        selectedPeriod = 'Personalizado';
+      });
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    // Asegurarse de que la fecha esté en zona horaria local
+    final localDate = date.isUtc ? date.toLocal() : date;
+    return date_utils.AppDateUtils.formatDateTime(localDate);
   }
 
   Widget _buildCashClosuresList(bool isTablet, bool isDesktop) {
@@ -390,11 +497,75 @@ class _CashClosureViewState extends State<CashClosureView> {
       builder: (context, controller, child) {
         final closures = controller.cashClosures;
         final filteredClosures = closures.where((closure) {
-          final periodMatch =
-              selectedPeriod == 'Día' || closure.periodo == selectedPeriod;
-          final statusMatch =
-              selectedStatus == 'Todos' ||
-              closure.estado == selectedStatus.toLowerCase();
+          // Filtro por período/fecha
+          bool periodMatch = true;
+          if (selectedDate != null) {
+            // Si hay una fecha seleccionada, filtrar por esa fecha específica
+            final closureDate = DateTime(
+              closure.fecha.year,
+              closure.fecha.month,
+              closure.fecha.day,
+            );
+            final selectedDateOnly = DateTime(
+              selectedDate!.year,
+              selectedDate!.month,
+              selectedDate!.day,
+            );
+            periodMatch = closureDate.isAtSameMomentAs(selectedDateOnly);
+          } else {
+            // Filtro por período predefinido
+            final now = DateTime.now();
+            final closureDate = DateTime(
+              closure.fecha.year,
+              closure.fecha.month,
+              closure.fecha.day,
+            );
+            final today = DateTime(now.year, now.month, now.day);
+            
+            switch (selectedPeriod) {
+              case 'Día':
+                periodMatch = closureDate.isAtSameMomentAs(today);
+                break;
+              case 'Semana':
+                // Calcular inicio de la semana (lunes)
+                final daysFromMonday = today.weekday - 1; // 0 = lunes, 6 = domingo
+                final weekStart = today.subtract(Duration(days: daysFromMonday));
+                final weekEnd = weekStart.add(const Duration(days: 6));
+                // Verificar si la fecha del cierre está entre el inicio y fin de semana (inclusive)
+                periodMatch = closureDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
+                              closureDate.isBefore(weekEnd.add(const Duration(days: 1)));
+                break;
+              case 'Mes':
+                periodMatch = closureDate.year == today.year &&
+                             closureDate.month == today.month;
+                break;
+              default:
+                periodMatch = true;
+            }
+          }
+
+          // Filtro por estado
+          bool statusMatch = true;
+          if (selectedStatus != 'Todos') {
+            final estadoLower = closure.estado.toLowerCase();
+            switch (selectedStatus) {
+              case 'Pendiente':
+                statusMatch = estadoLower == 'pending';
+                break;
+              case 'Aprobado':
+                statusMatch = estadoLower == 'approved';
+                break;
+              case 'Rechazado':
+                statusMatch = estadoLower == 'rejected';
+                break;
+              case 'Aclaración':
+                statusMatch = estadoLower == 'clarification';
+                break;
+              default:
+                statusMatch = true;
+            }
+          }
+
           return periodMatch && statusMatch;
         }).toList();
 
@@ -752,24 +923,6 @@ class _CashClosureViewState extends State<CashClosureView> {
     );
   }
 
-  Widget _buildFloatingActionButton(bool isTablet) {
-    return Container(
-      margin: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-      child: FloatingActionButton.extended(
-        onPressed: () {
-          _showNewClosureDialog();
-        },
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: Text(
-          isTablet ? 'Nuevo Corte' : 'Nuevo',
-          style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
-        ),
-      ),
-    );
-  }
-
   String _getStatusIcon(String status) {
     switch (status.toLowerCase()) {
       case 'pendiente':
@@ -810,7 +963,72 @@ class _CashClosureViewState extends State<CashClosureView> {
               ),
               if (closure.notaCajero != null) ...[
                 const SizedBox(height: 16),
-                Text('Nota: ${closure.notaCajero}'),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.amber.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tu Nota:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.amber.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('${closure.notaCajero}'),
+                    ],
+                  ),
+                ),
+              ],
+              if (closure.estado == CashCloseStatus.clarification && closure.comentarioRevision != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade300, width: 2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: Colors.blue.shade800,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Solicitud de Aclaración del Administrador:',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade900,
+                                fontSize: 14.0,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        closure.comentarioRevision!,
+                        style: TextStyle(
+                          color: Colors.blue.shade800,
+                          fontSize: 13.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ],
           ),
@@ -871,27 +1089,195 @@ class _CashClosureViewState extends State<CashClosureView> {
     );
   }
 
-  void _showNewClosureDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Nuevo Corte de Caja'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('• Efectivo contado'),
-            Text('• Total tarjeta'),
-            Text('• Otros ingresos'),
-            Text('• Notas del cajero'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+  Widget _buildClarificationBanner(bool isTablet) {
+    return Consumer<CajeroController>(
+      builder: (context, controller, child) {
+        final aclaraciones = controller.cashClosures
+            .where((c) => c.estado == CashCloseStatus.clarification)
+            .toList();
+
+        if (aclaraciones.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final screenIsTablet = MediaQuery.of(context).size.width > 600;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: EdgeInsets.all(screenIsTablet ? 20.0 : 16.0),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue.shade300, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.blue.shade200.withValues(alpha: 0.3),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.blue.shade800,
+                    size: isTablet ? 28.0 : 24.0,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Aclaraciones Pendientes (${aclaraciones.length})',
+                      style: TextStyle(
+                        fontSize: screenIsTablet ? 20.0 : 18.0,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue.shade900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ...aclaraciones.map((cierre) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.help_outline,
+                            color: Colors.blue.shade700,
+                            size: screenIsTablet ? 20.0 : 18.0,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Cierre ${cierre.id} - ${controller.formatDate(cierre.fecha)}',
+                              style: TextStyle(
+                                fontSize: screenIsTablet ? 16.0 : 14.0,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.blue.shade900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (cierre.notaCajero != null && cierre.notaCajero!.isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.amber.shade200),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.note_alt,
+                                size: 16,
+                                color: Colors.amber.shade800,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Tu nota: ${cierre.notaCajero}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 13.0 : 11.0,
+                                    color: Colors.amber.shade900,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.blue.shade200),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.message,
+                              size: 18,
+                              color: Colors.blue.shade800,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Solicitud del Administrador:',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 13.0 : 11.0,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.blue.shade900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    cierre.comentarioRevision ?? 
+                                    'El administrador necesita más información sobre este cierre. Por favor, revisa los detalles y proporciona la información solicitada.',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 13.0 : 11.0,
+                                      color: Colors.blue.shade800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            _showClosureDetails(cierre, controller);
+                          },
+                          icon: const Icon(Icons.visibility),
+                          label: const Text('Ver Detalles'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.shade700,
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(
+                              vertical: screenIsTablet ? 14.0 : 12.0,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ],
+          ),
+        );
+      },
     );
   }
 

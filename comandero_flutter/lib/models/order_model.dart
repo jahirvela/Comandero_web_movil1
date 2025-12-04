@@ -1,3 +1,5 @@
+import '../utils/date_utils.dart' as date_utils;
+
 class OrderModel {
   final String id;
   final int? tableNumber;
@@ -35,7 +37,7 @@ class OrderModel {
           .map((item) => OrderItem.fromJson(item))
           .toList(),
       status: json['status'],
-      orderTime: DateTime.parse(json['orderTime']),
+      orderTime: date_utils.AppDateUtils.parseToLocal(json['orderTime']),
       estimatedTime: json['estimatedTime'],
       waiter: json['waiter'],
       priority: json['priority'],
@@ -152,6 +154,7 @@ class OrderStatus {
   static const String enPreparacion = 'en_preparacion';
   static const String listo = 'listo';
   static const String listoParaRecoger = 'listo_para_recoger';
+  static const String cancelada = 'cancelada';
 
   static String getStatusText(String status) {
     switch (status) {
@@ -163,6 +166,8 @@ class OrderStatus {
         return 'Listo';
       case listoParaRecoger:
         return 'Listo para Recoger';
+      case cancelada:
+        return 'Cancelada';
       default:
         return 'Desconocido';
     }
@@ -178,6 +183,8 @@ class OrderStatus {
         return 'green';
       case listoParaRecoger:
         return 'green';
+      case cancelada:
+        return 'gray';
       default:
         return 'gray';
     }

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
+import '../../controllers/auth_controller.dart';
+import '../../services/cierres_service.dart';
+import '../../services/pagos_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class CashManagementView extends StatefulWidget {
   const CashManagementView({super.key});
@@ -12,6 +16,124 @@ class CashManagementView extends StatefulWidget {
 
 class _CashManagementViewState extends State<CashManagementView> {
   String selectedOperation = 'Todas';
+  List<Map<String, dynamic>> operations = [];
+  bool isLoading = true;
+  double cashInDrawer = 0.0;
+  double cashChange = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCashData();
+  }
+
+  Future<void> _loadCashData() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final cierresService = CierresService();
+      final pagosService = PagosService();
+      
+      // Obtener cierres de caja del día
+      final hoy = DateTime.now();
+      final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
+      final finDia = DateTime(hoy.year, hoy.month, hoy.day, 23, 59, 59);
+      
+      final cierres = await cierresService.listarCierresCaja(
+        fechaInicio: inicioDia,
+        fechaFin: finDia,
+      );
+
+      // Obtener pagos del día
+      final pagos = await pagosService.getPagos();
+      final pagosHoy = pagos.where((p) {
+        final creadoEn = p['creadoEn'] != null 
+            ? date_utils.AppDateUtils.parseToLocal(p['creadoEn'])
+            : null;
+        return creadoEn != null && creadoEn.isAfter(inicioDia) && creadoEn.isBefore(finDia);
+      }).toList();
+
+      // Calcular efectivo en caja (del último cierre o estimado)
+      if (cierres.isNotEmpty) {
+        final ultimoCierre = cierres.first;
+        cashInDrawer = ultimoCierre.efectivoContado;
+      } else {
+        // Si no hay cierre, calcular desde pagos
+        cashInDrawer = pagosHoy.fold<double>(0.0, (sum, p) {
+          final formaPago = p['formaPago'] as String? ?? '';
+          final monto = (p['monto'] as num?)?.toDouble() ?? 0.0;
+          if (formaPago.toLowerCase().contains('efectivo')) {
+            return sum + monto;
+          }
+          return sum;
+        });
+      }
+
+      // Mapear pagos a operaciones
+      operations = pagosHoy.map((pago) {
+        final monto = (pago['monto'] as num?)?.toDouble() ?? 0.0;
+        final formaPago = pago['formaPago'] as String? ?? '';
+        final descripcion = pago['ordenId'] != null 
+            ? 'Pago orden ${pago['ordenId']}'
+            : 'Pago';
+        final creadoEn = date_utils.AppDateUtils.parseToLocal(pago['creadoEn']);
+        final hora = date_utils.AppDateUtils.formatTime(creadoEn);
+        final usuario = pago['cajeroNombre'] as String? ?? 'Cajero';
+
+        String tipo = 'Ingreso';
+        Color color = AppColors.success;
+        
+        if (formaPago.toLowerCase().contains('efectivo')) {
+          tipo = 'Ingreso';
+          color = AppColors.success;
+        } else if (formaPago.toLowerCase().contains('tarjeta')) {
+          tipo = 'Ingreso';
+          color = AppColors.info;
+        }
+
+        return {
+          'id': 'OP-${pago['id']}',
+          'type': tipo,
+          'amount': monto,
+          'description': descripcion,
+          'time': hora,
+          'user': usuario,
+          'color': color,
+        };
+      }).toList();
+
+      // Agregar cierres como operaciones
+      for (final cierre in cierres) {
+        operations.insert(0, {
+          'id': 'CIERRE-${cierre.id}',
+          'type': 'Cierre',
+          'amount': cierre.efectivoContado,
+          'description': 'Cierre de caja',
+          'time': date_utils.AppDateUtils.formatTime(cierre.fecha),
+          'user': cierre.usuario,
+          'color': AppColors.primary,
+        });
+      }
+
+      // Ordenar por tiempo (más reciente primero)
+      operations.sort((a, b) => b['time'].compareTo(a['time']));
+
+      // Calcular cambio entregado (simplificado)
+      cashChange = operations.where((op) => op['type'] == 'Egreso').fold<double>(
+        0.0,
+        (sum, op) => sum + (op['amount'] as num).toDouble(),
+      );
+    } catch (e) {
+      print('Error al cargar datos de efectivo: $e');
+      operations = [];
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,28 +151,30 @@ class _CashManagementViewState extends State<CashManagementView> {
 
               // Contenido principal
               Expanded(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Resumen general
-                      _buildGeneralSummary(isTablet),
-                      const SizedBox(height: 24),
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.all(isTablet ? 24.0 : 16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Resumen general
+                            _buildGeneralSummary(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Filtros
-                      _buildFilters(isTablet),
-                      const SizedBox(height: 24),
+                            // Filtros
+                            _buildFilters(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Operaciones rápidas
-                      _buildQuickOperations(isTablet),
-                      const SizedBox(height: 24),
+                            // Operaciones rápidas
+                            _buildQuickOperations(isTablet),
+                            const SizedBox(height: 24),
 
-                      // Historial de operaciones
-                      _buildOperationsHistory(isTablet, isDesktop),
-                    ],
-                  ),
-                ),
+                            // Historial de operaciones
+                            _buildOperationsHistory(isTablet, isDesktop),
+                          ],
+                        ),
+                      ),
               ),
             ],
           ),
@@ -99,12 +223,19 @@ class _CashManagementViewState extends State<CashManagementView> {
                         color: Colors.white,
                       ),
                     ),
-                    Text(
-                      'Juan Martínez • Cajero',
-                      style: TextStyle(
-                        fontSize: isTablet ? 16.0 : 14.0,
-                        color: Colors.white.withValues(alpha: 0.8),
-                      ),
+                    Consumer<AuthController>(
+                      builder: (context, authController, child) {
+                        final userName = authController.userName.isNotEmpty 
+                            ? authController.userName 
+                            : 'Cajero';
+                        return Text(
+                          '$userName • Cajero',
+                          style: TextStyle(
+                            fontSize: isTablet ? 16.0 : 14.0,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -131,9 +262,7 @@ class _CashManagementViewState extends State<CashManagementView> {
     return Consumer<CajeroController>(
       builder: (context, controller, child) {
         final stats = controller.getPaymentStats();
-        final cashInDrawer = 1500.0; // Mock data
-        final cashReceived = stats['totalCash']!;
-        final cashChange = 200.0; // Mock data
+        final cashReceived = stats['totalCash'] ?? 0.0;
 
         return Card(
           elevation: 2,
@@ -526,48 +655,28 @@ class _CashManagementViewState extends State<CashManagementView> {
   }
 
   Widget _buildOperationsList(bool isTablet) {
-    // Mock data para operaciones
-    final operations = [
-      {
-        'id': 'OP-001',
-        'type': 'Ingreso',
-        'amount': 150.0,
-        'description': 'Pago mesa 5',
-        'time': '14:30',
-        'user': 'Juan Martínez',
-        'color': AppColors.success,
-      },
-      {
-        'id': 'OP-002',
-        'type': 'Egreso',
-        'amount': 50.0,
-        'description': 'Cambio entregado',
-        'time': '14:25',
-        'user': 'Juan Martínez',
-        'color': AppColors.warning,
-      },
-      {
-        'id': 'OP-003',
-        'type': 'Ingreso',
-        'amount': 200.0,
-        'description': 'Pago mesa 3',
-        'time': '14:20',
-        'user': 'Juan Martínez',
-        'color': AppColors.success,
-      },
-      {
-        'id': 'OP-004',
-        'type': 'Apertura',
-        'amount': 1000.0,
-        'description': 'Apertura de caja',
-        'time': '08:00',
-        'user': 'Juan Martínez',
-        'color': AppColors.info,
-      },
-    ];
+    // Filtrar operaciones según el filtro seleccionado
+    final filteredOperations = selectedOperation == 'Todas'
+        ? operations
+        : operations.where((op) => op['type'] == selectedOperation).toList();
+
+    if (filteredOperations.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Text(
+            'No hay operaciones registradas',
+            style: TextStyle(
+              fontSize: isTablet ? 16.0 : 14.0,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+      );
+    }
 
     return Column(
-      children: operations.map((operation) {
+      children: filteredOperations.map((operation) {
         return _buildOperationItem(operation, isTablet);
       }).toList(),
     );

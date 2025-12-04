@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/date_utils.dart' as date_utils;
 
 class CaptainAlert {
   final String id;
@@ -35,7 +36,7 @@ class CaptainAlert {
       orderNumber: json['orderNumber'],
       minutes: json['minutes'],
       priority: json['priority'],
-      timestamp: DateTime.parse(json['timestamp']),
+      timestamp: date_utils.AppDateUtils.parseToLocal(json['timestamp']),
       isRead: json['isRead'] ?? false,
     );
   }
@@ -112,7 +113,7 @@ class CaptainOrder {
       id: json['id'],
       tableNumber: json['tableNumber'],
       status: json['status'],
-      orderTime: DateTime.parse(json['orderTime']),
+      orderTime: date_utils.AppDateUtils.parseToLocal(json['orderTime']),
       elapsedMinutes: json['elapsedMinutes'],
       waiter: json['waiter'],
       total: json['total'].toDouble(),
@@ -204,7 +205,7 @@ class CaptainTable {
       customers: json['customers'],
       waiter: json['waiter'],
       lastOrderTime: json['lastOrderTime'] != null
-          ? DateTime.parse(json['lastOrderTime'])
+          ? date_utils.AppDateUtils.parseToLocal(json['lastOrderTime'])
           : null,
       currentTotal: json['currentTotal']?.toDouble(),
       hasActiveOrder: json['hasActiveOrder'] ?? false,
@@ -438,4 +439,3 @@ class CaptainOrderStatus {
     }
   }
 }
-

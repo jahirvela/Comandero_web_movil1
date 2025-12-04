@@ -1,0 +1,25 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000066
+Fecha: 2025-12-01T19:19:42.000Z
+Mesa: 13
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  1  Taco Dorado de Barbacoa      25.00
+  Nota: Sin lechuga
+------------------------------------------
+Subtotal:                    $   25.00
+Descuento:                   $    1.25
+Propina sugerida:           $    2.38
+E1TOTAL:                      $   26.13
+E0==========================================
+a1
+k4k10ORD-000066
+ORD-000066
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

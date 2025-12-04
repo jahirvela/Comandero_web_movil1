@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
+import '../../services/reportes_service.dart';
 import '../../utils/app_colors.dart';
 
 class SalesReportsView extends StatefulWidget {
@@ -690,7 +691,7 @@ class _SalesReportsViewState extends State<SalesReportsView> {
           ),
           Expanded(
             child: Text(
-              controller.formatCurrency(bill.total),
+              controller.formatCurrency(bill.calculatedTotal),
               style: TextStyle(
                 fontSize: isTablet ? 12.0 : 10.0,
                 fontWeight: FontWeight.w500,
@@ -755,26 +756,124 @@ class _SalesReportsViewState extends State<SalesReportsView> {
   }
 
   void _showExportDialog() {
+    final now = DateTime.now();
+    DateTime fechaInicio;
+    DateTime fechaFin = DateTime(now.year, now.month, now.day, 23, 59, 59);
+
+    // Calcular fecha de inicio según el período seleccionado
+    switch (selectedPeriod) {
+      case 'Hoy':
+        fechaInicio = DateTime(now.year, now.month, now.day);
+        break;
+      case 'Ayer':
+        fechaInicio = DateTime(now.year, now.month, now.day - 1);
+        fechaFin = DateTime(now.year, now.month, now.day - 1, 23, 59, 59);
+        break;
+      case 'Esta Semana':
+        final weekday = now.weekday;
+        fechaInicio = DateTime(now.year, now.month, now.day - weekday + 1);
+        break;
+      case 'Este Mes':
+        fechaInicio = DateTime(now.year, now.month, 1);
+        break;
+      case 'Último Mes':
+        final lastMonth = DateTime(now.year, now.month - 1, 1);
+        fechaInicio = lastMonth;
+        fechaFin = DateTime(now.year, now.month, 0, 23, 59, 59);
+        break;
+      default:
+        fechaInicio = DateTime(now.year, now.month, now.day);
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Exportar Reporte'),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('• Formato PDF'),
-            Text('• Formato Excel'),
-            Text('• Formato CSV'),
-            Text('• Enviar por email'),
+            const Text('Selecciona el formato:'),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
+              title: const Text('PDF'),
+              onTap: () async {
+                Navigator.pop(context);
+                await _exportarPDF(fechaInicio, fechaFin);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.table_chart, color: Colors.green),
+              title: const Text('CSV'),
+              onTap: () async {
+                Navigator.pop(context);
+                await _exportarCSV(fechaInicio, fechaFin);
+              },
+            ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: const Text('Cancelar'),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _exportarPDF(DateTime fechaInicio, DateTime fechaFin) async {
+    try {
+      final reportesService = ReportesService();
+      await reportesService.generarReporteVentasPDF(
+        fechaInicio: fechaInicio,
+        fechaFin: fechaFin,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Reporte PDF generado exitosamente'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar PDF: ${e.toString()}'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportarCSV(DateTime fechaInicio, DateTime fechaFin) async {
+    try {
+      final reportesService = ReportesService();
+      await reportesService.generarReporteVentasCSV(
+        fechaInicio: fechaInicio,
+        fechaFin: fechaFin,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Reporte CSV generado exitosamente'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar CSV: ${e.toString()}'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
   }
 }

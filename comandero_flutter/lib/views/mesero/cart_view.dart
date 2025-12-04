@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
+import '../../controllers/auth_controller.dart';
 import '../../models/product_model.dart';
 import '../../utils/app_colors.dart';
 
@@ -18,7 +19,15 @@ class _CartViewState extends State<CartView> {
   bool isTakeaway = false;
   String customerName = '';
   String customerPhone = '';
+  String orderNote = '';
   int splitCount = 1;
+  final TextEditingController _orderNoteController = TextEditingController();
+
+  @override
+  void dispose() {
+    _orderNoteController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +73,10 @@ class _CartViewState extends State<CartView> {
                             _buildTakeawaySection(isTablet),
                             const SizedBox(height: 24),
 
+                            // Nota del pedido
+                            _buildOrderNoteSection(isTablet),
+                            const SizedBox(height: 24),
+
                             // División de cuenta
                             _buildSplitSection(isTablet),
                             const SizedBox(height: 24),
@@ -78,6 +91,7 @@ class _CartViewState extends State<CartView> {
                               discountAmount,
                               tipAmount,
                               total,
+                              splitCount,
                               isTablet,
                             ),
                             const SizedBox(height: 24),
@@ -123,7 +137,12 @@ class _CartViewState extends State<CartView> {
               // Botón de regreso
               IconButton(
                 onPressed: () {
-                  controller.setCurrentView('table');
+                  // Navegar a la vista correcta según el modo
+                  if (controller.isTakeawayMode) {
+                    controller.setCurrentView('menu');
+                  } else {
+                    controller.setCurrentView('table');
+                  }
                 },
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
                 style: IconButton.styleFrom(
@@ -339,13 +358,36 @@ class _CartViewState extends State<CartView> {
           // Precio y botón eliminar
           Column(
             children: [
-              Text(
-                '\$${product.price.toStringAsFixed(0)}',
-                style: TextStyle(
-                  fontSize: isTablet ? 18.0 : 16.0,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (quantity > 1)
+                    Text(
+                      '\$${(product.price * quantity).toStringAsFixed(0)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    )
+                  else
+                    Text(
+                      '\$${product.price.toStringAsFixed(0)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  if (quantity > 1)
+                    Text(
+                      '\$${product.price.toStringAsFixed(0)} c/u',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 10.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               IconButton(
@@ -443,6 +485,108 @@ class _CartViewState extends State<CartView> {
   }
 
   Widget _buildTakeawaySection(bool isTablet) {
+    return Consumer<MeseroController>(
+      builder: (context, controller, child) {
+        // Si estamos en modo takeaway, mostrar info del cliente
+        final isTakeawayMode = controller.isTakeawayMode;
+        final takeawayName = controller.takeawayCustomerName;
+        final takeawayPhone = controller.takeawayCustomerPhone;
+
+        // Si estamos desde una mesa y no es modo takeaway, ocultar la sección
+        if (!isTakeawayMode && controller.selectedTable != null) {
+          return const SizedBox.shrink();
+        }
+
+        // Si estamos en modo takeaway, usar los datos del cliente guardados
+        if (isTakeawayMode && takeawayName != null) {
+          // Actualizar estado local con datos del controlador
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && customerName != takeawayName) {
+              setState(() {
+                isTakeaway = true;
+                customerName = takeawayName;
+                customerPhone = takeawayPhone ?? '';
+              });
+            }
+          });
+
+          return Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.warning.withValues(alpha: 0.3)),
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: AppColors.warning.withValues(alpha: 0.05),
+              ),
+              padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.shopping_bag,
+                        color: AppColors.warning,
+                        size: isTablet ? 24.0 : 20.0,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Pedido Para Llevar',
+                        style: TextStyle(
+                          fontSize: isTablet ? 20.0 : 18.0,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.warning,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Icon(Icons.person, size: 18, color: AppColors.textSecondary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Cliente: $takeawayName',
+                        style: TextStyle(
+                          fontSize: isTablet ? 16.0 : 14.0,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (takeawayPhone != null && takeawayPhone.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(Icons.phone, size: 18, color: AppColors.textSecondary),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Tel: $takeawayPhone',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }
+
+        // Si no hay mesa seleccionada ni es modo takeaway, no mostrar nada
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Widget _buildOrderNoteSection(bool isTablet) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -455,7 +599,7 @@ class _CartViewState extends State<CartView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '¿Solo para llevar?',
+              'Nota del Pedido',
               style: TextStyle(
                 fontSize: isTablet ? 20.0 : 18.0,
                 fontWeight: FontWeight.w600,
@@ -463,50 +607,22 @@ class _CartViewState extends State<CartView> {
               ),
             ),
             const SizedBox(height: 16),
-
-            Switch(
-              value: isTakeaway,
+            TextField(
+              controller: _orderNoteController,
               onChanged: (value) {
                 setState(() {
-                  isTakeaway = value;
+                  orderNote = value;
                 });
               },
-              activeThumbColor: AppColors.primary,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'Nota adicional (opcional)',
+                hintText: 'Ej. Sin cebolla, para llevar, etc.',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
             ),
-
-            if (isTakeaway) ...[
-              const SizedBox(height: 16),
-              TextField(
-                onChanged: (value) {
-                  setState(() {
-                    customerName = value;
-                  });
-                },
-                decoration: InputDecoration(
-                  labelText: 'Nombre del cliente *',
-                  hintText: 'Ej. Jahir',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                onChanged: (value) {
-                  setState(() {
-                    customerPhone = value;
-                  });
-                },
-                decoration: InputDecoration(
-                  labelText: 'Teléfono (opcional)',
-                  hintText: '55 1234 5678',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                keyboardType: TextInputType.phone,
-              ),
-            ],
           ],
         ),
       ),
@@ -715,8 +831,11 @@ class _CartViewState extends State<CartView> {
     double discountAmount,
     double tipAmount,
     double total,
+    int splitCount,
     bool isTablet,
   ) {
+    final totalPerPerson = splitCount > 1 ? total / splitCount : total;
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -814,6 +933,40 @@ class _CartViewState extends State<CartView> {
                 ),
               ],
             ),
+            if (splitCount > 1) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Total por persona (${splitCount} ${splitCount == 1 ? 'persona' : 'personas'}):',
+                      style: TextStyle(
+                        fontSize: isTablet ? 16.0 : 14.0,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    Text(
+                      '\$${totalPerPerson.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -940,7 +1093,7 @@ class _CartViewState extends State<CartView> {
 
     showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
@@ -960,6 +1113,15 @@ class _CartViewState extends State<CartView> {
                   color: AppColors.textPrimary,
                 ),
               ),
+            ),
+            // Botón X para cerrar
+            IconButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              icon: const Icon(Icons.close),
+              iconSize: isTablet ? 24.0 : 20.0,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              color: AppColors.textSecondary,
             ),
           ],
         ),
@@ -1019,27 +1181,112 @@ class _CartViewState extends State<CartView> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                // Enviar pedido a cocina
-                controller.sendOrderToKitchen(
-                  isTakeaway: isTakeaway,
-                  customerName: isTakeaway ? customerName : null,
-                  customerPhone: isTakeaway ? customerPhone : null,
-                );
-
-                Navigator.of(dialogContext).pop();
-
-                // Regresar a la vista de mesa
-                controller.setCurrentView('table');
-
-                // Mostrar confirmación
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('¡Pedido enviado a cocina! 🔥'),
-                    backgroundColor: AppColors.success,
-                    duration: const Duration(seconds: 2),
+              onPressed: () async {
+                // Mostrar indicador de carga
+                showDialog(
+                  context: dialogContext,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+
+                try {
+                  // Obtener nombre del usuario del AuthController
+                  final authController = Provider.of<AuthController>(context, listen: false);
+                  final userName = authController.userName.isNotEmpty 
+                      ? authController.userName 
+                      : 'Mesero';
+                  
+                  // Determinar si es modo takeaway (desde sección Para Llevar o switch)
+                  final isTakeawayMode = controller.isTakeawayMode;
+                  final finalIsTakeaway = isTakeaway || isTakeawayMode;
+                  
+                  // Obtener datos del cliente (del controlador si es modo takeaway, o del form)
+                  final finalCustomerName = isTakeawayMode 
+                      ? (controller.takeawayCustomerName ?? customerName.trim())
+                      : customerName.trim();
+                  final finalCustomerPhone = isTakeawayMode 
+                      ? (controller.takeawayCustomerPhone ?? customerPhone.trim())
+                      : customerPhone.trim();
+                  
+                  // Validar campos obligatorios para takeaway
+                  if (finalIsTakeaway && finalCustomerName.isEmpty) {
+                    if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Por favor ingresa el nombre del cliente para el pedido para llevar'),
+                          backgroundColor: AppColors.error,
+                        ),
+                      );
+                    }
+                    return;
+                  }
+
+                  // Calcular descuento y propina
+                  final subtotal = controller.calculateTotal();
+                  final discountAmount = subtotal * (discountPercentage / 100);
+                  final subtotalAfterDiscount = subtotal - discountAmount;
+                  final calculatedTip = subtotalAfterDiscount * (tipPercentage / 100);
+
+                  // Enviar pedido a cocina
+                  await controller.sendOrderToKitchen(
+                    isTakeaway: finalIsTakeaway,
+                    customerName: finalIsTakeaway ? finalCustomerName : null,
+                    customerPhone: finalIsTakeaway && finalCustomerPhone.isNotEmpty ? finalCustomerPhone : null,
+                    waiterName: userName,
+                    discount: discountAmount,
+                    orderNote: orderNote.trim().isNotEmpty ? orderNote.trim() : null,
+                    tip: calculatedTip,
+                    splitCount: splitCount,
+                  );
+                  
+                  // Cerrar diálogo de carga
+                  if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+
+                  // Cerrar diálogo de confirmación
+                  if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+
+                  // Regresar a la vista correcta
+                  if (isTakeawayMode) {
+                    // Limpiar datos del cliente para llevar después de enviar
+                    controller.clearTakeawayCustomerInfo();
+                    // Recargar historial de para llevar
+                    controller.loadTakeawayOrderHistory();
+                    // Regresar a la vista de para llevar
+                    controller.setCurrentView('takeaway');
+                  } else {
+                    // Regresar a la vista de mesa
+                    controller.setCurrentView('table');
+                  }
+
+                  // Mostrar confirmación
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(finalIsTakeaway 
+                            ? '¡Pedido para llevar enviado a cocina! 🛍️' 
+                            : '¡Pedido enviado a cocina! 🔥'),
+                        backgroundColor: AppColors.success,
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al enviar pedido: ${e.toString()}'),
+                        backgroundColor: AppColors.error,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.success,
@@ -1078,13 +1325,58 @@ class _CartViewState extends State<CartView> {
             child: const Text('Cancelar'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               final table = controller.selectedTable;
               if (table != null) {
-                controller.sendToCashier(table.id);
-                controller.setCurrentView('floor');
+                try {
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+                  
+                  await controller.sendToCashier(table.id);
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de confirmación
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  controller.setCurrentView('floor');
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Cuenta de Mesa ${table.number} enviada al Cajero',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Error al enviar cuenta: ${e.toString()}',
+                        ),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
+              } else {
+                Navigator.pop(context);
               }
-              Navigator.pop(context);
             },
             child: const Text('Cerrar'),
           ),

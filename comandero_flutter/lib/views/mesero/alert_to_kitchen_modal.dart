@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
-import '../../services/kitchen_order_service.dart';
+import '../../services/alertas_service.dart';
+import '../../services/auth_service.dart';
 
 class AlertToKitchenModal extends StatefulWidget {
   final String tableNumber;
@@ -309,26 +310,202 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
     return selectedAlertType.isNotEmpty && selectedReason.isNotEmpty;
   }
 
-  void _sendAlert() {
+  void _sendAlert() async {
     if (!_canSendAlert()) return;
 
-    KitchenOrderService().sendAlertToKitchen(
-      tableNumber: widget.tableNumber,
-      orderId: widget.orderId,
-      alertType: selectedAlertType,
-      reason: selectedReason,
-      details: additionalDetails.isNotEmpty ? additionalDetails : null,
-      priority: priority,
-    );
+    try {
+      // Mostrar indicador de carga
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Alerta enviada a cocina: $selectedAlertType'),
-        backgroundColor: AppColors.success,
+      // Obtener información del mesero actual
+      String meseroNombre = 'Mesero';
+      try {
+        final authService = AuthService();
+        final profile = await authService.getProfile();
+        if (profile != null) {
+          meseroNombre =
+              profile['username']?.toString() ??
+              profile['nombre']?.toString() ??
+              'Mesero';
+        }
+      } catch (e) {
+        print('⚠️ Error al obtener perfil del mesero: $e');
+      }
+
+      // Enviar alerta al backend y Socket.IO usando AlertasService
+      // Este servicio maneja tanto la persistencia como el envío en tiempo real
+      final alertasService = AlertasService();
+      await alertasService.enviarAlertaDesdeModal(
+        tableNumber: widget.tableNumber,
+        orderId: widget.orderId,
+        alertType: selectedAlertType,
+        reason: selectedReason,
+        details: additionalDetails.isNotEmpty ? additionalDetails : null,
+        priority: priority,
+      );
+
+      print(
+        '📢 Mesero ($meseroNombre) envió alerta: $selectedAlertType - $selectedReason',
+      );
+
+      // Cerrar diálogo de carga
+      if (context.mounted) Navigator.pop(context);
+
+      // Mostrar confirmación con detalles
+      if (context.mounted) {
+        _showConfirmationDialog(context, meseroNombre);
+      }
+    } catch (e) {
+      // Cerrar diálogo de carga si está abierto
+      if (context.mounted) Navigator.pop(context);
+
+      // Mostrar error
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al enviar alerta: ${e.toString()}'),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showConfirmationDialog(BuildContext context, String meseroNombre) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green, size: 28),
+            const SizedBox(width: 8),
+            const Text('Alerta Enviada'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Se ha enviado la alerta a Cocina:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: priority == 'Urgente'
+                    ? Colors.red.withValues(alpha: 0.1)
+                    : Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: priority == 'Urgente'
+                      ? Colors.red.withValues(alpha: 0.3)
+                      : Colors.orange.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        priority == 'Urgente'
+                            ? Icons.warning_amber_rounded
+                            : Icons.info_outline,
+                        color: priority == 'Urgente'
+                            ? Colors.red
+                            : Colors.orange,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        selectedAlertType,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: priority == 'Urgente'
+                              ? Colors.red
+                              : Colors.orange,
+                        ),
+                      ),
+                      if (priority == 'Urgente') ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'URGENTE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Motivo: $selectedReason'),
+                  if (additionalDetails.isNotEmpty)
+                    Text('Detalles: $additionalDetails'),
+                  const Divider(height: 16),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.table_restaurant,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text('Mesa ${widget.tableNumber}'),
+                      const SizedBox(width: 16),
+                      Icon(
+                        Icons.receipt_long,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(widget.orderId),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.person,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text('Enviado por: $meseroNombre'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Navigator.pop(context); // Cerrar modal principal
+            },
+            child: const Text('Aceptar'),
+          ),
+        ],
       ),
     );
-
-    Navigator.pop(context);
   }
 }
 

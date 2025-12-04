@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -11,6 +12,7 @@ import 'utils/app_theme.dart';
 import 'views/admin/access_denied_view.dart';
 import 'services/payment_repository.dart';
 import 'services/bill_repository.dart';
+import 'services/api_service.dart';
 import 'views/admin/admin_app.dart';
 import 'views/admin/admin_web_app.dart';
 import 'views/cajero/cajero_app.dart';
@@ -23,8 +25,18 @@ import 'views/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('es');
-  Intl.defaultLocale = 'es';
+  
+  // Configurar localización en español de México
+  await initializeDateFormatting('es_MX', null);
+  Intl.defaultLocale = 'es_MX';
+  
+  // Configurar zona horaria de México (CDMX)
+  // Nota: Flutter usa la zona horaria del sistema, pero podemos forzar la visualización
+  // La zona horaria real se maneja en el backend
+  
+  // Inicializar el servicio de API
+  ApiService().initialize();
+  
   runApp(const ComanderoApp());
 }
 
@@ -47,6 +59,17 @@ class ComanderoApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,
             routerConfig: _createRouter(authController),
+            // Configurar localización en español de México
+            locale: const Locale('es', 'MX'),
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [
+              Locale('es', 'MX'), // Español de México
+              Locale('es'), // Español genérico como fallback
+            ],
           );
         },
       ),
