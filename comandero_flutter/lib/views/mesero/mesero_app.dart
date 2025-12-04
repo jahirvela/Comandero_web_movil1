@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 import '../../widgets/logout_button.dart';
 import '../../services/kitchen_order_service.dart';
 import '../../services/bill_repository.dart';
@@ -16,9 +17,11 @@ class MeseroApp extends StatelessWidget {
   const MeseroApp({super.key});
 
   // Formatear tiempo transcurrido para notificaciones
+  // IMPORTANTE: Usa hora CDMX para cálculos precisos
   String _formatTimeAgo(DateTime timestamp) {
-    final now = DateTime.now();
-    final difference = now.difference(timestamp);
+    final now = date_utils.AppDateUtils.now();
+    final localTimestamp = timestamp.isUtc ? timestamp.toLocal() : timestamp;
+    final difference = now.difference(localTimestamp);
     
     if (difference.inMinutes < 1) {
       return 'Hace unos segundos';

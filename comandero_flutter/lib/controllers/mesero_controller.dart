@@ -96,40 +96,40 @@ class MeseroController extends ChangeNotifier {
     _initializeAsync();
   }
 
-  // Inicialización asíncrona optimizada
+  // Inicialización asíncrona optimizada (no bloquea la UI)
   Future<void> _initializeAsync() async {
     try {
       // 1. PRIMERO cargar órdenes enviadas al cajero (CRÍTICO - antes de todo)
+      // Esto es rápido (solo lectura de storage local)
       await _loadSentToCashierOrders();
       print('✅ Órdenes enviadas al cajero cargadas: $_sentToCashierOrders');
+      notifyListeners();
 
-      // 2. Cargar mesas y productos en paralelo
-      await Future.wait([_initializeTables(), _loadProductsAndCategories()]);
+      // 2. Cargar mesas y productos en paralelo (operaciones pesadas)
+      // Hacer esto en background para no bloquear la UI
+      Future.wait([
+        _initializeTables(),
+        _loadProductsAndCategories(),
+      ]).then((_) {
+        notifyListeners();
+        
+        // 3. DESPUÉS cargar historial de para llevar (para que el filtro funcione)
+        loadTakeawayOrderHistory().then((_) {
+          notifyListeners();
+          
+          // 4. Cargar historial de todas las mesas con órdenes activas
+          _loadAllTablesHistory().then((_) {
+            notifyListeners();
+          });
+        });
+      }).catchError((e) {
+        print('Error cargando datos iniciales: $e');
+      });
 
-      // 3. DESPUÉS cargar historial de para llevar (para que el filtro funcione)
-      await loadTakeawayOrderHistory();
+      // 5. CONECTAR Socket.IO en background (no bloquear)
+      _connectSocketInBackground();
 
-      // 4. Cargar historial de todas las mesas con órdenes activas
-      await _loadAllTablesHistory();
-
-      // 5. CONECTAR Socket.IO PRIMERO antes de configurar listeners
-      print('🔌 Mesero: Conectando Socket.IO...');
-      try {
-        final socketService = SocketService();
-        if (!socketService.isConnected) {
-          await socketService.connect();
-          print('✅ Mesero: Socket.IO conectado exitosamente');
-        } else {
-          print('✅ Mesero: Socket.IO ya estaba conectado');
-        }
-      } catch (e) {
-        print('⚠️ Mesero: Error al conectar Socket.IO (continuando): $e');
-      }
-
-      // 6. Configurar listeners (ahora que Socket.IO está conectado)
-      _setupSocketListeners();
-
-      // 5. Cargar flags y notificaciones en background
+      // 6. Cargar flags y notificaciones en background (no crítico)
       _loadClearedHistoryFlags()
           .then((_) {
             _historyCleared.forEach((tableKey, isCleared) {
@@ -137,6 +137,7 @@ class MeseroController extends ChangeNotifier {
                 _tableOrderHistory[tableKey] = [];
               }
             });
+            notifyListeners();
           })
           .catchError((e) {
             print('Error cargando flags: $e');
@@ -148,16 +149,34 @@ class MeseroController extends ChangeNotifier {
         return null;
       });
 
-      // 6. Cargar alertas no leídas desde la BD (importante para cuando el usuario hace logout/login)
-      // IMPORTANTE: Esperar a que se carguen las alertas para asegurar que aparezcan
-      await _loadAlertasNoLeidas().catchError((e) {
+      // 7. Cargar alertas no leídas desde la BD (en background)
+      _loadAlertasNoLeidas().catchError((e) {
         print('❌ Error cargando alertas no leídas: $e');
         return null;
       });
 
-      print('✅ Mesero: Inicialización completada');
+      print('✅ Mesero: Inicialización iniciada (operaciones en background)');
     } catch (e) {
       print('❌ Error en inicialización del mesero: $e');
+    }
+  }
+
+  // Conectar Socket.IO en background sin bloquear
+  Future<void> _connectSocketInBackground() async {
+    print('🔌 Mesero: Conectando Socket.IO en background...');
+    try {
+      final socketService = SocketService();
+      if (!socketService.isConnected) {
+        await socketService.connect();
+        print('✅ Mesero: Socket.IO conectado exitosamente');
+        // Configurar listeners después de conectar
+        _setupSocketListeners();
+      } else {
+        print('✅ Mesero: Socket.IO ya estaba conectado');
+        _setupSocketListeners();
+      }
+    } catch (e) {
+      print('⚠️ Mesero: Error al conectar Socket.IO (continuando): $e');
     }
   }
 
@@ -1371,6 +1390,13 @@ class MeseroController extends ChangeNotifier {
     // Estados válidos: abierta, en_preparacion, listo, pendiente
     // Estados EXCLUIDOS: pagada, cancelada, cerrada, cobrada
     final historialFiltrado = historial.where((order) {
+      final ordenId = order['ordenId'] as int?;
+
+      // Excluir órdenes ya enviadas al cajero (registro local)
+      if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
+        return false;
+      }
+
       final status = (order['status'] as String?)?.toLowerCase() ?? '';
 
       // Lista de estados FINALIZADOS que NO deben aparecer
@@ -1854,6 +1880,15 @@ class MeseroController extends ChangeNotifier {
       final ordenesActivas = ordenesEstaMesa.where((o) {
         final ordenData = o as Map<String, dynamic>;
         final ordenId = ordenData['id'] as int? ?? 0;
+        
+        // Excluir órdenes ya enviadas al cajero (registro local)
+        if (ordenId != 0 && _sentToCashierOrders.contains(ordenId)) {
+          print(
+            '🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)',
+          );
+          return false;
+        }
+        
         final estadoNombre =
             (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
 
@@ -1881,6 +1916,14 @@ class MeseroController extends ChangeNotifier {
         final ordenId = ordenData['id'] as int?;
 
         if (ordenId == null) continue;
+        
+        // Excluir órdenes ya enviadas al cajero (registro local)
+        if (_sentToCashierOrders.contains(ordenId)) {
+          print(
+            '🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)',
+          );
+          continue;
+        }
 
         // Obtener detalle completo
         final ordenDetalle = await _ordenesService.getOrden(ordenId);
@@ -1953,6 +1996,11 @@ class MeseroController extends ChangeNotifier {
       for (final ordenLocal in historialLocal) {
         final ordenIdLocal = ordenLocal['ordenId'] as int?;
         if (ordenIdLocal == null) continue;
+        
+        // Excluir órdenes ya enviadas al cajero (registro local)
+        if (_sentToCashierOrders.contains(ordenIdLocal)) {
+          continue;
+        }
 
         // Si ya está en el backend, no duplicar
         if (ordenIdsBackend.contains(ordenIdLocal)) continue;
@@ -2037,7 +2085,7 @@ class MeseroController extends ChangeNotifier {
     }
   }
 
-  // Enviar orden "para llevar" al cajero
+  // Enviar orden "para llevar" al cajero (ahora agrupa todas las órdenes del mismo cliente)
   Future<void> sendTakeawayToCashier(int ordenId) async {
     try {
       // Cargar historial de órdenes "para llevar" si no está cargado
@@ -2046,12 +2094,19 @@ class MeseroController extends ChangeNotifier {
         await loadTakeawayOrderHistory();
       }
 
-      // Buscar la orden específica en el historial
-      final orden = getTakeawayOrderHistory()
+      // Buscar la orden específica en el historial o en el backend
+      final ordenInicial = getTakeawayOrderHistory()
           .where((o) => o['ordenId'] == ordenId)
           .firstOrNull;
 
-      if (orden == null) {
+      // Obtener datos del cliente de la orden inicial
+      String? clienteNombre;
+      String? clienteTelefono;
+
+      if (ordenInicial != null) {
+        clienteNombre = ordenInicial['customerName'] as String?;
+        clienteTelefono = ordenInicial['customerPhone'] as String?;
+      } else {
         // Si no está en el historial, obtenerla del backend
         final ordenData = await _ordenesService.getOrden(ordenId);
         if (ordenData == null) {
@@ -2067,61 +2122,191 @@ class MeseroController extends ChangeNotifier {
           throw Exception('La orden ya fue pagada o cancelada');
         }
 
-        // Crear bill desde la orden del backend
-        final items = ordenData['items'] as List<dynamic>? ?? [];
-        final allBillItems = items.map((item) {
-          final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
-          final precioUnitario =
-              (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-          final totalLinea =
-              (item['totalLinea'] as num?)?.toDouble() ??
-              (precioUnitario * cantidad);
+        clienteNombre = ordenData['clienteNombre'] as String?;
+        clienteTelefono = ordenData['clienteTelefono'] as String?;
+      }
 
-          return BillItem(
-            name: item['productoNombre'] as String? ?? 'Producto',
-            quantity: cantidad,
-            price: precioUnitario,
-            total: totalLinea,
+      // IMPORTANTE: Tomar TODAS las órdenes activas del mismo cliente
+      // Esto permite cerrar la cuenta con todas las órdenes del cliente
+      final historialCompleto = getTakeawayOrderHistory();
+      final ordenesDelCliente = historialCompleto.where((order) {
+        // Filtrar por mismo cliente (nombre y teléfono)
+        final orderCustomerName = order['customerName'] as String? ?? '';
+        final orderCustomerPhone = order['customerPhone'] as String? ?? '';
+        
+        final nombreCoincide = (clienteNombre?.toLowerCase().trim() ?? '') ==
+            (orderCustomerName.toLowerCase().trim());
+        final telefonoCoincide = (clienteTelefono?.trim() ?? '') ==
+            (orderCustomerPhone.trim());
+        
+        // Coincide si el nombre coincide Y (el teléfono coincide O ambos están vacíos)
+        final esMismoCliente = nombreCoincide && 
+            (telefonoCoincide || (clienteTelefono?.isEmpty ?? true && orderCustomerPhone.isEmpty));
+
+        if (!esMismoCliente) return false;
+
+        // Excluir órdenes ya pagadas/cerradas
+        final status = (order['status'] as String?)?.toLowerCase() ?? '';
+        final esExcluida =
+            status.contains('pagada') ||
+            status.contains('cancelada') ||
+            status.contains('cerrada') ||
+            status.contains('enviada') ||
+            status.contains('cobrada');
+        return !esExcluida;
+      }).toList();
+
+      // Ordenar por fecha (más reciente primero)
+      ordenesDelCliente.sort((a, b) {
+        try {
+          final fechaA = date_utils.AppDateUtils.parseToLocal(
+            a['date'] ?? '1970-01-01',
           );
-        }).toList();
+          final fechaB = date_utils.AppDateUtils.parseToLocal(
+            b['date'] ?? '1970-01-01',
+          );
+          return fechaB.compareTo(fechaA);
+        } catch (e) {
+          return 0;
+        }
+      });
 
-        final subtotal = (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
-        final descuentoTotal =
-            (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
-        final propinaSugerida =
-            (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
-        final total = (ordenData['total'] as num?)?.toDouble() ?? 0.0;
-        final splitCount = (ordenData['splitCount'] as num?)?.toInt() ?? 1;
-        final clienteNombre = ordenData['clienteNombre'] as String?;
-        final clienteTelefono = ordenData['clienteTelefono'] as String?;
-        final waiterNotes = ordenData['notas'] as String?;
+      // Tomar TODAS las órdenes activas del cliente
+      final allOrders = ordenesDelCliente;
+      print(
+        '📋 Mesero: ${allOrders.length} órdenes activas del cliente $clienteNombre para cerrar cuenta: ${allOrders.map((o) => o['ordenId']).toList()}',
+      );
 
-        final createdAt = ordenData['creadoEn'] as String?;
-        DateTime fechaCreacion;
-        if (createdAt != null) {
-          fechaCreacion = date_utils.AppDateUtils.parseToLocal(createdAt);
-        } else {
-          fechaCreacion = DateTime.now();
+      if (allOrders.isEmpty) {
+        throw Exception('No se encontraron órdenes activas para este cliente');
+      }
+
+      // Obtener todos los items de todas las órdenes
+      final allBillItems = <BillItem>[];
+      double totalConsumo = 0.0;
+      int? lastOrdenId;
+      double descuentoTotal = 0.0;
+      double propinaSugerida = 0.0;
+      int splitCount = 1;
+      String? waiterNotes;
+      DateTime? fechaCreacionMasAntigua;
+
+      // IMPORTANTE: Obtener datos adicionales del historial (propina, descuento, etc.)
+      final firstOrder = allOrders.first;
+      descuentoTotal = (firstOrder['discount'] as num?)?.toDouble() ?? 0.0;
+      propinaSugerida = (firstOrder['tip'] as num?)?.toDouble() ?? 0.0;
+      splitCount = (firstOrder['splitCount'] as int?) ?? 1;
+      waiterNotes = firstOrder['notes'] as String?;
+
+      for (var order in allOrders) {
+        final ordenIdActual = order['ordenId'] as int?;
+        if (ordenIdActual != null) {
+          lastOrdenId = ordenIdActual;
+          try {
+            final ordenData = await _ordenesService.getOrden(ordenIdActual);
+            if (ordenData != null) {
+              // Acumular descuentos y propinas de todas las órdenes
+              final descuentoOrden = (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+              final propinaOrden = (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+              descuentoTotal += descuentoOrden;
+              propinaSugerida += propinaOrden;
+
+              // Combinar notas de todas las órdenes
+              final notasOrden = ordenData['notas'] as String?;
+              if (notasOrden != null && notasOrden.isNotEmpty) {
+                if (waiterNotes == null || waiterNotes.isEmpty) {
+                  waiterNotes = notasOrden;
+                } else {
+                  waiterNotes = '$waiterNotes\n$notasOrden';
+                }
+              }
+
+              // Obtener fecha de creación más antigua
+              final createdAt = ordenData['creadoEn'] as String?;
+              if (createdAt != null) {
+                try {
+                  final fechaCreacion = date_utils.AppDateUtils.parseToLocal(createdAt);
+                  if (fechaCreacionMasAntigua == null || fechaCreacion.isBefore(fechaCreacionMasAntigua)) {
+                    fechaCreacionMasAntigua = fechaCreacion;
+                  }
+                } catch (e) {
+                  // Ignorar errores de parsing de fecha
+                }
+              }
+
+              final items = ordenData['items'] as List<dynamic>? ?? [];
+              for (var item in items) {
+                final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+                final precioUnitario =
+                    (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                final totalLinea =
+                    (item['totalLinea'] as num?)?.toDouble() ??
+                    (precioUnitario * cantidad);
+                totalConsumo += totalLinea;
+
+                allBillItems.add(
+                  BillItem(
+                    name: item['productoNombre'] as String? ?? 'Producto',
+                    quantity: cantidad,
+                    price: precioUnitario,
+                    total: totalLinea,
+                  ),
+                );
+              }
+            }
+          } catch (e) {
+            print('Error al obtener detalles de orden $ordenIdActual: $e');
+          }
+        }
+      }
+
+      if (allBillItems.isNotEmpty) {
+        // IMPORTANTE: Generar billId único basado en TODAS las órdenes agrupadas
+        // Si hay múltiples órdenes, usar un formato que incluya todas
+        final ordenIdsList =
+            allOrders.map((o) => o['ordenId'] as int?).whereType<int>().toList()
+              ..sort();
+
+        final billId = ordenIdsList.length > 1
+            ? 'BILL-TAKEAWAY-${clienteNombre?.replaceAll(' ', '-') ?? 'CLIENTE'}-${ordenIdsList.join('-')}'
+            : (ordenIdsList.isNotEmpty
+                  ? 'BILL-ORD-${ordenIdsList.first}'
+                  : 'BILL-TEMP-${DateTime.now().millisecondsSinceEpoch}');
+
+        // Verificar si ya existe un bill PENDIENTE para este billId (no solo por ordenId)
+        final existingBill = _billRepository.bills
+            .where((b) => b.id == billId && b.status == BillStatus.pending)
+            .toList();
+        if (existingBill.isNotEmpty) {
+          print(
+            '⚠️ Mesero: Ya existe un bill pendiente con ID $billId, no se crea duplicado',
+          );
+          notifyListeners();
+          return;
         }
 
+        // Calcular total final: subtotal - descuento + propina
+        final subtotalConDescuento = totalConsumo - descuentoTotal;
+        final totalFinal = subtotalConDescuento + propinaSugerida;
+
         final bill = BillModel(
-          id: 'BILL-ORD-$ordenId',
+          id: billId,
           tableNumber: null, // null para órdenes "para llevar"
-          ordenId: ordenId,
+          ordenId: lastOrdenId,
           items: allBillItems,
-          subtotal: subtotal,
+          subtotal: totalConsumo,
           tax: 0.0,
-          total: total,
+          total: totalFinal,
           discount: descuentoTotal,
           splitCount: splitCount,
           status: BillStatus.pending,
-          createdAt: fechaCreacion,
+          createdAt: fechaCreacionMasAntigua ?? date_utils.AppDateUtils.now(),
           waiterName: 'Mesero',
+          waiterNotes: waiterNotes,
           requestedByWaiter: true,
           isTakeaway: true,
           customerName: clienteNombre,
           customerPhone: clienteTelefono,
-          waiterNotes: waiterNotes,
         );
 
         _billRepository.addBill(bill);
@@ -2130,170 +2315,90 @@ class MeseroController extends ChangeNotifier {
         final socketService = SocketService();
         socketService.emit('cuenta.enviada', {
           'id': bill.id,
-          'ordenId': ordenId,
           'tableNumber': 'Para Llevar',
+          'ordenId': lastOrdenId, // Orden principal para compatibilidad
+          'ordenIds': ordenIdsList, // TODAS las órdenes agrupadas
           'items': allBillItems
               .map(
-                (item) => {
+                (item) => ({
                   'name': item.name,
                   'quantity': item.quantity,
                   'price': item.price,
                   'total': item.total,
-                },
+                }),
               )
               .toList(),
-          'subtotal': subtotal,
+          'subtotal': totalConsumo,
+          'tax': 0.0,
+          'total': totalFinal,
           'discount': descuentoTotal,
           'tip': propinaSugerida,
-          'splitCount': splitCount,
-          'total': total,
           'status': 'pending',
-          'createdAt': fechaCreacion.toIso8601String(),
-          'waiterName': 'Mesero',
+          'createdAt': (fechaCreacionMasAntigua ?? date_utils.AppDateUtils.now()).toIso8601String(),
+          'waiterName': bill.waiterName,
+          'splitCount': splitCount,
           'isTakeaway': true,
           'customerName': clienteNombre,
           'customerPhone': clienteTelefono,
           'waiterNotes': waiterNotes,
+          'multipleOrders':
+              ordenIdsList.length > 1, // Flag para indicar múltiples órdenes
         });
 
-        notifyListeners();
-        print('✅ Mesero: Orden para llevar $ordenId enviada al cajero');
-      } else {
-        // Si está en el historial, obtener datos completos del backend para asegurar precisión
-        final ordenData = await _ordenesService.getOrden(ordenId);
-        if (ordenData != null) {
-          final itemsBackend = ordenData['items'] as List<dynamic>? ?? [];
-          final billItems = itemsBackend.map((item) {
-            final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
-            final precioUnitario =
-                (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-            final totalLinea =
-                (item['totalLinea'] as num?)?.toDouble() ??
-                (precioUnitario * cantidad);
+        print(
+          '✅ Mesero: Bill enviado al cajero - ID: $billId, Cliente: $clienteNombre, ${ordenIdsList.length} órdenes agrupadas: $ordenIdsList',
+        );
 
-            return BillItem(
-              name: item['productoNombre'] as String? ?? 'Producto',
-              quantity: cantidad,
-              price: precioUnitario,
-              total: totalLinea,
-            );
-          }).toList();
+        print(
+          '✅ Mesero: Bill creado con - Subtotal: $totalConsumo, Descuento: $descuentoTotal, Propina: $propinaSugerida, Total: $totalFinal',
+        );
 
-          final subtotal = (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
-          final descuentoTotal =
-              (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
-          final propinaSugerida =
-              (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
-          final total = (ordenData['total'] as num?)?.toDouble() ?? 0.0;
-          final splitCount = (ordenData['splitCount'] as num?)?.toInt() ?? 1;
-          final clienteNombre = ordenData['clienteNombre'] as String?;
-          final clienteTelefono = ordenData['clienteTelefono'] as String?;
-          final waiterNotes = ordenData['notas'] as String?;
+        // IMPORTANTE: Remover las órdenes del historial INMEDIATAMENTE antes de cerrarlas
+        // Esto hace que desaparezcan instantáneamente de la UI
+        final ordenIdsACerrar = allOrders
+            .map((o) => o['ordenId'] as int?)
+            .whereType<int>()
+            .toSet();
 
-          final createdAt = ordenData['creadoEn'] as String?;
-          DateTime fechaCreacion;
-          if (createdAt != null) {
-            fechaCreacion = date_utils.AppDateUtils.parseToLocal(createdAt);
-          } else {
-            fechaCreacion = DateTime.now();
+        // Remover órdenes del historial local INMEDIATAMENTE
+        _tableOrderHistory.forEach((key, orders) {
+          if (key.startsWith('takeaway') || key == 'takeaway-all') {
+            _tableOrderHistory[key] = orders.where((order) {
+              final ordenId = order['ordenId'] as int?;
+              return ordenId == null || !ordenIdsACerrar.contains(ordenId);
+            }).toList();
           }
+        });
 
-          final bill = BillModel(
-            id: 'BILL-ORD-$ordenId',
-            tableNumber: null, // null para órdenes "para llevar"
-            ordenId: ordenId,
-            items: billItems,
-            subtotal: subtotal,
-            tax: 0.0,
-            total: total,
-            discount: descuentoTotal,
-            splitCount: splitCount,
-            status: BillStatus.pending,
-            createdAt: fechaCreacion,
-            waiterName: 'Mesero',
-            requestedByWaiter: true,
-            isTakeaway: true,
-            customerName: clienteNombre,
-            customerPhone: clienteTelefono,
-            waiterNotes: waiterNotes,
-          );
+        // Notificar cambios INMEDIATAMENTE para actualizar la UI
+        notifyListeners();
 
-          _billRepository.addBill(bill);
+        print(
+          '✅ Mesero: ${ordenIdsACerrar.length} órdenes removidas del historial instantáneamente: $ordenIdsACerrar',
+        );
 
-          // Emitir evento Socket.IO
-          final socketService = SocketService();
-          socketService.emit('cuenta.enviada', {
-            'id': bill.id,
-            'ordenId': ordenId,
-            'tableNumber': 'Para Llevar',
-            'items': billItems
-                .map(
-                  (item) => {
-                    'name': item.name,
-                    'quantity': item.quantity,
-                    'price': item.price,
-                    'total': item.total,
-                  },
-                )
-                .toList(),
-            'subtotal': subtotal,
-            'discount': descuentoTotal,
-            'tip': propinaSugerida,
-            'splitCount': splitCount,
-            'total': total,
-            'status': 'pending',
-            'createdAt': fechaCreacion.toIso8601String(),
-            'waiterName': 'Mesero',
-            'isTakeaway': true,
-            'customerName': clienteNombre,
-            'customerPhone': clienteTelefono,
-            'waiterNotes': waiterNotes,
-          });
-
-          print('✅ Mesero: Orden para llevar $ordenId enviada al cajero');
+        // IMPORTANTE: Cambiar estado de TODAS las órdenes en el backend a "cerrada"
+        // Esto es la FUENTE DE VERDAD - persiste entre reinicios de la app
+        for (var order in allOrders) {
+          final ordenIdActual = order['ordenId'] as int?;
+          if (ordenIdActual != null) {
+            await _marcarOrdenComoCerradaEnBackend(ordenIdActual);
+            print('✅ Mesero: Orden $ordenIdActual marcada como cerrada en backend');
+            
+            // Registrar también localmente como respaldo
+            _sentToCashierOrders.add(ordenIdActual);
+          }
         }
+        await _saveSentToCashierOrders();
+      } else {
+        throw Exception('No se encontraron items en las órdenes del cliente');
       }
-
-      // IMPORTANTE: Cambiar estado de la orden en el backend a "cerrada"
-      // Esto es la FUENTE DE VERDAD - persiste entre reinicios de la app
-      await _marcarOrdenComoCerradaEnBackend(ordenId);
-
-      // Registrar también localmente como respaldo
-      _sentToCashierOrders.add(ordenId);
-      await _saveSentToCashierOrders();
-      print('📝 Orden $ordenId registrada localmente como enviada al cajero');
-
-      // Eliminar la orden del historial local
-      _removeTakeawayOrderFromHistory(ordenId);
-
-      // Forzar notificación inmediata para actualizar la UI
-      notifyListeners();
     } catch (e) {
       print('Error al enviar orden para llevar al cajero: $e');
       rethrow;
     }
   }
 
-  // Eliminar orden para llevar del historial local
-  void _removeTakeawayOrderFromHistory(int ordenId) {
-    // Buscar y eliminar de todas las claves de takeaway
-    bool encontrada = false;
-    _tableOrderHistory.forEach((key, orders) {
-      if (key.startsWith('takeaway') || key == 'takeaway-all') {
-        final antes = orders.length;
-        orders.removeWhere((order) => order['ordenId'] == ordenId);
-        if (orders.length < antes) {
-          encontrada = true;
-        }
-      }
-    });
-
-    if (encontrada) {
-      print('🗑️ Orden $ordenId eliminada del historial de para llevar');
-    } else {
-      print('⚠️ Orden $ordenId no encontrada en historial local');
-    }
-  }
 
   // Enviar cuenta al cajero (ahora obtiene la orden del backend si es necesario)
   Future<void> sendToCashier(int tableId) async {
@@ -2432,7 +2537,35 @@ class MeseroController extends ChangeNotifier {
           print(
             '⚠️ Mesero: Ya existe un bill pendiente con ID $billId, no se crea duplicado',
           );
+          
+          // IMPORTANTE: Aunque ya exista el bill, las órdenes deben desaparecer del historial
+          // porque ya fueron enviadas al cajero anteriormente
+          final ordenIdsACerrar = allOrders
+              .map((o) => o['ordenId'] as int?)
+              .whereType<int>()
+              .toSet();
+
+          // Remover órdenes del historial local INMEDIATAMENTE
+          final historialActual = _tableOrderHistory[tableIdStr] ?? [];
+          _tableOrderHistory[tableIdStr] = historialActual.where((order) {
+            final ordenId = order['ordenId'] as int?;
+            return ordenId == null || !ordenIdsACerrar.contains(ordenId);
+          }).toList();
+
+          // Registrar órdenes como enviadas al cajero si no están registradas
+          for (var ordenId in ordenIdsACerrar) {
+            if (!_sentToCashierOrders.contains(ordenId)) {
+              _sentToCashierOrders.add(ordenId);
+            }
+          }
+          await _saveSentToCashierOrders();
+
+          // Notificar cambios INMEDIATAMENTE para actualizar la UI
           notifyListeners();
+
+          print(
+            '✅ Mesero: ${ordenIdsACerrar.length} órdenes removidas del historial (bill ya existía): $ordenIdsACerrar',
+          );
           return;
         }
 
@@ -2450,7 +2583,7 @@ class MeseroController extends ChangeNotifier {
           total: totalFinal,
           discount: descuentoHistorial,
           status: BillStatus.pending,
-          createdAt: DateTime.now(),
+          createdAt: date_utils.AppDateUtils.now(),
           waiterName: 'Mesero',
           waiterNotes: notesHistorial,
           requestedByWaiter: true,
@@ -2485,7 +2618,7 @@ class MeseroController extends ChangeNotifier {
           'discount': descuentoHistorial,
           'tip': propinaHistorial,
           'status': 'pending',
-          'createdAt': DateTime.now().toIso8601String(),
+          'createdAt': date_utils.AppDateUtils.now().toIso8601String(),
           'waiterName': bill.waiterName,
           'splitCount': splitCountHistorial,
           'isTakeaway': isTakeawayHistorial,
@@ -2532,8 +2665,15 @@ class MeseroController extends ChangeNotifier {
           if (ordenId != null) {
             await _marcarOrdenComoCerradaEnBackend(ordenId);
             print('✅ Mesero: Orden $ordenId marcada como cerrada en backend');
+            
+            // Registrar también localmente como respaldo (igual que en takeaway)
+            _sentToCashierOrders.add(ordenId);
           }
         }
+        
+        // Guardar registro de órdenes enviadas al cajero
+        await _saveSentToCashierOrders();
+        print('📝 ${ordenIdsACerrar.length} órdenes registradas localmente como enviadas al cajero');
 
         // Actualizar valor de orden en la mesa
         _tables = _tables.map((tableEntry) {
@@ -2573,7 +2713,7 @@ class MeseroController extends ChangeNotifier {
               tax: 0,
               total: 0,
               status: BillStatus.pending,
-              createdAt: DateTime.now(),
+              createdAt: date_utils.AppDateUtils.now(),
             ),
           );
           // Si el bill existe y tiene un ID válido, no crear duplicado
@@ -2655,7 +2795,7 @@ class MeseroController extends ChangeNotifier {
         total: total,
         discount: 0.0,
         status: BillStatus.pending,
-        createdAt: DateTime.now(),
+        createdAt: date_utils.AppDateUtils.now(),
         waiterName: 'Mesero',
         requestedByWaiter: true,
       );
@@ -2770,7 +2910,7 @@ class MeseroController extends ChangeNotifier {
         total: total,
         discount: descuento,
         status: BillStatus.pending,
-        createdAt: DateTime.now(),
+        createdAt: date_utils.AppDateUtils.now(),
         waiterName:
             ordenData['creadoPorNombre'] as String? ??
             ordenData['creadoPorUsuarioNombre'] as String? ??
@@ -2820,7 +2960,7 @@ class MeseroController extends ChangeNotifier {
     double subtotal = 0.0;
     double totalConPropina = 0.0;
     List<String> itemsText = [];
-    DateTime fechaCreacion = DateTime.now();
+    DateTime fechaCreacion = date_utils.AppDateUtils.now();
     String estadoRealOrden = 'abierta';
 
     try {

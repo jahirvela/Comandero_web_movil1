@@ -166,7 +166,7 @@ class CajeroController extends ChangeNotifier {
       try {
         final billId =
             data['id'] as String? ??
-            'BILL-${DateTime.now().millisecondsSinceEpoch}';
+            'BILL-${date_utils.AppDateUtils.now().millisecondsSinceEpoch}';
         print('📄 Cajero: Cuenta recibida en tiempo real: $billId');
 
         // IMPORTANTE: Verificar duplicados por billId, no solo por ordenId
@@ -214,7 +214,7 @@ class CajeroController extends ChangeNotifier {
           status: BillStatus.pending,
           createdAt: data['createdAt'] != null
               ? date_utils.AppDateUtils.parseToLocal(data['createdAt'])
-              : DateTime.now(),
+              : date_utils.AppDateUtils.now(),
           waiterName: data['waiterName'] as String? ?? 'Mesero',
           requestedByWaiter: true,
           splitCount: (data['splitCount'] as num?)?.toInt() ?? 1,
@@ -454,14 +454,15 @@ class CajeroController extends ChangeNotifier {
       };
 
       // Agregar fechaPago en formato ISO datetime válido
-      // El backend espera formato ISO 8601 con timezone (ej: 2024-01-01T12:00:00.000Z)
-      final fechaIso = payment.timestamp.toIso8601String();
-      // Asegurar que tenga timezone (Z para UTC)
-      if (!fechaIso.endsWith('Z') &&
-          !fechaIso.contains('+') &&
-          !fechaIso.contains('-', 10)) {
-        // Si no tiene timezone, agregar Z para UTC
-        pagoData['fechaPago'] = '${fechaIso}Z';
+      // IMPORTANTE: payment.timestamp ya está en CDMX, convertir a UTC para el backend
+      // El backend espera formato ISO 8601 con timezone UTC (ej: 2024-01-01T12:00:00.000Z)
+      final fechaUtc = payment.timestamp.isUtc 
+          ? payment.timestamp 
+          : payment.timestamp.toUtc();
+      final fechaIso = fechaUtc.toIso8601String();
+      // Asegurar que tenga timezone Z para UTC
+      if (!fechaIso.endsWith('Z')) {
+        pagoData['fechaPago'] = fechaIso.endsWith('Z') ? fechaIso : '${fechaIso}Z';
       } else {
         pagoData['fechaPago'] = fechaIso;
       }

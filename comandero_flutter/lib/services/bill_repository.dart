@@ -142,7 +142,7 @@ class BillRepository extends ChangeNotifier {
           status: BillStatus.pending,
           createdAt: ordenDetalle['creadoEn'] != null
               ? date_utils.AppDateUtils.parseToLocal(ordenDetalle['creadoEn'])
-              : DateTime.now(),
+              : date_utils.AppDateUtils.now(),
           waiterName:
               ordenDetalle['creadoPorNombre'] as String? ??
               ordenDetalle['creadoPorUsuarioNombre'] as String? ??

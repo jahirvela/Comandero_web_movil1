@@ -4,6 +4,7 @@ import '../../models/payment_model.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 /// Modal para confirmar cobro en efectivo
 class CashPaymentModal extends StatefulWidget {
@@ -334,7 +335,7 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
             : _notesController.text.trim(),
         tableNumber: widget.bill.tableNumber,
         billId: widget.bill.id,
-        timestamp: DateTime.now(),
+        timestamp: date_utils.AppDateUtils.now(),
         cashierName: Provider.of<AuthController>(context, listen: false).userName.isNotEmpty
             ? Provider.of<AuthController>(context, listen: false).userName
             : 'Cajero',

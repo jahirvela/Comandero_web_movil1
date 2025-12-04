@@ -309,6 +309,9 @@ class CocineroController extends ChangeNotifier {
     });
 
     // Escuchar alertas de modificación
+    // COMENTADO: No mostrar alertas visuales en cocinero cuando cambia el estado
+    // Las notificaciones al mesero siguen funcionando correctamente
+    /*
     socketService.onAlertaModificacion((data) {
       try {
         final alert = KitchenAlert(
@@ -329,8 +332,12 @@ class CocineroController extends ChangeNotifier {
         print('Error al procesar alerta de modificación: $e');
       }
     });
+    */
 
     // Escuchar alertas generales de cocina
+    // COMENTADO: No mostrar alertas visuales en cocinero cuando cambia el estado
+    // Las notificaciones al mesero siguen funcionando correctamente
+    /*
     socketService.onAlertaCocina((data) {
       try {
         final alert = KitchenAlert(
@@ -357,6 +364,7 @@ class CocineroController extends ChangeNotifier {
         print('Error al procesar alerta general de cocina: $e');
       }
     });
+    */
 
     // Escuchar nuevas órdenes creadas
     socketService.onOrderCreated((data) {
@@ -424,24 +432,68 @@ class CocineroController extends ChangeNotifier {
         final ordenId = data['id'] as int?;
         if (ordenId != null) {
           final ordenIdStr = ordenId.toString();
+          final estadoNombre =
+              (data['estadoNombre'] as String?)?.toLowerCase() ?? '';
 
-          // VERIFICAR PRIMERO si la orden ya fue completada previamente
+          // Verificar si el estado es "listo" o similar
+          final esListo =
+              estadoNombre.contains('listo') ||
+              estadoNombre.contains('ready') ||
+              estadoNombre.contains('completada') ||
+              estadoNombre.contains('finalizada');
+
+          // Si es "listo", marcar como completada y eliminar de la lista
+          if (esListo) {
+            // Marcar como completada si no está ya marcada
+            if (!_completedOrderIds.contains(ordenIdStr)) {
+              _completedOrderIds.add(ordenIdStr);
+              _saveCompletedOrders().catchError((e) {
+                print('Error al guardar orden completada: $e');
+              }); // Guardar asíncronamente sin esperar
+            }
+            
+            // Eliminar de la lista (verificar por ID numérico y formato ORD-XXX)
+            final beforeCount = _orders.length;
+            _orders.removeWhere((o) {
+              final oId = o.id.replaceAll('ORD-', '');
+              return oId == ordenIdStr || o.id == ordenIdStr;
+            });
+            final afterCount = _orders.length;
+            final removed = beforeCount - afterCount;
+            
+            if (removed > 0) {
+              print(
+                '🚫 Cocinero: Orden $ordenIdStr eliminada de la lista (estado: $estadoNombre)',
+              );
+              notifyListeners();
+            }
+            return; // No procesar más esta actualización
+          }
+
+          // VERIFICAR si la orden ya fue completada previamente
           if (_completedOrderIds.contains(ordenIdStr)) {
             print(
               '🚫 Cocinero: Actualización de orden $ordenIdStr ignorada porque ya fue completada previamente',
             );
             // Asegurar que no esté en la lista
-            _orders.removeWhere((o) => o.id == ordenIdStr);
-            notifyListeners();
+            final beforeCount = _orders.length;
+            _orders.removeWhere((o) {
+              final oId = o.id.replaceAll('ORD-', '');
+              return oId == ordenIdStr || o.id == ordenIdStr;
+            });
+            final afterCount = _orders.length;
+            if (beforeCount > afterCount) {
+              notifyListeners();
+            }
             return;
           }
 
-          final index = _orders.indexWhere((o) => o.id == ordenIdStr);
-          final estadoNombre =
-              (data['estadoNombre'] as String?)?.toLowerCase() ?? '';
+          final index = _orders.indexWhere((o) {
+            final oId = o.id.replaceAll('ORD-', '');
+            return oId == ordenIdStr || o.id == ordenIdStr;
+          });
 
           // Verificar si la orden es relevante para cocina
-          // Las órdenes "listas" no son relevantes para cocina (ya están completadas)
           final esRelevanteParaCocina =
               !estadoNombre.contains('pagada') &&
               !estadoNombre.contains('cancelada') &&
@@ -458,14 +510,20 @@ class CocineroController extends ChangeNotifier {
               );
               notifyListeners();
             } else {
-              // Si ya no es relevante para cocina (incluyendo "listo"), removerla
+              // Si ya no es relevante para cocina, removerla
               _orders.removeAt(index);
               notifyListeners();
             }
           } else if (esRelevanteParaCocina) {
-            // Si no existe y es relevante, agregarla
-            _orders.add(_mapBackendToOrderModel(data as Map<String, dynamic>));
-            notifyListeners();
+            // Si no existe y es relevante, agregarla SOLO si no está en completadas
+            if (!_completedOrderIds.contains(ordenIdStr)) {
+              _orders.add(_mapBackendToOrderModel(data as Map<String, dynamic>));
+              notifyListeners();
+            } else {
+              print(
+                '🚫 Cocinero: No se agrega orden $ordenIdStr porque ya está en completadas',
+              );
+            }
           }
         }
       } catch (e) {
@@ -501,6 +559,9 @@ class CocineroController extends ChangeNotifier {
     });
 
     // Escuchar alertas de cocina (del sistema)
+    // COMENTADO: No mostrar alertas visuales en cocinero cuando cambia el estado
+    // Las notificaciones al mesero siguen funcionando correctamente
+    /*
     socketService.onAlertaCocina((data) {
       try {
         _alerts.add(
@@ -519,6 +580,7 @@ class CocineroController extends ChangeNotifier {
         print('Error al procesar alerta de cocina: $e');
       }
     });
+    */
 
     // NOTA: El listener para alertas de cocina (cocina.alerta) ya está
     // configurado arriba en la línea 194 con onCocinaAlerta()
@@ -889,40 +951,42 @@ class CocineroController extends ChangeNotifier {
           statusLower.contains('finalizada');
 
       if (isListo) {
-        // Si es "listo", eliminar INMEDIATAMENTE de la lista (no actualizar)
-        print(
-          '✅ Cocinero: Orden $orderId marcada como lista, eliminando de la vista',
-        );
-        _orders.removeWhere((order) => order.id == orderId);
-
-        // Marcar como completada para no recargarla en futuras sesiones
-        // Normalizar el ID: convertir "ORD-5" a "5" o mantener "5" si ya es numérico
-        final normalizedId = ordenIdInt
-            .toString(); // Usar el ID numérico del backend
+        // IMPORTANTE: Marcar como completada PRIMERO antes de eliminar
+        // Esto previene que el evento onOrderUpdated la vuelva a agregar
+        final normalizedId = ordenIdInt.toString();
         _completedOrderIds.add(normalizedId);
         print(
-          '💾 Cocinero: Guardando orden completada: $normalizedId (original: $orderId)',
-        );
-        print(
-          '💾 Cocinero: IDs antes de guardar: ${_completedOrderIds.toList()}',
+          '💾 Cocinero: Marcando orden $normalizedId como completada ANTES de eliminar (original: $orderId)',
         );
 
-        // Guardar INMEDIATAMENTE y esperar a que se complete
+        // Guardar INMEDIATAMENTE para persistir el estado
         try {
-          await _saveCompletedOrders(); // Persistir el estado
+          await _saveCompletedOrders();
           print(
             '✅ Cocinero: Orden $normalizedId guardada como completada en storage',
           );
-
-          // Verificar que se guardó correctamente leyendo de nuevo
-          final verification = await _storage.read(
-            key: 'cocinero_completed_orders',
-          );
-          print('✅ Cocinero: Verificación de storage: $verification');
         } catch (e) {
           print('❌ Cocinero: ERROR al guardar orden completada: $e');
-          // Re-lanzar el error para que se maneje
-          rethrow;
+          // Continuar aunque falle el guardado
+        }
+
+        // Ahora eliminar de la lista
+        final removedCount = _orders.length;
+        _orders.removeWhere((order) {
+          // Eliminar por ID numérico o formato ORD-XXX
+          final orderIdStr = order.id.replaceAll('ORD-', '');
+          return orderIdStr == normalizedId || order.id == orderId || order.id == orderIdStr;
+        });
+        final newCount = _orders.length;
+        
+        if (removedCount != newCount) {
+          print(
+            '✅ Cocinero: Orden $orderId eliminada de la vista (${removedCount - newCount} orden(es) eliminada(s))',
+          );
+        } else {
+          print(
+            '⚠️ Cocinero: Orden $orderId no se encontró en la lista para eliminar',
+          );
         }
 
         notifyListeners();
@@ -1042,9 +1106,11 @@ class CocineroController extends ChangeNotifier {
   }
 
   // Formatear tiempo transcurrido
+  // IMPORTANTE: Usa hora CDMX para cálculos precisos
   String formatElapsedTime(DateTime orderTime) {
-    final now = DateTime.now();
-    final elapsed = now.difference(orderTime);
+    final now = date_utils.AppDateUtils.now(); // Usar hora CDMX
+    final localOrderTime = orderTime.isUtc ? orderTime.toLocal() : orderTime;
+    final elapsed = now.difference(localOrderTime);
 
     // Si el tiempo es negativo, puede ser un error de parseo o zona horaria
     if (elapsed.isNegative) {

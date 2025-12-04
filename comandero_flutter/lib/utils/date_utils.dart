@@ -19,7 +19,7 @@ class AppDateUtils {
   /// - Timestamp (int): milisegundos o segundos desde epoch (UTC)
   static DateTime parseToLocal(dynamic fecha) {
     if (fecha == null) {
-      return DateTime.now();
+      return AppDateUtils.now();
     }
 
     try {
@@ -29,7 +29,7 @@ class AppDateUtils {
         final fechaLimpia = fecha.trim();
         
         if (fechaLimpia.isEmpty) {
-          return DateTime.now();
+          return AppDateUtils.now();
         }
 
         // Verificar si es solo fecha (sin hora) - formato YYYY-MM-DD
@@ -43,17 +43,51 @@ class AppDateUtils {
         // Parsear la fecha con hora
         // Si termina en 'Z', es explícitamente UTC
         if (fechaLimpia.endsWith('Z')) {
-          parsedDate = DateTime.parse(fechaLimpia).toLocal();
+          // Es UTC, convertir a CDMX
+          final utcDate = DateTime.parse(fechaLimpia);
+          parsedDate = _utcToCdmx(utcDate);
         } else if (fechaLimpia.contains('+') || 
                    (fechaLimpia.length > 19 && fechaLimpia.substring(19).contains('-'))) {
           // Tiene offset de zona horaria explícito (ej: +00:00 o -06:00)
-          parsedDate = DateTime.parse(fechaLimpia).toLocal();
+          final parsed = DateTime.parse(fechaLimpia);
+          
+          // Verificar si el offset es de CDMX (-06:00 o -05:00)
+          // Si es así, la fecha ya está en CDMX, solo ajustar a nuestra representación
+          final offsetMatch = RegExp(r'([+-])(\d{2}):(\d{2})$').firstMatch(fechaLimpia);
+          if (offsetMatch != null) {
+            final offsetSign = offsetMatch.group(1);
+            final offsetHours = int.parse(offsetMatch.group(2)!);
+            
+            // CDMX es UTC-6 (horario estándar) o UTC-5 (horario de verano)
+            if (offsetSign == '-' && (offsetHours == 6 || offsetHours == 5)) {
+              // La fecha ya está en CDMX, mantenerla pero ajustar a nuestra representación
+              // Crear DateTime local con los valores de la fecha parseada
+              parsedDate = DateTime(
+                parsed.year,
+                parsed.month,
+                parsed.day,
+                parsed.hour,
+                parsed.minute,
+                parsed.second,
+                parsed.millisecond,
+              );
+            } else {
+              // Es otra zona horaria, convertir a CDMX
+              // Primero convertir a UTC y luego a CDMX
+              final utcDate = parsed.toUtc();
+              parsedDate = _utcToCdmx(utcDate);
+            }
+          } else {
+            // No se pudo determinar el offset, asumir UTC y convertir a CDMX
+            final utcDate = parsed.toUtc();
+            parsedDate = _utcToCdmx(utcDate);
+          }
         } else {
           // NO tiene indicador de zona horaria
           // IMPORTANTE: Asumir que el backend envía UTC sin 'Z'
-          // Parsear como UTC y convertir a local
+          // Parsear como UTC y convertir a CDMX
           parsedDate = DateTime.parse(fechaLimpia);
-          // Crear como UTC y convertir a local
+          // Crear como UTC y convertir a CDMX
           parsedDate = DateTime.utc(
             parsedDate.year,
             parsedDate.month,
@@ -62,31 +96,130 @@ class AppDateUtils {
             parsedDate.minute,
             parsedDate.second,
             parsedDate.millisecond,
-          ).toLocal();
+          );
+          parsedDate = _utcToCdmx(parsedDate);
         }
       } else if (fecha is DateTime) {
-        // Si es DateTime, asegurarse de que esté en zona local
-        parsedDate = fecha.isUtc ? fecha.toLocal() : fecha;
+        // Si es DateTime, convertir a CDMX
+        parsedDate = fecha.isUtc ? _utcToCdmx(fecha) : fecha;
       } else if (fecha is int) {
         // Timestamp en milisegundos o segundos (siempre UTC)
         final timestamp = fecha;
-        parsedDate = timestamp > 1000000000000
-            ? DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true).toLocal()
-            : DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true).toLocal();
+        final utcDate = timestamp > 1000000000000
+            ? DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true)
+            : DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true);
+        parsedDate = _utcToCdmx(utcDate);
       } else {
-        return DateTime.now();
+        return AppDateUtils.now();
       }
 
       return parsedDate;
     } catch (e) {
       print('⚠️ AppDateUtils: Error al parsear fecha: $fecha, error: $e');
-      return DateTime.now();
+      return AppDateUtils.now();
     }
   }
 
-  /// Obtiene la fecha/hora actual en zona horaria local (CDMX)
+  /// Convierte una fecha UTC a CDMX
+  /// IMPORTANTE: Esta función calcula el offset correcto de CDMX
+  static DateTime _utcToCdmx(DateTime utcDate) {
+    if (!utcDate.isUtc) {
+      // Si no es UTC, convertir primero
+      final utc = utcDate.toUtc();
+      return _utcToCdmx(utc);
+    }
+    
+    // Calcular si estamos en horario de verano en CDMX
+    final isDaylightSaving = _isDaylightSavingTime(utcDate);
+    final offsetHours = isDaylightSaving ? -5 : -6;
+    
+    // Aplicar offset de CDMX
+    return utcDate.add(Duration(hours: offsetHours));
+  }
+
+  /// Obtiene la fecha/hora actual en zona horaria CDMX (America/Mexico_City)
+  /// IMPORTANTE: Calcula el offset correcto de CDMX considerando horario de verano
+  /// CDMX: UTC-6 en invierno, UTC-5 en verano (horario de verano)
+  /// 
+  /// Horario de verano en México (aproximado):
+  /// - Comienza: primer domingo de abril a las 2:00 AM
+  /// - Termina: último domingo de octubre a las 2:00 AM
   static DateTime now() {
-    return DateTime.now();
+    final utcNow = DateTime.now().toUtc();
+    
+    // Calcular si estamos en horario de verano en CDMX
+    // Aproximación práctica: abril-octubre = horario de verano (UTC-5)
+    // Noviembre-marzo = horario estándar (UTC-6)
+    final isDaylightSaving = _isDaylightSavingTime(utcNow);
+    final offsetHours = isDaylightSaving ? -5 : -6;
+    
+    // Aplicar offset de CDMX
+    return utcNow.add(Duration(hours: offsetHours));
+  }
+  
+  /// Verifica si una fecha UTC está en horario de verano de CDMX
+  /// Horario de verano: aproximadamente de abril a octubre
+  static bool _isDaylightSavingTime(DateTime utcDate) {
+    final year = utcDate.year;
+    final month = utcDate.month;
+    
+    // Reglas de horario de verano en México:
+    // - Comienza: primer domingo de abril a las 2:00 AM CDMX (8:00 AM UTC)
+    // - Termina: último domingo de octubre a las 2:00 AM CDMX (7:00 AM UTC el día anterior)
+    
+    if (month < 4 || month > 10) {
+      // Noviembre a marzo: definitivamente horario estándar
+      return false;
+    } else if (month > 4 && month < 10) {
+      // Mayo a septiembre: definitivamente horario de verano
+      return true;
+    } else if (month == 4) {
+      // Abril: verificar si ya pasó el primer domingo
+      final firstSunday = _getFirstSundayOfMonth(year, 4);
+      // 2:00 AM CDMX = 8:00 AM UTC (UTC-6) o 7:00 AM UTC (UTC-5)
+      // Usar 8:00 AM UTC como referencia (antes del cambio a horario de verano)
+      final dstStart = DateTime.utc(year, 4, firstSunday, 8);
+      return utcDate.isAfter(dstStart) || utcDate.isAtSameMomentAs(dstStart);
+    } else { // month == 10
+      // Octubre: verificar si aún no ha pasado el último domingo
+      final lastSunday = _getLastSundayOfMonth(year, 10);
+      // 2:00 AM CDMX = 7:00 AM UTC (antes del cambio de vuelta a estándar)
+      final dstEnd = DateTime.utc(year, 10, lastSunday, 7);
+      return utcDate.isBefore(dstEnd);
+    }
+  }
+  
+  /// Obtiene el primer domingo de un mes
+  static int _getFirstSundayOfMonth(int year, int month) {
+    final firstDay = DateTime.utc(year, month, 1);
+    final weekday = firstDay.weekday; // 1 = lunes, 7 = domingo
+    // Calcular días hasta el primer domingo
+    // Si es domingo (7), el primer domingo es el día 1
+    // Si es lunes (1), el primer domingo es el día 7
+    // Si es martes (2), el primer domingo es el día 6
+    // etc.
+    if (weekday == 7) {
+      return 1; // El día 1 es domingo
+    } else {
+      return 8 - weekday; // Días hasta el siguiente domingo
+    }
+  }
+  
+  /// Obtiene el último domingo de un mes
+  static int _getLastSundayOfMonth(int year, int month) {
+    // Obtener el último día del mes
+    final lastDay = DateTime.utc(year, month + 1, 0);
+    final weekday = lastDay.weekday; // 1 = lunes, 7 = domingo
+    // Retroceder hasta el domingo
+    // Si es domingo (7), ese es el último domingo
+    // Si es lunes (1), retroceder 1 día
+    // Si es martes (2), retroceder 2 días
+    // etc.
+    if (weekday == 7) {
+      return lastDay.day; // El último día es domingo
+    } else {
+      return lastDay.day - weekday; // Retroceder hasta el domingo anterior
+    }
   }
 
   /// Convierte una fecha local a UTC para enviar al backend
@@ -180,8 +313,9 @@ class AppDateUtils {
 
   /// Obtiene la diferencia de tiempo en texto legible
   /// Ej: "Hace 5 minutos", "Hace 2 horas", "Hace 3 días"
+  /// IMPORTANTE: Usa hora CDMX para cálculos precisos
   static String getTimeAgo(DateTime fecha) {
-    final now = DateTime.now();
+    final now = AppDateUtils.now(); // Usar hora CDMX
     final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
     final difference = now.difference(localDate);
 
@@ -207,18 +341,19 @@ class AppDateUtils {
     }
   }
 
-  /// Verifica si una fecha es de hoy
+  /// Verifica si una fecha es de hoy (en zona CDMX)
   static bool isToday(DateTime fecha) {
-    final now = DateTime.now();
+    final now = AppDateUtils.now(); // Usar hora CDMX
     final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
     return localDate.year == now.year && 
            localDate.month == now.month && 
            localDate.day == now.day;
   }
 
-  /// Verifica si una fecha es de ayer
+  /// Verifica si una fecha es de ayer (en zona CDMX)
   static bool isYesterday(DateTime fecha) {
-    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final now = AppDateUtils.now(); // Usar hora CDMX
+    final yesterday = now.subtract(const Duration(days: 1));
     final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
     return localDate.year == yesterday.year && 
            localDate.month == yesterday.month && 

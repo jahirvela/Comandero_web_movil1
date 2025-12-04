@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:dio/dio.dart';
 import '../controllers/auth_controller.dart';
-import '../services/api_service.dart';
 import '../utils/app_colors.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -36,33 +35,8 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // Verificar conexión antes de intentar login (con timeout más corto)
-      final apiService = ApiService();
-      
-      // Intentar verificar conexión con timeout corto
-      final isConnected = await apiService.checkConnection().timeout(
-        const Duration(seconds: 8),
-        onTimeout: () {
-          print('⚠️  Timeout al verificar conexión');
-          return false;
-        },
-      );
-      
-      if (!isConnected) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-        Fluttertoast.showToast(
-          msg: 'No se pudo conectar al backend.\n\nVerifica que:\n• Backend esté corriendo (npm run dev)\n• URL: http://localhost:3000\n• CORS esté configurado',
-          toastLength: Toast.LENGTH_LONG,
-          backgroundColor: Colors.red,
-          textColor: Colors.white,
-        );
-        return;
-      }
-
+      // Intentar login directamente sin verificar conexión primero
+      // Si falla, el error se manejará en el catch
       final authController = context.read<AuthController>();
       final success = await authController.login(
         _usernameController.text.trim(),

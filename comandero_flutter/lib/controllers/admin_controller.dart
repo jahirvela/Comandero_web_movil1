@@ -839,8 +839,9 @@ class AdminController extends ChangeNotifier {
     socketService.onCashClosureCreated((dynamic data) {
       try {
         print('💰 Admin: Nuevo cierre de caja creado - ID: ${data['id']}, Usuario: ${data['usuario'] ?? data['creadoPorNombre']}');
-        // Recargar cierres de caja para reflejar el nuevo cierre (con debounce)
-        _loadCashClosuresDebounced();
+        print('💰 Admin: Datos del cierre recibido: $data');
+        // Forzar recarga de cierres sin debounce para que aparezca inmediatamente
+        loadCashClosures(force: true, silent: true);
       } catch (e) {
         print('Error al procesar cierre de caja creado en admin: $e');
       }
@@ -850,8 +851,9 @@ class AdminController extends ChangeNotifier {
     socketService.onCashClosureUpdated((dynamic data) {
       try {
         print('💰 Admin: Cierre de caja actualizado - ID: ${data['id']}');
-        // Recargar cierres de caja para reflejar los cambios (con debounce)
-        _loadCashClosuresDebounced();
+        print('💰 Admin: Datos del cierre actualizado: $data');
+        // Forzar recarga de cierres sin debounce para que aparezca inmediatamente
+        loadCashClosures(force: true, silent: true);
       } catch (e) {
         print('Error al procesar cierre de caja actualizado en admin: $e');
       }
@@ -1194,16 +1196,17 @@ class AdminController extends ChangeNotifier {
       DateTime? fechaFin;
       
       // Aplicar filtros según el período seleccionado
-      final now = DateTime.now();
+      // IMPORTANTE: Usar hora CDMX para filtros precisos
+      final now = date_utils.AppDateUtils.now();
       switch (_selectedCashClosePeriod) {
         case 'hoy':
-          fechaInicio = DateTime(now.year, now.month, now.day);
-          fechaFin = DateTime(now.year, now.month, now.day, 23, 59, 59);
+          fechaInicio = date_utils.AppDateUtils.startOfDay(now);
+          fechaFin = date_utils.AppDateUtils.endOfDay(now);
           break;
         case 'ayer':
           final ayer = now.subtract(const Duration(days: 1));
-          fechaInicio = DateTime(ayer.year, ayer.month, ayer.day);
-          fechaFin = DateTime(ayer.year, ayer.month, ayer.day, 23, 59, 59);
+          fechaInicio = date_utils.AppDateUtils.startOfDay(ayer);
+          fechaFin = date_utils.AppDateUtils.endOfDay(ayer);
           break;
         case 'semana':
           fechaInicio = now.subtract(const Duration(days: 7));

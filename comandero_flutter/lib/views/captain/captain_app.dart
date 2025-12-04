@@ -6,6 +6,7 @@ import '../../controllers/cocinero_controller.dart';
 import '../../models/captain_model.dart';
 import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 import '../../widgets/logout_button.dart';
 import 'report_order_status_modal.dart';
 import '../cocinero/order_detail_modal.dart';
@@ -835,7 +836,10 @@ class _CaptainAppState extends State<CaptainApp> {
   ) {
     final statusColor = _getOrderStatusColor(order.status);
     final statusText = _getOrderStatusText(order.status);
-    final elapsedMinutes = DateTime.now().difference(order.orderTime).inMinutes;
+    // IMPORTANTE: Usar hora CDMX para cálculos precisos
+    final now = date_utils.AppDateUtils.now();
+    final localOrderTime = order.orderTime.isUtc ? order.orderTime.toLocal() : order.orderTime;
+    final elapsedMinutes = now.difference(localOrderTime).inMinutes;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

@@ -40,14 +40,22 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _initializeApp() async {
-    // Verificar estado de autenticación
-    await context.read<AuthController>().checkAuthStatus();
-
-    // Esperar un poco para mostrar la animación (3 segundos total)
-    await Future.delayed(const Duration(milliseconds: 1000));
+    // Verificar estado de autenticación (no bloquear si tarda)
+    final authController = context.read<AuthController>();
+    final authCheck = authController.checkAuthStatus();
+    
+    // Esperar un poco para mostrar la animación (mínimo 800ms)
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    // Esperar a que termine la verificación (con timeout)
+    await authCheck.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {
+        print('⚠️ Timeout al verificar autenticación, continuando...');
+      },
+    );
 
     if (mounted) {
-      final authController = context.read<AuthController>();
       if (authController.isLoggedIn) {
         context.go('/home');
       } else {

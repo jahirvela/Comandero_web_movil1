@@ -125,12 +125,11 @@ class AuthController extends ChangeNotifier {
         _userName = userName ?? '';
         _userId = userId ?? '';
         
-        // Reconectar Socket.IO si hay token válido
-        try {
-          await SocketService().connect();
-        } catch (e) {
+        // Reconectar Socket.IO en background (no bloquear)
+        // Esto se hará después de que la UI se muestre
+        SocketService().connect().catchError((e) {
           print('Error al reconectar Socket.IO: $e');
-        }
+        });
         
         notifyListeners();
       }

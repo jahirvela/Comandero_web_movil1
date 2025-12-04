@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 /// Modal para registrar el comprobante de pago con tarjeta.
 class CardVoucherModal extends StatefulWidget {
@@ -54,7 +54,14 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   final _authorizationCodeController = TextEditingController();
   final _last4DigitsController = TextEditingController();
   final _notesController = TextEditingController();
-  DateTime _selectedDateTime = DateTime.now();
+  late DateTime _selectedDateTime;
+  
+  @override
+  void initState() {
+    super.initState();
+    // Inicializar con hora CDMX
+    _selectedDateTime = date_utils.AppDateUtils.now();
+  }
   bool _voucherPrinted = false;
   bool _submitted = false;
 
@@ -301,10 +308,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                 const Icon(Icons.calendar_today, size: 20),
                 const SizedBox(width: 10),
                 Text(
-                  DateFormat(
-                    'dd/MM/yyyy hh:mm a',
-                    'es',
-                  ).format(_selectedDateTime),
+                  date_utils.AppDateUtils.formatDateTime(_selectedDateTime),
                   style: TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: widget.isTablet ? 14 : 12,
@@ -444,11 +448,12 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   }
 
   Future<void> _selectDateTime() async {
+    final now = date_utils.AppDateUtils.now();
     final date = await showDatePicker(
       context: context,
       initialDate: _selectedDateTime,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      firstDate: now.subtract(const Duration(days: 365)),
+      lastDate: now.add(const Duration(days: 1)),
       locale: const Locale('es', 'MX'),
       helpText: 'Seleccionar fecha',
       cancelText: 'Cancelar',
@@ -510,7 +515,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
         totalAmount: widget.bill.calculatedTotal,
         tableNumber: widget.bill.tableNumber,
         billId: widget.bill.id,
-        timestamp: DateTime.now(),
+        timestamp: date_utils.AppDateUtils.now(),
         cashierName: Provider.of<AuthController>(context, listen: false).userName.isNotEmpty
             ? Provider.of<AuthController>(context, listen: false).userName
             : 'Cajero',
@@ -683,10 +688,9 @@ class _CardPaymentSuccessDialog extends StatelessWidget {
           _buildDetailRow('Orden', payment.billId),
           _buildDetailRow(
             'Fecha',
-            DateFormat(
-              'dd/MM/yyyy hh:mm a',
-              'es',
-            ).format(payment.cardPaymentDate ?? DateTime.now()),
+            date_utils.AppDateUtils.formatDateTime(
+              payment.cardPaymentDate ?? date_utils.AppDateUtils.now(),
+            ),
           ),
         ],
       ),

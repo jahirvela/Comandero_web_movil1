@@ -499,38 +499,76 @@ class _TakeawayViewState extends State<TakeawayView> {
       builder: (context) => const Center(child: CircularProgressIndicator()),
     );
 
-    // Obtener detalles de la orden del backend
+    // IMPORTANTE: Obtener TODAS las órdenes activas del mismo cliente
+    // Esto permite mostrar todas las órdenes que se cobrarán juntas
     double totalConsumo = 0.0;
     final allItems = <Map<String, dynamic>>[];
+    final allOrderIds = <int>[];
 
     try {
-      final ordenData = await controller.getOrdenDetalle(ordenId);
-      if (ordenData != null) {
-        final items = ordenData['items'] as List<dynamic>? ?? [];
-        for (var item in items) {
-          final cantidad = (item['cantidad'] as num?)?.toDouble() ?? 1.0;
-          final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-          final totalLinea = (item['totalLinea'] as num?)?.toDouble() ?? (precioUnitario * cantidad);
-          totalConsumo += totalLinea;
-          
-          allItems.add({
-            'nombre': item['productoNombre'] as String? ?? 'Producto',
-            'cantidad': cantidad.toInt(),
-            'precioUnitario': precioUnitario,
-            'subtotal': totalLinea,
-            'extras': item['modificadores'] as List<dynamic>? ?? [],
-            'nota': item['nota'] as String?,
-          });
+      // Obtener todas las órdenes del historial del mismo cliente
+      final takeawayHistory = controller.getTakeawayOrderHistory();
+      final ordenesDelCliente = takeawayHistory.where((o) {
+        final orderCustomerName = o['customerName'] as String? ?? '';
+        final orderCustomerPhone = o['customerPhone'] as String? ?? '';
+        
+        final nombreCoincide = (customerName.toLowerCase().trim()) ==
+            (orderCustomerName.toLowerCase().trim());
+        final telefonoCoincide = (customerPhone.trim()) ==
+            (orderCustomerPhone.trim());
+        
+        final esMismoCliente = nombreCoincide && 
+            (telefonoCoincide || (customerPhone.isEmpty && orderCustomerPhone.isEmpty));
+
+        if (!esMismoCliente) return false;
+
+        // Excluir órdenes ya pagadas/cerradas
+        final status = (o['status'] as String?)?.toLowerCase() ?? '';
+        final esExcluida =
+            status.contains('pagada') ||
+            status.contains('cancelada') ||
+            status.contains('cerrada') ||
+            status.contains('enviada') ||
+            status.contains('cobrada');
+        return !esExcluida;
+      }).toList();
+
+      // Obtener detalles de todas las órdenes del cliente
+      for (var orderData in ordenesDelCliente) {
+        final ordenIdActual = orderData['ordenId'] as int?;
+        if (ordenIdActual != null) {
+          allOrderIds.add(ordenIdActual);
+          final ordenDetalle = await controller.getOrdenDetalle(ordenIdActual);
+          if (ordenDetalle != null) {
+            final items = ordenDetalle['items'] as List<dynamic>? ?? [];
+            for (var item in items) {
+              final cantidad = (item['cantidad'] as num?)?.toDouble() ?? 1.0;
+              final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+              final totalLinea = (item['totalLinea'] as num?)?.toDouble() ?? (precioUnitario * cantidad);
+              totalConsumo += totalLinea;
+              
+              allItems.add({
+                'nombre': item['productoNombre'] as String? ?? 'Producto',
+                'cantidad': cantidad.toInt(),
+                'precioUnitario': precioUnitario,
+                'subtotal': totalLinea,
+                'extras': item['modificadores'] as List<dynamic>? ?? [],
+                'nota': item['nota'] as String?,
+                'ordenId': ordenIdActual, // Para identificar de qué orden viene cada item
+              });
+            }
+          }
         }
       }
     } catch (e) {
-      print('Error al obtener detalles de orden $ordenId: $e');
+      print('Error al obtener detalles de órdenes: $e');
     }
 
     // Cerrar indicador de carga
     if (context.mounted) Navigator.of(context).pop();
 
     final total = totalConsumo;
+    final tieneMultiplesOrdenes = allOrderIds.length > 1;
 
     if (!context.mounted) return;
 
@@ -569,13 +607,26 @@ class _TakeawayViewState extends State<TakeawayView> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Cerrar cuenta — Para Llevar',
+                            tieneMultiplesOrdenes
+                                ? 'Cerrar cuenta — Para Llevar (${allOrderIds.length} órdenes)'
+                                : 'Cerrar cuenta — Para Llevar',
                             style: TextStyle(
                               fontSize: isTablet ? 20.0 : 18.0,
                               fontWeight: FontWeight.bold,
                               color: AppColors.textPrimary,
                             ),
                           ),
+                          if (tieneMultiplesOrdenes)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                'Órdenes: ${allOrderIds.map((id) => 'ORD-$id').join(', ')}',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 12.0 : 10.0,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
                           Row(
                             children: [
                               Icon(Icons.person, size: 14, color: AppColors.textSecondary),
@@ -777,7 +828,9 @@ class _TakeawayViewState extends State<TakeawayView> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Al enviar la cuenta, llegará al Cajero para su cobro.',
+                                tieneMultiplesOrdenes
+                                    ? 'Se cobrarán ${allOrderIds.length} órdenes juntas. Al enviar la cuenta, llegará al Cajero para su cobro.'
+                                    : 'Al enviar la cuenta, llegará al Cajero para su cobro.',
                                 style: TextStyle(
                                   fontSize: isTablet ? 14.0 : 12.0,
                                   color: AppColors.textSecondary,

@@ -7,6 +7,7 @@ import '../../models/admin_model.dart';
 import '../../services/payment_repository.dart';
 import '../../services/bill_repository.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 import '../../widgets/logout_button.dart';
 import 'cash_closure_view.dart';
 import 'sales_reports_view.dart';
@@ -716,7 +717,16 @@ class CajeroApp extends StatelessWidget {
     CajeroController controller,
     bool isTablet,
   ) {
-    final elapsedMinutes = DateTime.now().difference(bill.createdAt).inMinutes;
+    // IMPORTANTE: Usar hora CDMX para cálculos precisos
+    // bill.createdAt ya está parseado con parseToLocal, así que está en CDMX
+    final now = date_utils.AppDateUtils.now();
+    // No hacer .toLocal() otra vez porque ya está en hora local (CDMX)
+    final billDate = bill.createdAt;
+    final elapsedMinutes = now.difference(billDate).inMinutes;
+    
+    // Si el tiempo es negativo, puede ser un error de zona horaria
+    // En ese caso, mostrar "Recién" en lugar de un número negativo
+    final displayMinutes = elapsedMinutes < 0 ? 0 : elapsedMinutes;
 
     return Container(
       margin: EdgeInsets.only(bottom: isTablet ? 24.0 : 20.0),
@@ -898,7 +908,9 @@ class CajeroApp extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      'Hace $elapsedMinutes min',
+                      displayMinutes < 1 
+                          ? 'Recién' 
+                          : 'Hace $displayMinutes min',
                       style: TextStyle(
                         fontSize: isTablet ? 11.0 : 9.0,
                         color: AppColors.textSecondary,
