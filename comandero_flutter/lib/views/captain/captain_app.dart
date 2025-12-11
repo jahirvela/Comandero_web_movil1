@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/captain_controller.dart';
 import '../../controllers/auth_controller.dart';
@@ -6,12 +7,9 @@ import '../../controllers/cocinero_controller.dart';
 import '../../models/captain_model.dart';
 import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
-import '../../utils/date_utils.dart' as date_utils;
 import '../../widgets/logout_button.dart';
-import 'report_order_status_modal.dart';
 import '../cocinero/order_detail_modal.dart';
-import '../../services/kitchen_order_service.dart';
-import '../../services/alertas_service.dart';
+import 'alert_to_kitchen_modal.dart';
 
 class CaptainApp extends StatefulWidget {
   const CaptainApp({super.key});
@@ -192,7 +190,8 @@ class _CaptainAppState extends State<CaptainApp> {
             onPressed: () async {
               await authController.logout();
               if (context.mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
+                // Usar go_router en lugar de Navigator.pushReplacementNamed
+                context.go('/login');
               }
             },
           ),
@@ -515,12 +514,14 @@ class _CaptainAppState extends State<CaptainApp> {
                   size: isTablet ? 20.0 : 18.0,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  'Alertas',
-                  style: TextStyle(
-                    fontSize: isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                Expanded(
+                  child: Text(
+                    'Alertas',
+                    style: TextStyle(
+                      fontSize: isTablet ? 18.0 : 16.0,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                 ),
                 if (alerts.isNotEmpty) ...[
@@ -541,6 +542,29 @@ class _CaptainAppState extends State<CaptainApp> {
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: () {
+                      controller.clearAllAlerts();
+                    },
+                    icon: Icon(
+                      Icons.clear_all,
+                      size: isTablet ? 16.0 : 14.0,
+                      color: Colors.red,
+                    ),
+                    label: Text(
+                      'Limpiar todas',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 10.0,
+                        color: Colors.red,
+                      ),
+                    ),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
                 ],
@@ -612,47 +636,51 @@ class _CaptainAppState extends State<CaptainApp> {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.red.withValues(alpha: 0.3), width: 1),
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(
-                AlertType.getTypeIcon(alert.type),
-                size: isTablet ? 20.0 : 18.0,
-                color: Colors.orange,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  alert.orderNumber != null
-                      ? 'Orden ${alert.orderNumber}'
-                      : alert.title,
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      AlertType.getTypeIcon(alert.type),
+                      size: isTablet ? 20.0 : 18.0,
+                      color: Colors.orange,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        alert.orderNumber != null
+                            ? 'Orden ${alert.orderNumber}'
+                            : alert.title,
+                        style: TextStyle(
+                          fontSize: isTablet ? 16.0 : 14.0,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                      ),
+                      child: Text(
+                        alertTypeText,
+                        style: TextStyle(
+                          fontSize: isTablet ? 10.0 : 8.0,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.red,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                ),
-                child: Text(
-                  alertTypeText,
-                  style: TextStyle(
-                    fontSize: isTablet ? 10.0 : 8.0,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.red,
-                  ),
-                ),
-              ),
-            ],
-          ),
           const SizedBox(height: 8),
           Text(
             alert.tableNumber != null
@@ -671,32 +699,45 @@ class _CaptainAppState extends State<CaptainApp> {
               color: AppColors.textSecondary,
             ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              OutlinedButton(
-                onPressed: () => _handleViewAlert(
-                  context,
-                  alert,
-                  controller,
-                  cocineroController,
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => _handleViewAlert(
+                        context,
+                        alert,
+                        controller,
+                        cocineroController,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text(
+                        'Ver',
+                        style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                      ),
+                    ),
+                  ],
                 ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: Text(
-                  'Ver',
-                  style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
-                ),
-              ),
-            ],
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            color: AppColors.textSecondary,
+            onPressed: () {
+              controller.removeAlert(alert.id);
+            },
+            tooltip: 'Cerrar alerta',
+            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(),
           ),
         ],
       ),
@@ -725,8 +766,8 @@ class _CaptainAppState extends State<CaptainApp> {
           TextButton(
             onPressed: () {
               Navigator.of(dialogContext).pop();
-              // Buscar la orden en el CocineroController y abrirla
-              _openOrderDetail(context, alert, cocineroController);
+              // Buscar la orden en el CaptainController y abrirla
+              _openOrderDetail(context, alert, controller, cocineroController);
             },
             child: const Text('Aceptar'),
           ),
@@ -738,10 +779,11 @@ class _CaptainAppState extends State<CaptainApp> {
   void _openOrderDetail(
     BuildContext context,
     CaptainAlert alert,
+    CaptainController controller,
     CocineroController cocineroController,
   ) {
-    // Buscar la orden correspondiente
-    final orders = cocineroController.orders;
+    // Buscar la orden correspondiente en las órdenes del capitán
+    final orders = controller.activeOrders;
     OrderModel? order;
 
     try {
@@ -782,7 +824,8 @@ class _CaptainAppState extends State<CaptainApp> {
     CocineroController cocineroController,
     bool isTablet,
   ) {
-    final orders = cocineroController.orders
+    // Usar las órdenes del controlador del capitán (ya filtradas y cargadas desde /api/ordenes)
+    final orders = controller.filteredOrders
         .where(
           (o) =>
               o.status == OrderStatus.pendiente ||
@@ -818,7 +861,7 @@ class _CaptainAppState extends State<CaptainApp> {
                     (order) => _buildRecentOrderCard(
                       context,
                       order,
-                      cocineroController,
+                      controller,
                       isTablet,
                     ),
                   ),
@@ -831,15 +874,24 @@ class _CaptainAppState extends State<CaptainApp> {
   Widget _buildRecentOrderCard(
     BuildContext context,
     OrderModel order,
-    CocineroController cocineroController,
+    CaptainController controller,
     bool isTablet,
   ) {
     final statusColor = _getOrderStatusColor(order.status);
     final statusText = _getOrderStatusText(order.status);
-    // IMPORTANTE: Usar hora CDMX para cálculos precisos
-    final now = date_utils.AppDateUtils.now();
+    
+    // Obtener información adicional de la orden (items como texto, total)
+    final additionalData = controller.getOrderAdditionalData(order.id);
+    final itemsText = (additionalData?['itemsText'] as List<dynamic>?)?.cast<String>() ?? 
+                     order.items.map((item) => '${item.quantity}x ${item.name}').toList();
+    final orderTotal = (additionalData?['total'] as num?)?.toDouble() ?? 
+                      _calculateOrderTotal(order);
+    
+    // Formatear hora de la orden (HH:mm)
     final localOrderTime = order.orderTime.isUtc ? order.orderTime.toLocal() : order.orderTime;
-    final elapsedMinutes = now.difference(localOrderTime).inMinutes;
+    final orderHour = localOrderTime.hour.toString().padLeft(2, '0');
+    final orderMinute = localOrderTime.minute.toString().padLeft(2, '0');
+    final orderTimeText = '$orderHour:$orderMinute';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -852,38 +904,23 @@ class _CaptainAppState extends State<CaptainApp> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ID de orden y estado
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: order.isTakeaway ? Colors.blue : Colors.red,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  order.isTakeaway
-                      ? 'Para llevar'
-                      : 'Mesa ${order.tableNumber}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 12.0 : 10.0,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
+              Text(
+                order.id,
+                style: TextStyle(
+                  fontSize: isTablet ? 14.0 : 12.0,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.info,
                 ),
               ),
-              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.2),
+                  color: statusColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: statusColor),
                 ),
                 child: Text(
                   statusText,
@@ -896,76 +933,116 @@ class _CaptainAppState extends State<CaptainApp> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            order.isTakeaway && order.customerName != null
-                ? 'Cliente: ${order.customerName} • Mesero: ${order.waiter}'
-                : 'Mesero: ${order.waiter}',
-            style: TextStyle(
-              fontSize: isTablet ? 14.0 : 12.0,
-              color: AppColors.textSecondary,
+          const SizedBox(height: 6),
+          // Tipo de orden: Para llevar o En mesa
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: order.isTakeaway
+                  ? AppColors.warning.withValues(alpha: 0.15)
+                  : AppColors.success.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  order.isTakeaway ? Icons.shopping_bag_outlined : Icons.restaurant,
+                  size: isTablet ? 14.0 : 12.0,
+                  color: order.isTakeaway ? AppColors.warning : AppColors.success,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  order.isTakeaway 
+                      ? 'Para llevar' 
+                      : 'Mesa ${order.tableNumber ?? 'N/A'}',
+                  style: TextStyle(
+                    fontSize: isTablet ? 11.0 : 9.0,
+                    fontWeight: FontWeight.w600,
+                    color: order.isTakeaway ? AppColors.warning : AppColors.success,
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(height: 8),
+          // Items del pedido
+          Text(
+            itemsText.join(', '),
+            style: TextStyle(
+              fontSize: isTablet ? 13.0 : 11.0,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Hora del pedido
+          Row(
+            children: [
+              Icon(
+                Icons.access_time,
+                size: isTablet ? 14.0 : 12.0,
+                color: AppColors.textSecondary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                orderTimeText,
+                style: TextStyle(
+                  fontSize: isTablet ? 12.0 : 10.0,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
+          // Botón de alerta y total
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               OutlinedButton.icon(
                 onPressed: () {
-                  ReportOrderStatusModal.show(
+                  // Abrir modal para enviar alerta a cocina (igual que mesero)
+                  showCaptainAlertToKitchenModal(
                     context,
+                    tableNumber: order.tableNumber?.toString() ?? 
+                               (order.isTakeaway ? 'Para llevar' : 'N/A'),
                     orderId: order.id,
-                    tableNumber: order.tableNumber,
-                    isTakeaway: order.isTakeaway,
-                    onSend: (tipo, motivo, detalles, notifyCook) {
-                      _handleSendNotification(
-                        context,
-                        order,
-                        tipo,
-                        motivo,
-                        detalles,
-                        notifyCook,
-                        cocineroController,
-                      );
-                    },
                   );
                 },
-                icon: const Icon(Icons.notifications, size: 18),
-                label: const Text('Notificar a Cocina'),
+                icon: const Icon(Icons.warning_amber_rounded, size: 18),
+                label: const Text('Enviar Alerta'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.purple,
-                  side: const BorderSide(color: Colors.grey),
+                  foregroundColor: Colors.orange,
+                  side: BorderSide(color: Colors.orange.withValues(alpha: 0.5)),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: 8,
                   ),
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '\$${_estimateOrderTotal(order).toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 16.0 : 14.0,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.purple,
-                    ),
-                  ),
-                  Text(
-                    '$elapsedMinutes min',
-                    style: TextStyle(
-                      fontSize: isTablet ? 12.0 : 10.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
+              Text(
+                '\$${orderTotal.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: isTablet ? 16.0 : 14.0,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.purple,
+                ),
               ),
             ],
           ),
         ],
       ),
     );
+  }
+  
+  // Calcular total de la orden basado en items
+  double _calculateOrderTotal(OrderModel order) {
+    // Si no hay datos adicionales, estimar basado en cantidad de items
+    double estimatedTotal = 0.0;
+    for (var item in order.items) {
+      // Estimación simple: ~$20 por item
+      estimatedTotal += 20.0 * item.quantity;
+    }
+    return estimatedTotal;
   }
 
   Widget _buildAccountsToCollectSection(
@@ -1292,141 +1369,5 @@ class _CaptainAppState extends State<CaptainApp> {
     }
   }
 
-  void _handleSendNotification(
-    BuildContext context,
-    OrderModel order,
-    String tipo,
-    String motivo,
-    String? detalles,
-    bool notifyCook,
-    CocineroController cocineroController,
-  ) async {
-    if (notifyCook) {
-      final tableLabel = order.tableNumber != null
-          ? order.tableNumber!.toString()
-          : (order.isTakeaway ? 'Para llevar' : 'Sin mesa');
-
-      // Determinar prioridad según el tipo de alerta
-      final priority = tipo == 'Demora' ? 'Urgente' : 'Normal';
-
-      // Enviar alerta vía KitchenOrderService (usa Socket.IO internamente)
-      KitchenOrderService().sendAlertToKitchen(
-        tableNumber: tableLabel,
-        orderId: order.id,
-        alertType: tipo,
-        reason: motivo,
-        details: detalles,
-        priority: priority,
-      );
-
-      // También enviar vía AlertasService para doble respaldo y persistencia
-      try {
-        await AlertasService().enviarAlertaDesdeModal(
-          tableNumber: tableLabel,
-          orderId: order.id,
-          alertType: tipo,
-          reason: motivo,
-          details: detalles,
-          priority: priority,
-        );
-        print('✅ Alerta enviada también vía AlertasService');
-      } catch (e) {
-        print('⚠️ Error al enviar vía AlertasService (no crítico): $e');
-        // Continuar, ya se envió por KitchenOrderService
-      }
-    }
-
-    // Mostrar mensaje de confirmación
-    if (!context.mounted) return;
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.green, size: 28),
-            const SizedBox(width: 8),
-            const Text('Notificación Enviada'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Se ha enviado la notificación a Cocina:'),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Tipo: $tipo',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text('Motivo: $motivo'),
-                  if (detalles != null && detalles.isNotEmpty)
-                    Text('Detalles: $detalles'),
-                  Text('Orden: ${order.id}'),
-                  if (order.tableNumber != null)
-                    Text('Mesa: ${order.tableNumber}'),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-              // Remover la alerta relacionada
-              final captainController = Provider.of<CaptainController>(
-                context,
-                listen: false,
-              );
-              captainController.removeAlertByOrderId(order.id);
-              // Mostrar mensaje de éxito
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    '✅ Notificación enviada correctamente a Cocina',
-                  ),
-                  backgroundColor: Colors.green,
-                  duration: Duration(seconds: 3),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Aceptar'),
-          ),
-        ],
-      ),
-    );
-  }
-
   // Estimar total de orden basado en items
-  double _estimateOrderTotal(OrderModel order) {
-    // Estimación simple basada en cantidad de items
-    // En producción esto vendría del modelo de datos
-    double estimatedPrice = 0.0;
-    for (var item in order.items) {
-      // Estimación: ~$15-25 por item según estación
-      double itemPrice = 20.0; // Precio promedio
-      if (item.station == 'Consomes') {
-        itemPrice = 25.0;
-      } else if (item.station == 'Bebidas') {
-        itemPrice = 15.0;
-      }
-      estimatedPrice += itemPrice * item.quantity;
-    }
-    return estimatedPrice;
-  }
 }

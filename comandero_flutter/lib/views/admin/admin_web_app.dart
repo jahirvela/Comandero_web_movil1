@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:intl/intl.dart';
@@ -345,7 +346,8 @@ class _AdminWebAppState extends State<AdminWebApp> {
               onPressed: () async {
                 await authController.logout();
                 if (context.mounted) {
-                  Navigator.of(context).pushReplacementNamed('/login');
+                  // Usar go_router en lugar de Navigator.pushReplacementNamed
+                  context.go('/login');
                 }
               },
             ),
@@ -497,9 +499,8 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           );
                           await authController.logout();
                           if (context.mounted) {
-                            Navigator.of(
-                              context,
-                            ).pushReplacementNamed('/login');
+                            // Usar go_router en lugar de Navigator.pushReplacementNamed
+                            context.go('/login');
                           }
                         },
                       ),
@@ -609,7 +610,8 @@ class _AdminWebAppState extends State<AdminWebApp> {
                       );
                       await authController.logout();
                       if (context.mounted) {
-                        Navigator.of(context).pushReplacementNamed('/login');
+                        // Usar go_router en lugar de Navigator.pushReplacementNamed
+                  context.go('/login');
                       }
                     },
                   ),

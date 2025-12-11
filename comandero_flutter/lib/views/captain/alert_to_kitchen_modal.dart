@@ -5,21 +5,21 @@ import '../../services/kitchen_alerts_service.dart';
 import '../../services/socket_service.dart';
 import '../../models/kitchen_alert.dart';
 
-class AlertToKitchenModal extends StatefulWidget {
+class CaptainAlertToKitchenModal extends StatefulWidget {
   final String tableNumber;
   final String orderId;
 
-  const AlertToKitchenModal({
+  const CaptainAlertToKitchenModal({
     super.key,
     required this.tableNumber,
     required this.orderId,
   });
 
   @override
-  State<AlertToKitchenModal> createState() => _AlertToKitchenModalState();
+  State<CaptainAlertToKitchenModal> createState() => _CaptainAlertToKitchenModalState();
 }
 
-class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
+class _CaptainAlertToKitchenModalState extends State<CaptainAlertToKitchenModal> {
   String selectedAlertType = '';
   String selectedReason = '';
   String additionalDetails = '';
@@ -323,19 +323,19 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
         builder: (context) => const Center(child: CircularProgressIndicator()),
       );
 
-      // Obtener información del mesero actual
-      String meseroNombre = 'Mesero';
+      // Obtener información del capitán actual
+      String captainNombre = 'Capitán';
       try {
         final authService = AuthService();
         final profile = await authService.getProfile();
         if (profile != null) {
-          meseroNombre =
+          captainNombre =
               profile['username']?.toString() ??
               profile['nombre']?.toString() ??
-              'Mesero';
+              'Capitán';
         }
       } catch (e) {
-        print('⚠️ Error al obtener perfil del mesero: $e');
+        print('⚠️ Error al obtener perfil del capitán: $e');
       }
 
       // Extraer ordenId numérico del formato "ORD-000069" -> 69
@@ -359,7 +359,7 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
       } else if (selectedAlertType.toLowerCase() == 'cambio en orden') {
         alertType = AlertType.UPDATE_ORDER;
       } else if (selectedAlertType.toLowerCase() == 'demora') {
-        alertType = AlertType.EXTRA_ITEM; // O podríamos crear un tipo específico
+        alertType = AlertType.EXTRA_ITEM;
       } else {
         alertType = AlertType.NEW_ORDER;
       }
@@ -368,8 +368,6 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
       final tableId = int.tryParse(widget.tableNumber);
 
       // Crear la alerta usando el nuevo modelo
-      // NOTA: La estación será determinada por el backend basándose en los items de la orden
-      // Por ahora enviamos 'general' y el backend la determinará automáticamente
       final alert = KitchenAlert(
         orderId: ordenId,
         tableId: tableId,
@@ -418,7 +416,7 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
       kitchenAlertsService.dispose();
 
       print(
-        '📢 Mesero ($meseroNombre) envió alerta: $selectedAlertType - $selectedReason',
+        '📢 Capitán ($captainNombre) envió alerta: $selectedAlertType - $selectedReason',
       );
       print('   ✅ Alerta guardada en BD y emitida a cocina por el backend');
 
@@ -427,7 +425,7 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
 
       // Mostrar confirmación con detalles
       if (context.mounted) {
-        _showConfirmationDialog(context, meseroNombre);
+        _showConfirmationDialog(context, captainNombre);
       }
     } catch (e) {
       // Cerrar diálogo de carga si está abierto
@@ -446,7 +444,7 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
     }
   }
 
-  void _showConfirmationDialog(BuildContext context, String meseroNombre) {
+  void _showConfirmationDialog(BuildContext context, String captainNombre) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -552,12 +550,12 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
                   Row(
                     children: [
                       Icon(
-                        Icons.person,
+                        Icons.shield,
                         size: 16,
                         color: AppColors.textSecondary,
                       ),
                       const SizedBox(width: 4),
-                      Text('Enviado por: $meseroNombre'),
+                      Text('Enviado por: $captainNombre (Capitán)'),
                     ],
                   ),
                 ],
@@ -580,7 +578,7 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
 }
 
 // Widget para mostrar el modal
-void showAlertToKitchenModal(
+void showCaptainAlertToKitchenModal(
   BuildContext context, {
   required String tableNumber,
   required String orderId,
@@ -589,6 +587,7 @@ void showAlertToKitchenModal(
     context: context,
     barrierDismissible: true,
     builder: (context) =>
-        AlertToKitchenModal(tableNumber: tableNumber, orderId: orderId),
+        CaptainAlertToKitchenModal(tableNumber: tableNumber, orderId: orderId),
   );
 }
+

@@ -155,8 +155,16 @@ class KitchenOrderService {
       print('📢 Alerta enviada a cocina vía Socket.IO: $alertType - $reason');
 
       // También agregar localmente si el controller está disponible (fallback)
+      // NOTA: Este código usa el formato viejo de alertas. En el futuro debería
+      // migrarse al nuevo sistema usando KitchenAlertsService.
       if (_cocineroController != null) {
-        final alert = KitchenAlert(
+        // Usar el tipo OldKitchenAlert que espera el controller
+        // Necesitamos acceder al tipo desde el controller
+        // Por ahora, comentamos esto porque el nuevo sistema de alertas
+        // ya maneja esto automáticamente vía Socket.IO
+        // TODO: Migrar este código al nuevo sistema de alertas
+        /*
+        final alert = OldKitchenAlert(
           id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
           tableNumber: tableNumber,
           orderId: orderId,
@@ -167,6 +175,7 @@ class KitchenOrderService {
           timestamp: DateTime.now(),
         );
         _cocineroController!.addAlert(alert);
+        */
       }
     } catch (e) {
       print('⚠️ Error al enviar alerta a cocina: $e');

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../controllers/admin_controller.dart';
@@ -186,7 +187,8 @@ class AdminApp extends StatelessWidget {
             onPressed: () async {
               await authController.logout();
               if (context.mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
+                // Usar go_router en lugar de Navigator.pushReplacementNamed
+                context.go('/login');
               }
             },
           ),
@@ -7700,9 +7702,38 @@ class AdminApp extends StatelessWidget {
               final esParaLlevar = ticket.isTakeaway || 
                   (ticket.tableNumber == null && ticket.customerName != null);
               
+              // Formatear ID del ticket para mostrar
+              String ticketDisplayId = ticket.id;
+              if (ticket.id.startsWith('CUENTA-AGRUPADA-')) {
+                // Para cuentas agrupadas, mostrar un formato más legible
+                final parts = ticket.id.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+                final ordenIds = parts
+                    .map((part) => int.tryParse(part))
+                    .whereType<int>()
+                    .toList();
+                if (ordenIds.length > 1) {
+                  ticketDisplayId = 'Cuenta agrupada (${ordenIds.length} órdenes)';
+                } else {
+                  ticketDisplayId = 'ORD-${ordenIds.first.toString().padLeft(6, '0')}';
+                }
+              } else if (ticket.id.startsWith('ORD-')) {
+                // Ya está bien formateado
+                ticketDisplayId = ticket.id;
+              }
+              
               return DataRow(
                 cells: [
-                  DataCell(Text(ticket.id)),
+                  DataCell(
+                    Tooltip(
+                      message: ticket.id, // Mostrar el ID completo en tooltip
+                      child: Text(
+                        ticketDisplayId,
+                        style: ticket.id.startsWith('CUENTA-AGRUPADA-')
+                            ? const TextStyle(fontWeight: FontWeight.bold)
+                            : null,
+                      ),
+                    ),
+                  ),
                   // Columna Tipo
                   DataCell(
                     Container(
@@ -11816,19 +11847,161 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
   }
 
   Future<void> _loadOrdenData() async {
-    if (widget.ticket.ordenId == null) {
-      setState(() {
-        _isLoading = false;
-        _error = 'No hay orden asociada a este ticket';
-      });
-      return;
-    }
-
     try {
       final ordenesService = OrdenesService();
-      final ordenData = await ordenesService.getOrden(widget.ticket.ordenId!);
+      
+      // Detectar si es cuenta agrupada
+      final isGrouped = (widget.ticket.isGrouped == true) || 
+                       widget.ticket.id.startsWith('CUENTA-AGRUPADA-');
+      
+      // Obtener lista de ordenIds
+      List<int> ordenIdsToLoad;
+      if (isGrouped && widget.ticket.ordenIds != null && widget.ticket.ordenIds!.isNotEmpty) {
+        // Usar ordenIds del ticket si están disponibles
+        ordenIdsToLoad = widget.ticket.ordenIds!;
+      } else if (isGrouped) {
+        // Extraer ordenIds del ID del ticket (formato CUENTA-AGRUPADA-000084-000085-000086)
+        final parts = widget.ticket.id.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+        ordenIdsToLoad = parts
+            .map((part) => int.tryParse(part))
+            .whereType<int>()
+            .toList();
+      } else if (widget.ticket.ordenId != null) {
+        ordenIdsToLoad = [widget.ticket.ordenId!];
+      } else {
+        setState(() {
+          _isLoading = false;
+          _error = 'No hay orden asociada a este ticket';
+        });
+        return;
+      }
+
+      if (ordenIdsToLoad.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _error = 'No se pudieron extraer los IDs de las órdenes';
+        });
+        return;
+      }
+
+      // Obtener datos de todas las órdenes
+      final List<Map<String, dynamic>> todasLasOrdenes = [];
+      double subtotalTotal = 0.0;
+      double descuentoTotal = 0.0;
+      double impuestoTotal = 0.0;
+      double propinaTotal = 0.0;
+      double totalTotal = 0.0;
+      final List<dynamic> todosLosItems = [];
+      
+      String? mesaCodigo;
+      String? clienteNombre;
+      String? clienteTelefono;
+      String? waiterName;
+      DateTime? fechaMasAntigua;
+
+      for (final ordenId in ordenIdsToLoad) {
+        final ordenData = await ordenesService.getOrden(ordenId);
+        if (ordenData != null) {
+          todasLasOrdenes.add(ordenData);
+          
+          // Acumular totales
+          subtotalTotal += (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
+          descuentoTotal += (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+          impuestoTotal += (ordenData['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
+          propinaTotal += (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+          totalTotal += (ordenData['total'] as num?)?.toDouble() ?? 0.0;
+          
+          // Combinar items, asegurando que los precios estén correctos
+          final items = ordenData['items'] as List<dynamic>? ?? [];
+          for (final item in items) {
+            // Asegurar que los precios estén correctamente calculados
+            final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+            final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+            final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+            
+            // Si totalLinea es 0 o incorrecto, recalcular
+            double totalLineaCalculado = precioUnitario * cantidad;
+            
+            // Si hay modificadores, sumar sus precios
+            final modificadores = item['modificadores'] as List<dynamic>? ?? [];
+            double totalModificadores = 0.0;
+            for (final mod in modificadores) {
+              final modPrecio = (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+              totalModificadores += modPrecio * cantidad;
+            }
+            
+            totalLineaCalculado += totalModificadores;
+            
+            // Usar el totalLinea del backend si es razonable, de lo contrario usar el calculado
+            final totalLineaFinal = (totalLineaBackend <= 0.01 || 
+                                   (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
+                ? totalLineaCalculado
+                : totalLineaBackend;
+            
+            // Si precioUnitario es 0 pero totalLinea tiene valor, calcular precio unitario
+            double precioUnitarioFinal = precioUnitario;
+            if (precioUnitarioFinal <= 0.01 && totalLineaFinal > 0.01 && cantidad > 0) {
+              precioUnitarioFinal = (totalLineaFinal - totalModificadores) / cantidad;
+            }
+            
+            // Crear una copia del item con los valores corregidos
+            final itemCorregido = Map<String, dynamic>.from(item);
+            itemCorregido['precioUnitario'] = precioUnitarioFinal;
+            itemCorregido['totalLinea'] = totalLineaFinal;
+            
+            todosLosItems.add(itemCorregido);
+          }
+          
+          // Tomar datos de la primera orden (o la que tenga mesa si es para mesa)
+          if (mesaCodigo == null) mesaCodigo = ordenData['mesaCodigo'] as String?;
+          if (clienteNombre == null) clienteNombre = ordenData['clienteNombre'] as String?;
+          if (clienteTelefono == null) clienteTelefono = ordenData['clienteTelefono'] as String?;
+          if (waiterName == null) waiterName = ordenData['creadoPorNombre'] as String?;
+          
+          // Fecha más antigua
+          final fechaOrdenStr = ordenData['creadoEn'] as String?;
+          if (fechaOrdenStr != null) {
+            try {
+              final fechaOrden = DateTime.parse(fechaOrdenStr);
+              final fechaComparar = fechaMasAntigua;
+              if (fechaComparar == null || fechaOrden.isBefore(fechaComparar)) {
+                fechaMasAntigua = fechaOrden;
+              }
+            } catch (e) {
+              // Ignorar errores de parsing de fecha
+            }
+          }
+        }
+      }
+
+      if (todasLasOrdenes.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _error = 'No se pudieron cargar los datos de las órdenes';
+        });
+        return;
+      }
+
+      // Construir el objeto combinado
+      final ordenDataCombinado = {
+        'items': todosLosItems,
+        'subtotal': subtotalTotal,
+        'descuentoTotal': descuentoTotal,
+        'impuestoTotal': impuestoTotal,
+        'propinaSugerida': propinaTotal,
+        'total': totalTotal,
+        'mesaCodigo': mesaCodigo,
+        'clienteNombre': clienteNombre,
+        'clienteTelefono': clienteTelefono,
+        'creadoPorNombre': waiterName,
+        'creadoEn': fechaMasAntigua?.toIso8601String() ?? widget.ticket.createdAt.toIso8601String(),
+        'folio': isGrouped 
+            ? 'CUENTA AGRUPADA (${ordenIdsToLoad.map((id) => 'ORD-${id.toString().padLeft(6, '0')}').join(', ')})'
+            : 'ORD-${ordenIdsToLoad.first.toString().padLeft(6, '0')}',
+      };
+
       setState(() {
-        _ordenData = ordenData;
+        _ordenData = ordenDataCombinado;
         _isLoading = false;
       });
     } catch (e) {
@@ -12088,12 +12261,32 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
               ),
               const SizedBox(height: 12),
               ...items.map((item) {
-                final cantidad = (item['cantidad'] as num?)?.toDouble() ?? 1.0;
+                final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
                 final productoNombre = item['productoNombre'] as String? ?? 'Producto';
                 final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-                final totalLinea = (item['totalLinea'] as num?)?.toDouble() ?? (precioUnitario * cantidad);
+                final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
                 final modificadores = item['modificadores'] as List<dynamic>? ?? [];
                 final nota = item['nota'] as String?;
+                
+                // Calcular total de modificadores
+                double totalModificadores = 0.0;
+                for (final mod in modificadores) {
+                  final modPrecio = (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                  totalModificadores += modPrecio * cantidad;
+                }
+                
+                // Calcular totalLinea correctamente
+                double totalLineaCalculado = (precioUnitario * cantidad) + totalModificadores;
+                final totalLinea = (totalLineaBackend <= 0.01 || 
+                                   (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
+                    ? totalLineaCalculado
+                    : totalLineaBackend;
+                
+                // Si precioUnitario es 0 pero tenemos totalLinea, calcular precio unitario
+                double precioUnitarioFinal = precioUnitario;
+                if (precioUnitarioFinal <= 0.01 && totalLinea > 0.01 && cantidad > 0) {
+                  precioUnitarioFinal = (totalLinea - totalModificadores) / cantidad;
+                }
 
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
@@ -12116,13 +12309,31 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  productoNombre,
-                                  style: TextStyle(
-                                    fontSize: widget.isTablet ? 14.0 : 12.0,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.textPrimary,
-                                  ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        productoNombre,
+                                        style: TextStyle(
+                                          fontSize: widget.isTablet ? 14.0 : 12.0,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                    if (precioUnitarioFinal > 0.01 && cantidad > 1)
+                                      Padding(
+                                        padding: const EdgeInsets.only(left: 8),
+                                        child: Text(
+                                          '\$${precioUnitarioFinal.toStringAsFixed(2)} c/u',
+                                          style: TextStyle(
+                                            fontSize: widget.isTablet ? 11.0 : 10.0,
+                                            color: AppColors.textSecondary,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                                 // Modificadores
                                 if (modificadores.isNotEmpty) ...[
@@ -12176,13 +12387,37 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                               ],
                             ),
                           ),
-                          Text(
-                            '\$${totalLinea.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: widget.isTablet ? 14.0 : 12.0,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              if (precioUnitarioFinal > 0.01 && cantidad == 1)
+                                Text(
+                                  '\$${precioUnitarioFinal.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: widget.isTablet ? 11.0 : 10.0,
+                                    color: AppColors.textSecondary,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                )
+                              else if (precioUnitarioFinal > 0.01)
+                                Text(
+                                  '\$${precioUnitarioFinal.toStringAsFixed(2)} c/u',
+                                  style: TextStyle(
+                                    fontSize: widget.isTablet ? 10.0 : 9.0,
+                                    color: AppColors.textSecondary,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '\$${totalLinea.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: widget.isTablet ? 14.0 : 12.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

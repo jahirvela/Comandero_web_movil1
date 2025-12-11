@@ -25,18 +25,18 @@ import 'views/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Configurar localización en español de México
-  await initializeDateFormatting('es_MX', null);
-  Intl.defaultLocale = 'es_MX';
-  
-  // Configurar zona horaria de México (CDMX)
-  // Nota: Flutter usa la zona horaria del sistema, pero podemos forzar la visualización
-  // La zona horaria real se maneja en el backend
-  
-  // Inicializar el servicio de API
-  ApiService().initialize();
-  
+
+  // Inicializar en paralelo para mejor rendimiento
+  await Future.wait([
+    // Configurar localización en español de México (puede tardar)
+    initializeDateFormatting('es_MX', null).then((_) {
+      Intl.defaultLocale = 'es_MX';
+    }),
+    // Inicializar el servicio de API (no bloqueante)
+    Future(() => ApiService().initialize()),
+  ]);
+
+  // Iniciar la app inmediatamente (no esperar más)
   runApp(const ComanderoApp());
 }
 

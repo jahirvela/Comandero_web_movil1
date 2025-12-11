@@ -1,15 +1,49 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/order_model.dart';
+import '../models/kitchen_alert.dart';
 import '../services/ordenes_service.dart';
 import '../services/socket_service.dart';
+import '../services/kitchen_alerts_service.dart';
+import '../config/api_config.dart';
+import 'package:dio/dio.dart';
 import '../utils/date_utils.dart' as date_utils;
+import '../utils/performance_helper.dart';
 
-class CocineroController extends ChangeNotifier {
+// Modelo viejo de alerta (mantener por compatibilidad con UI existente)
+// Exportado para uso en otras partes de la aplicación
+class OldKitchenAlert {
+  final String id;
+  final String tableNumber;
+  final String orderId;
+  final String type;
+  final String reason;
+  final String? details;
+  final String priority;
+  final DateTime timestamp;
+  final String? sentBy; // Nombre del usuario que envió (mesero o capitán)
+  final String? sentByRole; // Rol del usuario (mesero o capitan)
+
+  OldKitchenAlert({
+    required this.id,
+    required this.tableNumber,
+    required this.orderId,
+    required this.type,
+    required this.reason,
+    this.details,
+    required this.priority,
+    required this.timestamp,
+    this.sentBy,
+    this.sentByRole,
+  });
+}
+
+class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   final OrdenesService _ordenesService = OrdenesService();
   // Estado de los pedidos
   List<OrderModel> _orders = [];
-  final List<KitchenAlert> _alerts = [];
+  final List<OldKitchenAlert> _alerts = [];
 
   // IDs de órdenes marcadas como "listo" por este cocinero (para no recargarlas)
   final Set<String> _completedOrderIds = {};
@@ -36,7 +70,7 @@ class CocineroController extends ChangeNotifier {
   String get selectedAlert => _selectedAlert;
   bool get showTakeawayOnly => _showTakeawayOnly;
   String get currentView => _currentView;
-  List<KitchenAlert> get alerts => List.unmodifiable(_alerts);
+  List<OldKitchenAlert> get alerts => List.unmodifiable(_alerts);
 
   // Obtener pedidos filtrados
   List<OrderModel> get filteredOrders {
@@ -65,7 +99,7 @@ class CocineroController extends ChangeNotifier {
     }).toList();
   }
 
-  List<KitchenAlert> get filteredAlerts {
+  List<OldKitchenAlert> get filteredAlerts {
     return _alerts.where((alert) {
       if (_selectedAlert == 'todas') return true;
       switch (_selectedAlert) {
@@ -83,7 +117,13 @@ class CocineroController extends ChangeNotifier {
 
   CocineroController() {
     _initializeOrders();
-    _setupSocketListeners();
+    // NO configurar listeners aquí - se configurarán después de que el socket esté conectado
+    // Reducido delay para inicio más rápido
+    Future.delayed(const Duration(milliseconds: 200), () async {
+      await _connectSocket();
+      // Configurar listeners DESPUÉS de que el socket esté conectado
+      _setupSocketListeners();
+    });
     // Cargar órdenes completadas desde storage PRIMERO y luego cargar órdenes
     // Esto es crítico para que el filtro funcione correctamente
     _loadCompletedOrders()
@@ -100,6 +140,110 @@ class CocineroController extends ChangeNotifier {
           _completedOrdersLoaded = true;
           loadOrders();
         });
+  }
+
+  // Conectar Socket.IO para recibir alertas
+  Future<void> _connectSocket() async {
+    final socketService = SocketService();
+
+    // Verificar que el rol sea cocinero
+    final storedRole = await _storage.read(key: 'userRole');
+    final storedUserId = await _storage.read(key: 'userId');
+
+    if (storedRole != 'cocinero') {
+      print(
+        '⚠️ Cocinero: Rol no es cocinero ($storedRole), no se conectará socket',
+      );
+      return;
+    }
+
+    print(
+      '🔌 Cocinero: Verificando conexión Socket.IO - UserId: $storedUserId, Role: $storedRole',
+    );
+
+    // Esperar un momento adicional para asegurar que el auth_controller haya terminado (reducido)
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Si ya está conectado, esperar a que el evento 'connected' haya llegado antes de verificar
+    if (socketService.isConnected) {
+      // Esperar hasta 3 segundos para que llegue el evento 'connected'
+      int attempts = 0;
+      while (attempts < 6 && socketService.getSocketUserId() == null) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        attempts++;
+      }
+
+      final socketUserId = socketService.getSocketUserId();
+      final socketRole = socketService.getSocketUserRole();
+
+      if (socketUserId != null &&
+          socketRole != null &&
+          storedUserId == socketUserId &&
+          storedRole == socketRole) {
+        print(
+          '✅ Cocinero: Socket.IO ya está conectado con el usuario/rol correcto - UserId: $socketUserId, Role: $socketRole',
+        );
+        // Esperar un momento más para asegurar que el backend haya unido el socket a las rooms
+        await Future.delayed(const Duration(milliseconds: 500));
+        return;
+      } else if (socketUserId == null || socketRole == null) {
+        print(
+          '⚠️ Cocinero: Socket conectado pero aún no se recibió el evento "connected". Esperando...',
+        );
+        // Esperar un poco más y verificar de nuevo
+        await Future.delayed(const Duration(milliseconds: 1000));
+        final socketUserId2 = socketService.getSocketUserId();
+        final socketRole2 = socketService.getSocketUserRole();
+        if (socketUserId2 == null || socketRole2 == null) {
+          print(
+            '⚠️ Cocinero: El evento "connected" no llegó después de esperar. Continuando de todas formas...',
+          );
+        } else {
+          // Esperar un momento más para asegurar que el backend haya unido el socket a las rooms
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+      } else {
+        print(
+          '⚠️ Cocinero: Socket.IO conectado con usuario/rol incorrecto (Socket: $socketUserId/$socketRole, Storage: $storedUserId/$storedRole). Forzando reconexión.',
+        );
+        await socketService.forceReconnect();
+        // Esperar a que se reconecte
+        int attempts2 = 0;
+        while (attempts2 < 10 && !socketService.isConnected) {
+          await Future.delayed(const Duration(milliseconds: 500));
+          attempts2++;
+        }
+        if (socketService.isConnected) {
+          // Esperar un momento más para asegurar que el backend haya unido el socket a las rooms
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+        return;
+      }
+    } else {
+      print('🔌 Cocinero: Socket no conectado, intentando conectar...');
+
+      // Conectar con el token actual del cocinero (el auth_controller ya lo configuró)
+      await socketService.connect();
+
+      // Esperar a que se conecte y verificar
+      int attempts = 0;
+      while (attempts < 10 && !socketService.isConnected) {
+        await Future.delayed(const Duration(milliseconds: 300));
+        attempts++;
+      }
+
+      if (socketService.isConnected) {
+        final socketUserId = socketService.getSocketUserId();
+        final socketRole = socketService.getSocketUserRole();
+        print(
+          '✅ Cocinero: Socket.IO conectado correctamente - UserId: $socketUserId, Role: $socketRole',
+        );
+        // Esperar un momento más para asegurar que el backend haya unido el socket a las rooms (reducido)
+        await Future.delayed(const Duration(milliseconds: 200));
+      } else {
+        print('⚠️ Cocinero: Socket.IO no se conectó después de 5 segundos');
+      }
+    }
   }
 
   // Flag para saber si las órdenes completadas ya fueron cargadas
@@ -186,127 +330,388 @@ class CocineroController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Cargar alertas pendientes desde el backend
+  Future<void> _loadPendingAlerts() async {
+    try {
+      print('📥 Cocinero: Cargando alertas pendientes desde la BD...');
+
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: ApiConfig.baseUrl,
+          headers: {'Content-Type': 'application/json'},
+        ),
+      );
+
+      // Agregar token de autenticación
+      final token = await _storage.read(key: 'accessToken');
+      if (token != null) {
+        dio.options.headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await dio.get('/alertas');
+
+      if (response.statusCode == 200) {
+        final responseData = response.data;
+        List<dynamic> alertas = [];
+
+        if (responseData is Map<String, dynamic> &&
+            responseData['data'] != null) {
+          alertas = responseData['data'] as List<dynamic>;
+        } else if (responseData is List) {
+          alertas = responseData;
+        }
+
+        print('📥 Cocinero: ${alertas.length} alertas recibidas del backend');
+
+        // Convertir alertas de BD al formato de KitchenAlert
+        for (final alertaData in alertas) {
+          try {
+            final ordenId = alertaData['ordenId'] as int?;
+            if (ordenId == null) continue;
+
+            final mensaje = alertaData['mensaje'] as String? ?? '';
+            final mesaId = alertaData['mesaId'] as int?;
+            final alertaId = alertaData['id'] as int?;
+            final creadoEn = alertaData['creadoEn'] as String?;
+
+            // Determinar tipo de alerta desde el mensaje
+            String alertTypeDisplay = 'Demora';
+            if (mensaje.toLowerCase().contains('cancel')) {
+              alertTypeDisplay = 'Cancelación';
+            } else if (mensaje.toLowerCase().contains('cambio')) {
+              alertTypeDisplay = 'Cambio en orden';
+            }
+
+            // Extraer prioridad de metadata si existe, o usar 'Normal' por defecto
+            final metadataRaw = alertaData['metadata'];
+            Map<String, dynamic> metadata = {};
+
+            // Parsear metadata si es string (JSON), Map, o null
+            if (metadataRaw != null) {
+              if (metadataRaw is String) {
+                try {
+                  metadata =
+                      jsonDecode(metadataRaw) as Map<String, dynamic>? ?? {};
+                } catch (e) {
+                  print('⚠️ Cocinero: Error al parsear metadata JSON: $e');
+                  metadata = {};
+                }
+              } else if (metadataRaw is Map) {
+                metadata = Map<String, dynamic>.from(metadataRaw);
+              }
+            }
+
+            String priority = 'Normal';
+            if (metadata.isNotEmpty && metadata.containsKey('priority')) {
+              priority = metadata['priority']?.toString() ?? 'Normal';
+            }
+
+            print(
+              '🔍 Cocinero: Prioridad extraída - Raw metadata: $metadataRaw, Parsed metadata: $metadata, Priority: $priority',
+            );
+
+            // Mapear prioridad a formato viejo: 'Normal' -> 'medium', 'Urgente' -> 'urgente' o 'high'
+            String priorityOldFormat = 'medium';
+            final priorityLower = priority.toLowerCase();
+            if (priorityLower == 'urgente' || priorityLower == 'urgent') {
+              priorityOldFormat = 'urgente';
+            } else if (priorityLower == 'high') {
+              priorityOldFormat = 'high';
+            }
+
+            print(
+              '🔍 Cocinero: Prioridad mapeada - Original: $priority, Mapeada: $priorityOldFormat',
+            );
+
+            // Obtener información del emisor desde metadata
+            final sentBy = metadata['createdByUsername']?.toString();
+            final sentByRole = metadata['createdByRole']?.toString();
+
+            // Parsear fecha correctamente usando parseToLocal para convertir UTC a CDMX
+            final timestampParsed = creadoEn != null
+                ? date_utils.AppDateUtils.parseToLocal(creadoEn)
+                : DateTime.now();
+
+            // Convertir al formato viejo para la UI
+            final tableNumber = mesaId?.toString() ?? 'N/A';
+            final orderIdStr = 'ORD-${ordenId.toString().padLeft(6, '0')}';
+
+            final oldFormatAlert = OldKitchenAlert(
+              id:
+                  alertaId?.toString() ??
+                  'ALT-${DateTime.now().millisecondsSinceEpoch}',
+              tableNumber: tableNumber,
+              orderId: orderIdStr,
+              type: alertTypeDisplay,
+              reason: mensaje,
+              details: null,
+              priority: priorityOldFormat,
+              timestamp: timestampParsed,
+              sentBy: sentBy,
+              sentByRole: sentByRole,
+            );
+
+            // Evitar duplicados
+            final isDuplicate = _alerts.any(
+              (a) =>
+                  a.id == oldFormatAlert.id ||
+                  (a.orderId == oldFormatAlert.orderId &&
+                      a.type == oldFormatAlert.type &&
+                      (oldFormatAlert.timestamp
+                              .difference(a.timestamp)
+                              .inMinutes <
+                          2)),
+            );
+
+            if (!isDuplicate) {
+              _alerts.insert(0, oldFormatAlert);
+              print(
+                '✅ Cocinero: Alerta pendiente cargada - Tipo: $alertTypeDisplay, Orden: $orderIdStr',
+              );
+            }
+          } catch (e) {
+            print('⚠️ Cocinero: Error al procesar alerta pendiente: $e');
+          }
+        }
+
+        if (_alerts.isNotEmpty) {
+          notifyListeners();
+          print(
+            '✅ Cocinero: ${_alerts.length} alertas pendientes cargadas desde BD',
+          );
+        } else {
+          print('📭 Cocinero: No hay alertas pendientes');
+        }
+      }
+    } catch (e) {
+      print('❌ Cocinero: Error al cargar alertas pendientes: $e');
+    }
+  }
+
   // Configurar listeners de Socket.IO
   void _setupSocketListeners() {
     final socketService = SocketService();
 
-    // Escuchar alertas de cocina en tiempo real (del capitán, mesero, etc.)
+    // Cargar alertas pendientes desde BD cuando se configuran los listeners
+    _loadPendingAlerts();
+
+    // ============================================
+    // NUEVO SISTEMA DE ALERTAS DE COCINA
+    // ============================================
+    // Usar el nuevo servicio de alertas de cocina
+    final kitchenAlertsService = KitchenAlertsService(socketService);
+
+    // Escuchar nuevas alertas del nuevo sistema
+    kitchenAlertsService.listenNewAlerts((alert) {
+      try {
+        print(
+          '🔔 Cocinero: Nueva alerta recibida (kitchen:alert:new) - OrderId: ${alert.orderId}, Type: ${alert.type.name}, Station: ${alert.station.name}',
+        );
+
+        // Convertir la nueva alerta al formato del KitchenAlert viejo para mantener compatibilidad con la UI
+        final tableNumber = alert.tableId?.toString() ?? 'N/A';
+        final orderId = 'ORD-${alert.orderId.toString().padLeft(6, '0')}';
+
+        // Mapear tipo del nuevo sistema al formato viejo
+        // El tipo EXTRA_ITEM se usa para "Demora" en el modal del mesero
+        String alertType = alert.type.displayName;
+        if (alert.type == AlertType.EXTRA_ITEM &&
+            alert.message.toLowerCase().contains('demora')) {
+          alertType = 'Demora';
+        }
+
+        // Mapear prioridad desde el alert
+        // El alert.priority puede ser 'Normal' o 'Urgente'
+        // Lo mapeamos a 'medium' o 'high'/'urgente' para el formato viejo
+        String priority = 'medium';
+        final alertPriorityLower = alert.priority.toLowerCase();
+        print(
+          '🔍 Cocinero: Prioridad desde Socket.IO - Original: ${alert.priority}, Lowercase: $alertPriorityLower',
+        );
+
+        if (alertPriorityLower == 'urgente' || alertPriorityLower == 'urgent') {
+          priority = 'urgente';
+        } else if (alertPriorityLower == 'high') {
+          priority = 'high';
+        }
+
+        print(
+          '🔍 Cocinero: Prioridad mapeada desde Socket.IO - Resultado: $priority',
+        );
+
+        final oldFormatAlert = OldKitchenAlert(
+          id:
+              alert.id?.toString() ??
+              'ALT-${DateTime.now().millisecondsSinceEpoch}',
+          tableNumber: tableNumber,
+          orderId: orderId,
+          type: alertType,
+          reason: alert.message,
+          details: null,
+          priority: priority,
+          timestamp: alert.createdAt ?? DateTime.now(),
+          sentBy: alert.createdByUsername,
+          sentByRole: alert.createdByRole,
+        );
+
+        // Evitar duplicados
+        final isDuplicate = _alerts.any(
+          (a) =>
+              a.id == oldFormatAlert.id ||
+              (a.orderId == oldFormatAlert.orderId &&
+                  a.type == oldFormatAlert.type &&
+                  (oldFormatAlert.timestamp.difference(a.timestamp).inMinutes <
+                      2)),
+        );
+
+        if (!isDuplicate) {
+          _alerts.insert(0, oldFormatAlert);
+          notifyListeners();
+          print(
+            '✅ Cocinero: Alerta agregada (nuevo sistema) - Tipo: $alertType, Mesa: $tableNumber, Orden: $orderId (Total: ${_alerts.length})',
+          );
+        } else {
+          print(
+            '⚠️ Cocinero: Alerta duplicada ignorada (nuevo sistema) - Tipo: $alertType, Orden: $orderId',
+          );
+        }
+      } catch (e, stackTrace) {
+        print('❌ Error al procesar alerta del nuevo sistema: $e');
+        print('   Stack: $stackTrace');
+      }
+    });
+
+    // Escuchar errores del nuevo sistema
+    kitchenAlertsService.listenErrors((errorMessage, details) {
+      print('❌ Cocinero: Error en alerta (nuevo sistema): $errorMessage');
+      if (details != null) {
+        print('   Detalles: $details');
+      }
+    });
+
+    // ============================================
+    // SISTEMA VIEJO DE ALERTAS (DEPRECADO)
+    // ============================================
+    // TODO: Este listener se mantiene por compatibilidad, pero debería eliminarse
+    // después de verificar que el nuevo sistema funciona correctamente.
+    // Escuchar alertas de cocina en tiempo real (igual que cuenta.enviada)
+    // El mesero emite 'cocina.alerta' directamente y el backend lo re-emite a role:cocinero
     socketService.onCocinaAlerta((data) {
       try {
-        print('🔔 Cocinero: Alerta recibida vía Socket.IO');
-        print('   📋 Datos: $data');
+        print('🔔 Cocinero: Alerta recibida (cocina.alerta) - Datos: $data');
 
         // Extraer datos de la alerta
-        final metadata = data['metadata'] as Map<String, dynamic>? ?? {};
+        final dataMap = data is Map<String, dynamic>
+            ? data
+            : <String, dynamic>{};
+        final metadata = dataMap['metadata'] as Map<String, dynamic>? ?? {};
 
+        // Preferir mesaCodigo (número visible) sobre mesaId (ID de BD)
         final tableNumber =
-            data['mesaId']?.toString() ??
+            dataMap['mesaCodigo']?.toString() ??
             metadata['tableNumber']?.toString() ??
+            dataMap['mesaId']?.toString() ??
             'N/A';
         final orderId =
-            data['ordenId']?.toString() ??
+            dataMap['ordenId']?.toString() ??
             metadata['orderId']?.toString() ??
             'N/A';
 
         // Determinar el tipo de alerta
         String alertType =
+            dataMap['tipo']?.toString() ??
             metadata['alertType']?.toString() ??
-            data['tipo']?.toString().replaceAll('alerta.', '') ??
             'General';
+
+        // Remover prefijo 'alerta.' si existe
+        if (alertType.startsWith('alerta.')) {
+          alertType = alertType.replaceAll('alerta.', '');
+        }
 
         // Capitalizar primera letra
         if (alertType.isNotEmpty) {
           alertType = alertType[0].toUpperCase() + alertType.substring(1);
         }
 
+        // Mapear nombres de tipos
+        switch (alertType.toLowerCase()) {
+          case 'demora':
+            alertType = 'Demora';
+            break;
+          case 'cancelacion':
+          case 'cancelación':
+            alertType = 'Cancelación';
+            break;
+          case 'modificacion':
+          case 'modificación':
+            alertType = 'Cambio en orden';
+            break;
+          default:
+            alertType = alertType.isEmpty ? 'General' : alertType;
+        }
+
         // Extraer motivo y mensaje
-        final reason =
-            metadata['reason']?.toString() ??
-            data['mensaje']?.toString() ??
-            'Sin motivo especificado';
+        // El mensaje viene directamente en dataMap['mensaje'] desde el mesero
+        final mensaje = dataMap['mensaje']?.toString() ?? 'Sin mensaje';
         final details = metadata['details']?.toString();
 
         // Mapear prioridad
-        String priority = data['prioridad']?.toString() ?? 'media';
-        if (priority == 'urgente')
+        String priority = dataMap['prioridad']?.toString() ?? 'media';
+        if (priority == 'urgente' || priority == 'alta')
           priority = 'high';
         else if (priority == 'baja')
           priority = 'low';
         else
           priority = 'medium';
 
-        // Obtener información del emisor
-        final emisor = data['emisor'] as Map<String, dynamic>?;
-        final emisorNombre = emisor?['username']?.toString() ?? 'Sistema';
+        // Usar ID del backend si está disponible, sino generar uno único
+        final alertId =
+            dataMap['id']?.toString() ??
+            'ALT-${DateTime.now().millisecondsSinceEpoch}-${_alerts.length}';
 
-        final alert = KitchenAlert(
-          id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
+        final alert = OldKitchenAlert(
+          id: alertId,
           tableNumber: tableNumber,
           orderId: orderId,
           type: alertType,
-          reason: '$reason (enviado por $emisorNombre)',
+          reason: mensaje, // Usar el mensaje completo que viene del mesero
           details: details,
           priority: priority,
           timestamp: date_utils.AppDateUtils.parseToLocal(
-            data['timestamp'] ?? DateTime.now().toIso8601String(),
+            dataMap['timestamp'] ?? DateTime.now().toIso8601String(),
           ),
         );
 
-        _alerts.insert(0, alert);
-        notifyListeners();
-
-        print(
-          '✅ Cocinero: Alerta agregada - Tipo: $alertType, Mesa: $tableNumber, Orden: $orderId',
+        // Evitar duplicados si la alerta ya existe (por ID o por ordenId + tipo)
+        final isDuplicate = _alerts.any(
+          (a) =>
+              a.id == alert.id ||
+              (a.orderId == alert.orderId &&
+                  a.type == alert.type &&
+                  (alert.timestamp.difference(a.timestamp).inMinutes < 2)),
         );
+
+        if (!isDuplicate) {
+          _alerts.insert(0, alert);
+          notifyListeners();
+          print(
+            '✅ Cocinero: Alerta agregada - Tipo: $alertType, Mesa: $tableNumber, Orden: $orderId, Mensaje: $mensaje (Total: ${_alerts.length})',
+          );
+        } else {
+          print(
+            '⚠️ Cocinero: Alerta duplicada ignorada - Tipo: $alertType, Orden: $orderId',
+          );
+        }
       } catch (e, stackTrace) {
         print('❌ Error al procesar alerta de cocina: $e');
         print('   Stack: $stackTrace');
       }
     });
 
-    // Escuchar alertas de demora
-    socketService.onAlertaDemora((data) {
-      try {
-        final alert = KitchenAlert(
-          id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
-          tableNumber: data['mesaId']?.toString() ?? 'N/A',
-          orderId: data['ordenId']?.toString() ?? 'N/A',
-          type: 'Demora',
-          reason: data['mensaje']?.toString() ?? 'Orden con demora',
-          details: data['metadata']?['tiempoEspera']?.toString(),
-          priority: data['prioridad']?.toString() ?? 'Normal',
-          timestamp: date_utils.AppDateUtils.parseToLocal(
-            data['timestamp'] ?? DateTime.now().toIso8601String(),
-          ),
-        );
-        _alerts.insert(0, alert);
-        notifyListeners();
-      } catch (e) {
-        print('Error al procesar alerta de demora: $e');
-      }
-    });
-
-    // Escuchar alertas de cancelación
-    socketService.onAlertaCancelacion((data) {
-      try {
-        final alert = KitchenAlert(
-          id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
-          tableNumber: data['mesaId']?.toString() ?? 'N/A',
-          orderId: data['ordenId']?.toString() ?? 'N/A',
-          type: 'Cancelación',
-          reason: data['mensaje']?.toString() ?? 'Orden cancelada',
-          details: data['metadata']?['motivo']?.toString(),
-          priority: 'Urgente',
-          timestamp: date_utils.AppDateUtils.parseToLocal(
-            data['timestamp'] ?? DateTime.now().toIso8601String(),
-          ),
-        );
-        _alerts.insert(0, alert);
-        notifyListeners();
-      } catch (e) {
-        print('Error al procesar alerta de cancelación: $e');
-      }
-    });
+    // NOTA: Los listeners específicos (onAlertaDemora, onAlertaCancelacion)
+    // ya están cubiertos por el listener genérico onAlerta() arriba.
+    // Se mantienen comentados para evitar duplicados, pero se pueden activar
+    // si se necesita lógica específica para cada tipo de alerta.
 
     // Escuchar alertas de modificación
     // COMENTADO: No mostrar alertas visuales en cocinero cuando cambia el estado
@@ -314,7 +719,7 @@ class CocineroController extends ChangeNotifier {
     /*
     socketService.onAlertaModificacion((data) {
       try {
-        final alert = KitchenAlert(
+        final alert = OldKitchenAlert(
           id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
           tableNumber: data['mesaId']?.toString() ?? 'N/A',
           orderId: data['ordenId']?.toString() ?? 'N/A',
@@ -340,7 +745,7 @@ class CocineroController extends ChangeNotifier {
     /*
     socketService.onAlertaCocina((data) {
       try {
-        final alert = KitchenAlert(
+        final alert = OldKitchenAlert(
           id: 'ALT-${DateTime.now().millisecondsSinceEpoch}',
           tableNumber:
               data['mesaId']?.toString() ??
@@ -406,7 +811,7 @@ class CocineroController extends ChangeNotifier {
             // Agregar alerta si es urgente (prioridad alta)
             if (nuevaOrden.priority.toLowerCase() == OrderPriority.alta) {
               _alerts.add(
-                KitchenAlert(
+                OldKitchenAlert(
                   id: DateTime.now().millisecondsSinceEpoch.toString(),
                   tableNumber: nuevaOrden.tableNumber?.toString() ?? '0',
                   orderId: nuevaOrden.id.toString(),
@@ -430,99 +835,146 @@ class CocineroController extends ChangeNotifier {
     socketService.onOrderUpdated((data) {
       try {
         final ordenId = data['id'] as int?;
-        if (ordenId != null) {
-          final ordenIdStr = ordenId.toString();
-          final estadoNombre =
-              (data['estadoNombre'] as String?)?.toLowerCase() ?? '';
+        if (ordenId == null) return;
 
-          // Verificar si el estado es "listo" o similar
-          final esListo =
-              estadoNombre.contains('listo') ||
-              estadoNombre.contains('ready') ||
-              estadoNombre.contains('completada') ||
-              estadoNombre.contains('finalizada');
+        final ordenIdStr = ordenId.toString();
+        final formattedOrderId = 'ORD-${ordenIdStr.padLeft(6, '0')}';
+        final estadoNombre =
+            (data['estadoNombre'] as String?)?.toLowerCase() ?? '';
 
-          // Si es "listo", marcar como completada y eliminar de la lista
-          if (esListo) {
-            // Marcar como completada si no está ya marcada
-            if (!_completedOrderIds.contains(ordenIdStr)) {
-              _completedOrderIds.add(ordenIdStr);
-              _saveCompletedOrders().catchError((e) {
-                print('Error al guardar orden completada: $e');
-              }); // Guardar asíncronamente sin esperar
-            }
-            
-            // Eliminar de la lista (verificar por ID numérico y formato ORD-XXX)
-            final beforeCount = _orders.length;
-            _orders.removeWhere((o) {
-              final oId = o.id.replaceAll('ORD-', '');
-              return oId == ordenIdStr || o.id == ordenIdStr;
+        // PRIMERO: Verificar SIEMPRE si la orden ya existe en la lista
+        // Buscar por múltiples formatos de ID para asegurar que encontramos la orden
+        final index = _orders.indexWhere((o) {
+          final oId =
+              o.id
+                  .replaceAll('ORD-', '')
+                  .replaceAll(RegExp(r'^0+'), '') // Remover ceros iniciales
+                  .isEmpty
+              ? '0'
+              : o.id.replaceAll('ORD-', '').replaceAll(RegExp(r'^0+'), '');
+          final dataId = ordenIdStr.replaceAll(RegExp(r'^0+'), '');
+          return oId == dataId ||
+              o.id == ordenIdStr ||
+              o.id == formattedOrderId ||
+              oId == ordenIdStr;
+        });
+
+        // Verificar si el estado es "cancelada"
+        final esCancelada =
+            estadoNombre.contains('cancelada') ||
+            estadoNombre.contains('cancelado');
+
+        // Verificar si el estado es "listo" o similar
+        final esListo =
+            estadoNombre.contains('listo') ||
+            estadoNombre.contains('ready') ||
+            estadoNombre.contains('completada') ||
+            estadoNombre.contains('finalizada');
+
+        // Si es "cancelada" o "listo", marcar como completada y eliminar de la lista
+        if (esCancelada || esListo) {
+          // Marcar como completada si no está ya marcada
+          if (!_completedOrderIds.contains(ordenIdStr)) {
+            _completedOrderIds.add(ordenIdStr);
+            _saveCompletedOrders().catchError((e) {
+              print('Error al guardar orden completada: $e');
             });
-            final afterCount = _orders.length;
-            final removed = beforeCount - afterCount;
-            
-            if (removed > 0) {
-              print(
-                '🚫 Cocinero: Orden $ordenIdStr eliminada de la lista (estado: $estadoNombre)',
-              );
-              notifyListeners();
-            }
-            return; // No procesar más esta actualización
           }
 
-          // VERIFICAR si la orden ya fue completada previamente
-          if (_completedOrderIds.contains(ordenIdStr)) {
+          // Eliminar de la lista si existe
+          if (index != -1) {
+            _orders.removeAt(index);
+            notifyListeners();
             print(
-              '🚫 Cocinero: Actualización de orden $ordenIdStr ignorada porque ya fue completada previamente',
+              '🚫 Cocinero: Orden $ordenIdStr eliminada (estado: $estadoNombre)',
             );
-            // Asegurar que no esté en la lista
-            final beforeCount = _orders.length;
-            _orders.removeWhere((o) {
-              final oId = o.id.replaceAll('ORD-', '');
-              return oId == ordenIdStr || o.id == ordenIdStr;
-            });
-            final afterCount = _orders.length;
-            if (beforeCount > afterCount) {
-              notifyListeners();
-            }
-            return;
           }
+          return;
+        }
 
-          final index = _orders.indexWhere((o) {
-            final oId = o.id.replaceAll('ORD-', '');
-            return oId == ordenIdStr || o.id == ordenIdStr;
+        // VERIFICAR si la orden ya fue completada previamente (incluye canceladas)
+        if (_completedOrderIds.contains(ordenIdStr)) {
+          // Asegurar que no esté en la lista
+          if (index != -1) {
+            _orders.removeAt(index);
+            notifyListeners();
+          }
+          return;
+        }
+
+        // Verificar si la orden es relevante para cocina
+        final esRelevanteParaCocina =
+            !estadoNombre.contains('pagada') &&
+            !estadoNombre.contains('cancelada') &&
+            !estadoNombre.contains('cerrada') &&
+            !estadoNombre.contains('listo') &&
+            !estadoNombre.contains('ready') &&
+            !estadoNombre.contains('completada') &&
+            !estadoNombre.contains('finalizada');
+
+        if (index != -1) {
+          // La orden ya existe - solo actualizarla si es relevante
+          if (esRelevanteParaCocina) {
+            // Actualizar la orden existente sin duplicarla
+            _orders[index] = _mapBackendToOrderModel(
+              data as Map<String, dynamic>,
+            );
+            notifyListeners();
+            // NO loguear para evitar spam cuando hay múltiples eventos
+          } else {
+            // Si ya no es relevante para cocina, removerla
+            _orders.removeAt(index);
+            notifyListeners();
+          }
+          // IMPORTANTE: Retornar aquí SIEMPRE para evitar agregar duplicados
+          return;
+        }
+
+        // La orden NO existe - solo agregarla si es relevante para cocina
+        if (esRelevanteParaCocina) {
+          // Verificar UNA VEZ MÁS que no esté en la lista (protección contra race conditions)
+          final yaExiste = _orders.any((o) {
+            final oId =
+                o.id
+                    .replaceAll('ORD-', '')
+                    .replaceAll(RegExp(r'^0+'), '')
+                    .isEmpty
+                ? '0'
+                : o.id.replaceAll('ORD-', '').replaceAll(RegExp(r'^0+'), '');
+            final dataId = ordenIdStr.replaceAll(RegExp(r'^0+'), '');
+            return oId == dataId ||
+                o.id == ordenIdStr ||
+                o.id == formattedOrderId ||
+                oId == ordenIdStr;
           });
 
-          // Verificar si la orden es relevante para cocina
-          final esRelevanteParaCocina =
-              !estadoNombre.contains('pagada') &&
-              !estadoNombre.contains('cancelada') &&
-              !estadoNombre.contains('cerrada') &&
-              !estadoNombre.contains('listo') &&
-              !estadoNombre.contains('ready') &&
-              !estadoNombre.contains('completada') &&
-              !estadoNombre.contains('finalizada');
-
-          if (index != -1) {
-            if (esRelevanteParaCocina) {
-              _orders[index] = _mapBackendToOrderModel(
+          if (!yaExiste) {
+            _orders.add(_mapBackendToOrderModel(data as Map<String, dynamic>));
+            notifyListeners();
+            print(
+              '✅ Cocinero: Orden $ordenIdStr agregada desde pedido.actualizado',
+            );
+          } else {
+            // Si ya existe, solo actualizarla (no duplicar)
+            final existingIndex = _orders.indexWhere((o) {
+              final oId =
+                  o.id
+                      .replaceAll('ORD-', '')
+                      .replaceAll(RegExp(r'^0+'), '')
+                      .isEmpty
+                  ? '0'
+                  : o.id.replaceAll('ORD-', '').replaceAll(RegExp(r'^0+'), '');
+              final dataId = ordenIdStr.replaceAll(RegExp(r'^0+'), '');
+              return oId == dataId ||
+                  o.id == ordenIdStr ||
+                  o.id == formattedOrderId ||
+                  oId == ordenIdStr;
+            });
+            if (existingIndex != -1) {
+              _orders[existingIndex] = _mapBackendToOrderModel(
                 data as Map<String, dynamic>,
               );
               notifyListeners();
-            } else {
-              // Si ya no es relevante para cocina, removerla
-              _orders.removeAt(index);
-              notifyListeners();
-            }
-          } else if (esRelevanteParaCocina) {
-            // Si no existe y es relevante, agregarla SOLO si no está en completadas
-            if (!_completedOrderIds.contains(ordenIdStr)) {
-              _orders.add(_mapBackendToOrderModel(data as Map<String, dynamic>));
-              notifyListeners();
-            } else {
-              print(
-                '🚫 Cocinero: No se agrega orden $ordenIdStr porque ya está en completadas',
-              );
             }
           }
         }
@@ -536,21 +988,38 @@ class CocineroController extends ChangeNotifier {
       try {
         final ordenId = data['id'] as int?;
         if (ordenId != null) {
-          _orders.removeWhere((o) => o.id == ordenId.toString());
-          notifyListeners();
+          final normalizedId = ordenId.toString();
+          final formattedOrderId = 'ORD-${ordenId.toString().padLeft(6, '0')}';
 
-          // Agregar alerta de cancelación
-          _alerts.add(
-            KitchenAlert(
-              id: DateTime.now().millisecondsSinceEpoch.toString(),
-              tableNumber: '0',
-              orderId: ordenId.toString(),
-              type: 'Cancelación',
-              reason: 'La orden #$ordenId ha sido cancelada',
-              priority: 'high',
-              timestamp: DateTime.now(),
-            ),
+          // Marcar como completada para evitar que vuelva a aparecer
+          _completedOrderIds.add(normalizedId);
+          print(
+            '💾 Cocinero: Marcando orden $normalizedId como completada después de recibir evento de cancelación',
           );
+
+          // Guardar en storage
+          _saveCompletedOrders().catchError((e) {
+            print('❌ Cocinero: ERROR al guardar orden completada: $e');
+          });
+
+          // Eliminar de la lista (buscar por ID numérico o formato ORD-XXX)
+          final removedCount = _orders.length;
+          _orders.removeWhere((o) {
+            final orderIdStr = o.id.replaceAll('ORD-', '');
+            return orderIdStr == normalizedId ||
+                o.id == formattedOrderId ||
+                o.id == normalizedId;
+          });
+          final newCount = _orders.length;
+
+          if (removedCount != newCount) {
+            print(
+              '✅ Cocinero: Orden $formattedOrderId eliminada de la vista después de evento de cancelación (${removedCount - newCount} orden(es) eliminada(s))',
+            );
+          }
+
+          // NO agregar alerta de cancelación aquí porque ya la recibimos del mesero
+          // Solo eliminar la orden de la vista
           notifyListeners();
         }
       } catch (e) {
@@ -975,10 +1444,12 @@ class CocineroController extends ChangeNotifier {
         _orders.removeWhere((order) {
           // Eliminar por ID numérico o formato ORD-XXX
           final orderIdStr = order.id.replaceAll('ORD-', '');
-          return orderIdStr == normalizedId || order.id == orderId || order.id == orderIdStr;
+          return orderIdStr == normalizedId ||
+              order.id == orderId ||
+              order.id == orderIdStr;
         });
         final newCount = _orders.length;
-        
+
         if (removedCount != newCount) {
           print(
             '✅ Cocinero: Orden $orderId eliminada de la vista (${removedCount - newCount} orden(es) eliminada(s))',
@@ -1027,7 +1498,7 @@ class CocineroController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addAlert(KitchenAlert alert) {
+  void addAlert(OldKitchenAlert alert) {
     _alerts.insert(0, alert);
     notifyListeners();
   }
@@ -1041,11 +1512,65 @@ class CocineroController extends ChangeNotifier {
   // Cancelar orden
   Future<void> cancelOrder(String orderId, {String? reason}) async {
     try {
+      // Extraer el ID numérico de la orden (puede venir como "ORD-000070" o "70")
+      final ordenIdInt =
+          int.tryParse(orderId.replaceAll('ORD-', '')) ??
+          int.tryParse(orderId) ??
+          0;
+
+      if (ordenIdInt == 0) {
+        throw Exception('ID de orden inválido: $orderId');
+      }
+
       await updateOrderStatus(orderId, OrderStatus.cancelada);
+
       // Opcional: registrar la razón de cancelación si se proporciona
       if (reason != null && reason.isNotEmpty) {
         print('Orden $orderId cancelada. Razón: $reason');
       }
+
+      // IMPORTANTE: Eliminar la orden de la vista inmediatamente después de cancelar
+      // Similar a como se hace cuando se marca como "listo"
+      final normalizedId = ordenIdInt.toString();
+
+      // Marcar como completada para evitar que vuelva a aparecer
+      _completedOrderIds.add(normalizedId);
+      print(
+        '💾 Cocinero: Marcando orden $normalizedId como completada después de cancelar (original: $orderId)',
+      );
+
+      // Guardar en storage
+      try {
+        await _saveCompletedOrders();
+        print(
+          '✅ Cocinero: Orden $normalizedId guardada como completada en storage',
+        );
+      } catch (e) {
+        print('❌ Cocinero: ERROR al guardar orden completada: $e');
+      }
+
+      // Eliminar de la lista
+      final removedCount = _orders.length;
+      _orders.removeWhere((order) {
+        // Eliminar por ID numérico o formato ORD-XXX
+        final orderIdStr = order.id.replaceAll('ORD-', '');
+        return orderIdStr == normalizedId ||
+            order.id == orderId ||
+            order.id == normalizedId;
+      });
+      final newCount = _orders.length;
+
+      if (removedCount != newCount) {
+        print(
+          '✅ Cocinero: Orden $orderId eliminada de la vista después de cancelar (${removedCount - newCount} orden(es) eliminada(s))',
+        );
+      } else {
+        print(
+          '⚠️ Cocinero: Orden $orderId no se encontró en la lista para eliminar',
+        );
+      }
+
+      notifyListeners();
     } catch (e) {
       print('Error al cancelar orden: $e');
       rethrow;
@@ -1108,20 +1633,29 @@ class CocineroController extends ChangeNotifier {
   // Formatear tiempo transcurrido
   // IMPORTANTE: Usa hora CDMX para cálculos precisos
   String formatElapsedTime(DateTime orderTime) {
-    final now = date_utils.AppDateUtils.now(); // Usar hora CDMX
-    final localOrderTime = orderTime.isUtc ? orderTime.toLocal() : orderTime;
-    final elapsed = now.difference(localOrderTime);
+    // CRÍTICO: Usar SIEMPRE hora local (CDMX) para ambos valores
+    // El backend envía fechas MySQL datetime (formato local sin 'Z') que ya están en CDMX
+    // parseToLocal debería mantenerlas como locales, pero nos aseguramos aquí
 
-    // Si el tiempo es negativo, puede ser un error de parseo o zona horaria
+    // Obtener hora actual en local (CDMX)
+    final now = DateTime.now().toLocal();
+
+    // Convertir orderTime a local SIEMPRE (sin importar si viene marcado como UTC o local)
+    // Esto previene problemas de mezcla de zonas horarias
+    final orderTimeLocal = orderTime.toLocal();
+
+    // Calcular diferencia (ambos en hora local)
+    final elapsed = now.difference(orderTimeLocal);
+
+    // Si el tiempo es negativo, hay un error de parseo o la fecha es futura (error de datos)
     if (elapsed.isNegative) {
-      // Si es negativo pero muy pequeño (menos de 1 minuto), probablemente es un problema de zona horaria
+      // Si es negativo pero muy pequeño (menos de 1 minuto), probablemente es un problema de sincronización
       if (elapsed.inSeconds.abs() < 60) {
         return 'Recién creado';
       }
-      // Si es muy negativo, hay un error de parseo
-      print(
-        'ADVERTENCIA: Tiempo negativo detectado. orderTime: $orderTime, now: $now, diferencia: ${elapsed.inMinutes} min',
-      );
+      // Si es muy negativo, hay un error - la fecha de orden es futura o hay problema de parseo
+      // En este caso, retornar "Recién creado" en lugar de mostrar tiempo negativo
+      // No loguear en producción para evitar spam
       return 'Recién creado';
     }
 
@@ -1225,34 +1759,68 @@ class CocineroController extends ChangeNotifier {
     }
   }
 
-  void clearAlerts() {
+  Future<void> removeAlert(String alertId) async {
+    // Intentar marcar como leída en el backend si tiene ID numérico
+    try {
+      final alertaIdInt = int.tryParse(alertId);
+      if (alertaIdInt != null) {
+        final token = await _storage.read(key: 'accessToken');
+        if (token != null) {
+          final dio = Dio(
+            BaseOptions(
+              baseUrl: ApiConfig.baseUrl,
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            ),
+          );
+
+          await dio.patch('/alertas/$alertaIdInt/leida');
+          print('✅ Cocinero: Alerta $alertId marcada como leída en BD');
+        }
+      }
+    } catch (e) {
+      print('⚠️ Cocinero: Error al marcar alerta como leída (continuando): $e');
+      // Continuar aunque falle, es mejor eliminar la alerta localmente
+    }
+
+    // Eliminar de la lista local
+    _alerts.removeWhere((a) => a.id == alertId);
+    notifyListeners();
+  }
+
+  Future<void> clearAlerts() async {
+    // Marcar todas las alertas como leídas en el backend
+    try {
+      final token = await _storage.read(key: 'accessToken');
+      if (token != null) {
+        final dio = Dio(
+          BaseOptions(
+            baseUrl: ApiConfig.baseUrl,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          ),
+        );
+
+        await dio.post('/alertas/marcar-todas-leidas');
+        print('✅ Cocinero: Todas las alertas marcadas como leídas en BD');
+      }
+    } catch (e) {
+      print(
+        '⚠️ Cocinero: Error al marcar todas las alertas como leídas (continuando): $e',
+      );
+      // Continuar aunque falle
+    }
+
+    // Limpiar lista local
     _alerts.clear();
     notifyListeners();
   }
 
-  List<KitchenAlert> getAlertsByPriority(String priority) {
+  List<OldKitchenAlert> getAlertsByPriority(String priority) {
     return _alerts.where((alert) => alert.priority == priority).toList();
   }
-}
-
-class KitchenAlert {
-  final String id;
-  final String tableNumber;
-  final String orderId;
-  final String type;
-  final String reason;
-  final String? details;
-  final String priority;
-  final DateTime timestamp;
-
-  KitchenAlert({
-    required this.id,
-    required this.tableNumber,
-    required this.orderId,
-    required this.type,
-    required this.reason,
-    this.details,
-    required this.priority,
-    required this.timestamp,
-  });
 }

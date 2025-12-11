@@ -76,8 +76,9 @@ class AlertasService {
       };
 
       // Enviar al backend (guarda en BD)
+      // NOTA: baseUrl ya incluye /api, así que solo usar /alertas
       try {
-        await _dio.post('/api/alertas', data: payload);
+        await _dio.post('/alertas', data: payload);
       } catch (e) {
         print('Error al guardar alerta en backend: $e');
         // Continuar aunque falle el guardado en BD
@@ -93,6 +94,7 @@ class AlertasService {
         'prioridad': prioridad,
         'emisor': {'id': usuarioId, 'username': username},
         'timestamp': DateTime.now().toIso8601String(),
+        if (metadata != null) 'metadata': metadata,
       });
 
       print('Alerta enviada: $tipo - $mensaje');
@@ -294,6 +296,63 @@ class AlertasService {
       );
     } catch (e) {
       print('Error al enviar alerta desde modal: $e');
+      rethrow;
+    }
+  }
+
+  /// Enviar alerta a cocina desde mesero (endpoint específico)
+  /// Este método usa el endpoint POST /alertas/cocina que centraliza la creación y emisión
+  /// El backend obtiene la mesa real de la orden automáticamente
+  Future<Map<String, dynamic>> enviarAlertaACocina({
+    required int ordenId,
+    required String tipoAlerta, // 'alerta.demora', 'alerta.cancelacion', etc.
+    required String mensaje,
+  }) async {
+    try {
+      print('📤 AlertasService: Enviando alerta a cocina - OrdenId: $ordenId, Tipo: $tipoAlerta, Mensaje: $mensaje');
+      
+      // Mapear tipo al formato del backend
+      String tipoBackend = tipoAlerta.toLowerCase();
+      if (tipoBackend == 'cambio en orden' || tipoBackend == 'cambio') {
+        tipoBackend = 'alerta.modificacion';
+      } else if (tipoBackend == 'cancelación' || tipoBackend == 'cancelacion') {
+        tipoBackend = 'alerta.cancelacion';
+      } else if (tipoBackend == 'demora') {
+        tipoBackend = 'alerta.demora';
+      } else {
+        // Si no tiene prefijo 'alerta.', agregarlo
+        if (!tipoBackend.startsWith('alerta.')) {
+          tipoBackend = 'alerta.$tipoBackend';
+        }
+      }
+
+      // Preparar payload (NO incluir mesaId - el backend lo obtiene de la orden)
+      final payload = {
+        'ordenId': ordenId,
+        'tipo': tipoBackend,
+        'mensaje': mensaje.trim(),
+      };
+
+      print('📤 AlertasService: Payload: $payload');
+      print('📤 AlertasService: URL: /alertas/cocina (baseUrl ya incluye /api)');
+
+      // Hacer POST a "/alertas/cocina" (baseUrl ya incluye /api)
+      final response = await _dio.post('/alertas/cocina', data: payload);
+
+      print('✅ AlertasService: Alerta enviada exitosamente - Status: ${response.statusCode}');
+
+      if (response.statusCode == 201) {
+        final responseData = response.data;
+        final alertaData = responseData['data'] as Map<String, dynamic>? ?? responseData;
+        
+        print('✅ AlertasService: Alerta creada - ID: ${alertaData['id']}');
+        
+        return alertaData;
+      } else {
+        throw Exception('Error al enviar alerta: Status ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ Error al enviar alerta a cocina: $e');
       rethrow;
     }
   }

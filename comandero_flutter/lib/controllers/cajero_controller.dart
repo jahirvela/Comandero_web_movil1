@@ -76,13 +76,37 @@ class CajeroController extends ChangeNotifier {
       }
     });
 
-    // Escuchar actualizaciones de órdenes - refrescar desde backend
+    // Escuchar actualizaciones de órdenes
+    // CRÍTICO: NO refrescar automáticamente porque podría eliminar bills pendientes de pago
+    // Los bills creados vía cuenta.enviada se mantienen hasta que se procese el pago real
+    // Solo agregar nuevas bills si hay una orden nueva, pero NO eliminar las existentes
     socketService.onOrderUpdated((data) {
       try {
-        print('📄 Cajero: Orden actualizada, refrescando bills...');
-        refreshBills();
+        final ordenId = data['ordenId'] as int?;
+        final estadoNombre = (data['estadoNombre'] as String?)?.toLowerCase() ?? '';
+        print('📄 Cajero: Orden $ordenId actualizada a estado: $estadoNombre');
+        
+        // CRÍTICO: NO refrescar automáticamente las bills desde el backend
+        // porque esto podría eliminar bills pendientes que aún no se han cobrado
+        // Las bills solo deben eliminarse cuando se procese el pago (onPaymentCreated)
+        // o cuando se cancele explícitamente la orden
+        if (estadoNombre.contains('cancel')) {
+          // Solo si la orden fue cancelada, eliminar el bill correspondiente
+          final billToRemove = _bills.firstWhere(
+            (b) => b.ordenId == ordenId && b.status == BillStatus.pending,
+            orElse: () => throw StateError('No bill found'),
+          );
+          _billRepository.removeBill(billToRemove.id);
+          _bills = _billRepository.pendingBills;
+          notifyListeners();
+          print('✅ Cajero: Bill eliminado por cancelación de orden $ordenId');
+        }
+        // NO refrescar en otros casos para evitar eliminar bills pendientes
       } catch (e) {
-        print('Error al procesar actualización de orden en cajero: $e');
+        // Si no se encuentra el bill, no hacer nada (puede que ya fue eliminado)
+        if (e is! StateError) {
+          print('Error al procesar actualización de orden en cajero: $e');
+        }
       }
     });
 
@@ -108,18 +132,7 @@ class CajeroController extends ChangeNotifier {
       }
     });
 
-    // Escuchar eventos de pagos
-    socketService.onPaymentCreated((data) {
-      try {
-        // Recargar pagos cuando se crea un nuevo pago
-        _payments = List.from(_paymentRepository.payments);
-        _bills = _billRepository.pendingBills;
-        notifyListeners();
-      } catch (e) {
-        print('Error al procesar pago creado en cajero: $e');
-      }
-    });
-
+    // Escuchar eventos de pagos actualizados (NO duplicar con onPaymentCreated de más abajo)
     socketService.onPaymentUpdated((data) {
       try {
         // Recargar pagos cuando se actualiza un pago
@@ -158,6 +171,53 @@ class CajeroController extends ChangeNotifier {
         notifyListeners();
       } catch (e) {
         print('Error al procesar actualización de cierre en cajero: $e');
+      }
+    });
+
+    // Escuchar cuando se crea un pago (desde el backend después del cobro)
+    // IMPORTANTE: Este listener se ejecuta cuando realmente se procesa un pago,
+    // NO cuando solo se imprime un ticket. Aquí SÍ debemos eliminar el bill.
+    socketService.onPaymentCreated((data) {
+      try {
+        final ordenId = data['ordenId'] as int?;
+        final billId = data['billId'] as String?;
+
+        // Actualizar lista de pagos primero
+        _payments = List.from(_paymentRepository.payments);
+
+        if (ordenId != null) {
+          print('💳 Cajero: Pago creado recibido - Orden $ordenId (procesando eliminación de bill)');
+
+          // Eliminar bill por ordenId o billId SOLO cuando realmente se procesó el pago
+          if (billId != null) {
+            _billRepository.removeBill(billId);
+            print('✅ Cajero: Bill eliminado por billId: $billId');
+          } else {
+            // Buscar bill por ordenId
+            try {
+              final billToRemove = _bills.firstWhere(
+                (b) => b.ordenId == ordenId && b.status == BillStatus.pending,
+              );
+              _billRepository.removeBill(billToRemove.id);
+              print('✅ Cajero: Bill eliminado por ordenId: $ordenId (billId: ${billToRemove.id})');
+            } catch (e) {
+              print('⚠️ Cajero: No se encontró bill pendiente para orden $ordenId (puede haber sido eliminado previamente)');
+            }
+          }
+
+          // Actualizar _bills y notificar
+          _bills = _billRepository.pendingBills;
+          notifyListeners();
+
+          print('✅ Cajero: Bill eliminado después del cobro - Orden $ordenId');
+        } else {
+          // Si no hay ordenId, solo actualizar la lista de pagos
+          notifyListeners();
+        }
+      } catch (e) {
+        print('⚠️ Cajero: Error al procesar pago creado: $e');
+        // NO refrescar automáticamente - solo refrescar manualmente si es necesario
+        // refreshBills() podría eliminar bills pendientes incorrectamente
       }
     });
 
@@ -243,14 +303,45 @@ class CajeroController extends ChangeNotifier {
   }
 
   /// Refrescar bills desde el backend (método público para llamar manualmente)
+  /// IMPORTANTE: Este método solo agrega nuevas bills, NO elimina las existentes pendientes
+  /// Las bills solo se eliminan cuando se procesa el pago o se cancela la orden
   Future<void> refreshBills() async {
     try {
-      print('🔄 Cajero: Refrescando bills desde backend...');
+      print('🔄 Cajero: Refrescando bills desde backend (solo agregando nuevas, preservando pendientes)...');
+      
+      // Guardar las bills pendientes existentes antes de cargar
+      final billsPendientesExistentes = _bills.where(
+        (b) => b.status == BillStatus.pending
+      ).toList();
+      
+      // Cargar bills desde el backend (esto puede agregar nuevas, pero preservará las pendientes)
       await _billRepository.loadBills();
+      
+      // Obtener todas las bills después de cargar
+      final todasLasBills = _billRepository.bills;
+      
+      // CRÍTICO: Restaurar bills pendientes que fueron eliminadas incorrectamente
+      // Esto asegura que las bills creadas vía cuenta.enviada no desaparezcan
+      int billsRestauradas = 0;
+      for (final billExistente in billsPendientesExistentes) {
+        // Verificar si la bill ya no existe en el repositorio
+        if (!todasLasBills.any((b) => b.id == billExistente.id)) {
+          // Esta bill pendiente fue eliminada incorrectamente, restaurarla
+          _billRepository.addBill(billExistente);
+          billsRestauradas++;
+          print('🔄 Cajero: Restaurando bill pendiente eliminada: ${billExistente.id}');
+        }
+      }
+      
+      // Actualizar la lista de bills
       _bills = _billRepository.pendingBills;
       notifyListeners();
+      
+      if (billsRestauradas > 0) {
+        print('✅ Cajero: $billsRestauradas bills pendientes restauradas');
+      }
       print(
-        '✅ Cajero: ${_bills.length} bills cargados (${_bills.map((b) => b.id).join(", ")})',
+        '✅ Cajero: ${_bills.length} bills pendientes (${_bills.map((b) => b.id).join(", ")})',
       );
     } catch (e, stackTrace) {
       print('❌ Error al refrescar bills: $e');
@@ -432,6 +523,10 @@ class CajeroController extends ChangeNotifier {
         );
       }
 
+      // CRÍTICO: Extraer todos los ordenIds si es una cuenta agrupada
+      final ordenIdsCompletos = bill.ordenIdsFromBillIdInt;
+      final esCuentaAgrupada = ordenIdsCompletos.length > 1;
+
       // Preparar datos del pago para el backend
       // Validar que los datos requeridos estén presentes
       if (ordenId <= 0) {
@@ -447,22 +542,30 @@ class CajeroController extends ChangeNotifier {
       // Construir pagoData - asegurar tipos correctos
       // El backend espera números para ordenId, formaPagoId y monto
       final pagoData = <String, dynamic>{
-        'ordenId': ordenId, // Ya es int
+        'ordenId': ordenId, // Orden principal
         'formaPagoId': formaPagoId, // Ya es int
-        'monto': payment.totalAmount.toDouble(), // Asegurar que sea double
+        'monto': payment.totalAmount.toDouble(), // Monto total de la cuenta agrupada
         'estado': 'aplicado',
       };
+
+      // Si es cuenta agrupada, incluir todos los ordenIds para que el backend procese todas las órdenes
+      if (esCuentaAgrupada) {
+        pagoData['ordenIds'] = ordenIdsCompletos;
+        print('💳 Cajero: Procesando pago de cuenta agrupada - ${ordenIdsCompletos.length} órdenes: $ordenIdsCompletos');
+      }
 
       // Agregar fechaPago en formato ISO datetime válido
       // IMPORTANTE: payment.timestamp ya está en CDMX, convertir a UTC para el backend
       // El backend espera formato ISO 8601 con timezone UTC (ej: 2024-01-01T12:00:00.000Z)
-      final fechaUtc = payment.timestamp.isUtc 
-          ? payment.timestamp 
+      final fechaUtc = payment.timestamp.isUtc
+          ? payment.timestamp
           : payment.timestamp.toUtc();
       final fechaIso = fechaUtc.toIso8601String();
       // Asegurar que tenga timezone Z para UTC
       if (!fechaIso.endsWith('Z')) {
-        pagoData['fechaPago'] = fechaIso.endsWith('Z') ? fechaIso : '${fechaIso}Z';
+        pagoData['fechaPago'] = fechaIso.endsWith('Z')
+            ? fechaIso
+            : '${fechaIso}Z';
       } else {
         pagoData['fechaPago'] = fechaIso;
       }
@@ -515,13 +618,19 @@ class CajeroController extends ChangeNotifier {
       _paymentRepository.addPayment(payment);
       _billRepository.removeBill(payment.billId);
 
+      // Actualizar _bills inmediatamente después de eliminar
+      _bills = _billRepository.pendingBills;
+      notifyListeners();
+
       // Recargar bills desde el backend para asegurar sincronización
       await _billRepository.loadBills();
+      _bills = _billRepository.pendingBills;
 
       // Emitir evento Socket para notificar al admin en tiempo real
       final socketService = SocketService();
       socketService.emit('pago.creado', {
         'ordenId': ordenId,
+        'ordenIds': esCuentaAgrupada ? ordenIdsCompletos : null, // Incluir todos los ordenIds si es cuenta agrupada
         'billId': payment.billId,
         'monto': payment.totalAmount,
         'metodoPago': payment.type,
@@ -532,7 +641,7 @@ class CajeroController extends ChangeNotifier {
         'timestamp': payment.timestamp.toIso8601String(),
         'tableNumber': payment.tableNumber,
       });
-      print('📢 Cajero: Evento pago.creado emitido para orden $ordenId');
+      print('📢 Cajero: Evento pago.creado emitido para orden $ordenId${esCuentaAgrupada ? ' (cuenta agrupada: ${ordenIdsCompletos.length} órdenes)' : ''}');
 
       notifyListeners();
       // Los pagos ya están guardados en la BD a través del servicio
@@ -549,18 +658,37 @@ class CajeroController extends ChangeNotifier {
     String? paymentId,
     int? ordenId,
   }) async {
+    // Obtener el bill para verificar si es una cuenta agrupada
+    final bill = _billRepository.getBill(billId);
+    
     // Si hay ordenId, imprimir el ticket en el backend
-    if (ordenId != null) {
+    if (ordenId != null || bill != null) {
       try {
         final ticketsService = TicketsService();
-        final result = await ticketsService.imprimirTicket(
-          ordenId: ordenId,
-          incluirCodigoBarras: true,
-        );
+        
+        // Extraer todos los ordenIds del billId si es una cuenta agrupada
+        final ordenIdsCompletos = <int>[];
+        if (bill != null) {
+          ordenIdsCompletos.addAll(bill.ordenIdsFromBillIdInt);
+        }
+        
+        // Si no se pudieron extraer del billId pero tenemos ordenId, usarlo
+        final ordenIdPrincipal = ordenId ?? (ordenIdsCompletos.isNotEmpty ? ordenIdsCompletos.first : null);
+        
+        if (ordenIdPrincipal != null) {
+          // Si hay múltiples ordenIds (cuenta agrupada), enviarlos todos para que el ticket muestre todos los productos
+          final result = await ticketsService.imprimirTicket(
+            ordenId: ordenIdPrincipal,
+            ordenIds: ordenIdsCompletos.length > 1 ? ordenIdsCompletos : null,
+            incluirCodigoBarras: true,
+          );
 
-        if (!result['success']) {
-          print('Error al imprimir ticket: ${result['error']}');
-          // Continuar de todas formas para marcar como impreso localmente
+          if (!result['success']) {
+            print('Error al imprimir ticket: ${result['error']}');
+            // Continuar de todas formas para marcar como impreso localmente
+          } else {
+            print('✅ Cajero: Ticket impreso correctamente${ordenIdsCompletos.length > 1 ? ' (${ordenIdsCompletos.length} órdenes agrupadas)' : ''}');
+          }
         }
       } catch (e) {
         print('Error al imprimir ticket: $e');

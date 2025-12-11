@@ -196,7 +196,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 20),
 
-                        // Grid de roles - más compacto y llamativo
+                        // Grid de roles - más compacto y llamativo (optimizado con const)
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
@@ -216,6 +216,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
                                 'Roles del sistema',
@@ -234,31 +235,31 @@ class _LoginScreenState extends State<LoginScreen> {
                                 childAspectRatio: 2.8,
                                 crossAxisSpacing: 6,
                                 mainAxisSpacing: 6,
-                                children: [
-                                  _buildRoleCard(
-                                    'mesero',
-                                    Icons.person,
-                                    const Color(0xFFFF6B35),
+                                children: const [
+                                  _RoleCard(
+                                    role: 'mesero',
+                                    icon: Icons.person,
+                                    color: Color(0xFFFF6B35),
                                   ),
-                                  _buildRoleCard(
-                                    'cocina',
-                                    Icons.restaurant_menu,
-                                    const Color(0xFFFF6B35),
+                                  _RoleCard(
+                                    role: 'cocina',
+                                    icon: Icons.restaurant_menu,
+                                    color: Color(0xFFFF6B35),
                                   ),
-                                  _buildRoleCard(
-                                    'admin',
-                                    Icons.settings,
-                                    const Color(0xFF4CAF50),
+                                  _RoleCard(
+                                    role: 'admin',
+                                    icon: Icons.settings,
+                                    color: Color(0xFF4CAF50),
                                   ),
-                                  _buildRoleCard(
-                                    'cajero',
-                                    Icons.calculate,
-                                    const Color(0xFF2196F3),
+                                  _RoleCard(
+                                    role: 'cajero',
+                                    icon: Icons.calculate,
+                                    color: Color(0xFF2196F3),
                                   ),
-                                  _buildRoleCard(
-                                    'capitan',
-                                    Icons.shield,
-                                    const Color(0xFF8B5CF6),
+                                  _RoleCard(
+                                    role: 'capitan',
+                                    icon: Icons.shield,
+                                    color: Color(0xFF8B5CF6),
                                     isWide: true,
                                   ),
                                 ],
@@ -420,12 +421,24 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildRoleCard(
-    String role,
-    IconData icon,
-    Color color, {
-    bool isWide = false,
-  }) {
+}
+
+/// Widget optimizado con const para roles en login
+class _RoleCard extends StatelessWidget {
+  final String role;
+  final IconData icon;
+  final Color color;
+  final bool isWide;
+
+  const _RoleCard({
+    required this.role,
+    required this.icon,
+    required this.color,
+    this.isWide = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(

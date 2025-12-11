@@ -107,27 +107,31 @@ class MeseroController extends ChangeNotifier {
 
       // 2. Cargar mesas y productos en paralelo (operaciones pesadas)
       // Hacer esto en background para no bloquear la UI
-      Future.wait([
-        _initializeTables(),
-        _loadProductsAndCategories(),
-      ]).then((_) {
-        notifyListeners();
-        
-        // 3. DESPUÉS cargar historial de para llevar (para que el filtro funcione)
-        loadTakeawayOrderHistory().then((_) {
-          notifyListeners();
-          
-          // 4. Cargar historial de todas las mesas con órdenes activas
-          _loadAllTablesHistory().then((_) {
+      Future.wait([_initializeTables(), _loadProductsAndCategories()])
+          .then((_) {
             notifyListeners();
-          });
-        });
-      }).catchError((e) {
-        print('Error cargando datos iniciales: $e');
-      });
 
-      // 5. CONECTAR Socket.IO en background (no bloquear)
-      _connectSocketInBackground();
+            // 3. DESPUÉS cargar historial de para llevar (para que el filtro funcione)
+            loadTakeawayOrderHistory().then((_) {
+              notifyListeners();
+
+              // 4. Cargar historial de todas las mesas con órdenes activas
+              _loadAllTablesHistory().then((_) {
+                notifyListeners();
+              });
+            });
+          })
+          .catchError((e) {
+            print('Error cargando datos iniciales: $e');
+          });
+
+      // 5. Socket.IO ya se conecta en AuthController.login()
+      // NO conectar aquí para evitar conexiones duplicadas
+      // Configurar listeners después de un breve delay para asegurar que el socket esté conectado
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        _setupSocketListeners();
+        print('✅ Mesero: Listeners de Socket.IO configurados');
+      });
 
       // 6. Cargar flags y notificaciones en background (no crítico)
       _loadClearedHistoryFlags()
@@ -161,24 +165,9 @@ class MeseroController extends ChangeNotifier {
     }
   }
 
-  // Conectar Socket.IO en background sin bloquear
-  Future<void> _connectSocketInBackground() async {
-    print('🔌 Mesero: Conectando Socket.IO en background...');
-    try {
-      final socketService = SocketService();
-      if (!socketService.isConnected) {
-        await socketService.connect();
-        print('✅ Mesero: Socket.IO conectado exitosamente');
-        // Configurar listeners después de conectar
-        _setupSocketListeners();
-      } else {
-        print('✅ Mesero: Socket.IO ya estaba conectado');
-        _setupSocketListeners();
-      }
-    } catch (e) {
-      print('⚠️ Mesero: Error al conectar Socket.IO (continuando): $e');
-    }
-  }
+  // ELIMINADO: Ya no se conecta Socket.IO aquí porque AuthController.login() 
+  // ya maneja la conexión. Esto evita conexiones duplicadas que causaban
+  // problemas de autenticación con usuarios incorrectos.
 
   // Cargar notificaciones limpiadas desde storage
   Future<void> _loadClearedNotifications() async {
@@ -270,9 +259,18 @@ class MeseroController extends ChangeNotifier {
           } else if (mensajeLower.contains('listo')) {
             tipo = 'listo';
             estado = 'listo';
+          } else if (mensajeLower.contains('cancel') || mensajeLower.contains('cancelación') || mensajeLower.contains('cancelado')) {
+            tipo = 'cancelada';
+            estado = 'cancelada';
           }
         } else {
-          tipo = estado == 'preparacion' ? 'preparacion' : 'listo';
+          if (estado == 'preparacion') {
+            tipo = 'preparacion';
+          } else if (estado == 'cancelada' || estado == 'cancelado') {
+            tipo = 'cancelada';
+          } else {
+            tipo = 'listo';
+          }
         }
 
         // Verificar si la notificación ya fue limpiada
@@ -295,6 +293,10 @@ class MeseroController extends ChangeNotifier {
         if (estado == 'preparacion') {
           tituloNotificacion = 'Pedido en Preparación';
           mensajeNotificacion = mensaje;
+        } else if (estado == 'cancelada' || estado == 'cancelado' || tipo == 'cancelada') {
+          // Es cancelación
+          tituloNotificacion = '❌ Orden Cancelada';
+          mensajeNotificacion = mensaje; // Usar el mensaje completo que incluye "Cocinero canceló..."
         } else {
           // Es "listo"
           if (isTakeaway) {
@@ -559,8 +561,12 @@ class MeseroController extends ChangeNotifier {
             }
           });
 
-          // Si no se encontró y es para llevar, recargar historial de takeaway
-          if (!ordenActualizada && mesaId == null && !esEstadoFinalizado) {
+          // Si es para llevar y estado finalizado, recargar historial de takeaway
+          if (mesaId == null && esEstadoFinalizado) {
+            await loadTakeawayOrderHistory();
+          } else if (!ordenActualizada &&
+              mesaId == null &&
+              !esEstadoFinalizado) {
             await loadTakeawayOrderHistory();
           }
 
@@ -624,16 +630,60 @@ class MeseroController extends ChangeNotifier {
     });
 
     // Escuchar cancelaciones de órdenes
-    socketService.onOrderCancelled((data) {
+    socketService.onOrderCancelled((data) async {
       try {
         final ordenId = data['id'] as int?;
+        final mesaId = data['mesaId'] as int?;
+
+        print('🔔 Mesero: Orden cancelada recibida - OrdenId: $ordenId, MesaId: $mesaId');
 
         if (ordenId != null) {
-          // Remover de todos los historiales
+          // Remover de todos los historiales INMEDIATAMENTE (para que desaparezca de la UI al instante)
+          String? mesaKeyRemovida;
+          
           _tableOrderHistory.forEach((tableId, orders) {
+            final antes = orders.length;
             orders.removeWhere((order) => order['ordenId'] == ordenId);
+            if (orders.length < antes) {
+              mesaKeyRemovida = tableId;
+              print('🗑️ Mesero: Orden $ordenId removida del historial de mesa/tableId: $tableId');
+            }
           });
+          
+          // Si es una orden para llevar, también remover del historial de takeaway
+          if (mesaId == null) {
+            // Buscar en historiales de takeaway
+            _tableOrderHistory.forEach((tableId, orders) {
+              if (tableId.startsWith('takeaway-') || tableId == 'takeaway-all') {
+                final antes = orders.length;
+                orders.removeWhere((order) => order['ordenId'] == ordenId);
+                if (orders.length < antes) {
+                  print('🗑️ Mesero: Orden $ordenId removida del historial de takeaway: $tableId');
+                }
+              }
+            });
+          }
+          
           notifyListeners();
+
+          // Recargar historial desde el backend para asegurar que la orden cancelada no vuelva a aparecer
+          // Esto es importante especialmente si la orden estaba "en medio" del historial
+          if (mesaId != null && mesaKeyRemovida != null) {
+            try {
+              await loadTableOrderHistory(mesaId);
+              print('✅ Mesero: Historial de mesa $mesaId recargado después de cancelación');
+            } catch (e) {
+              print('⚠️ Mesero: Error al recargar historial después de cancelación: $e');
+            }
+          } else if (mesaId == null) {
+            // Es orden para llevar, recargar historial de takeaway
+            try {
+              await loadTakeawayOrderHistory();
+              print('✅ Mesero: Historial de takeaway recargado después de cancelación');
+            } catch (e) {
+              print('⚠️ Mesero: Error al recargar historial de takeaway después de cancelación: $e');
+            }
+          }
 
           addNotification(
             '❌ Orden Cancelada',
@@ -644,6 +694,78 @@ class MeseroController extends ChangeNotifier {
         }
       } catch (e) {
         print('Error al procesar cancelación de orden: $e');
+      }
+    });
+
+    // Escuchar alertas de cancelación específicas (incluye cuando cocinero cancela)
+    socketService.onAlertaCancelacion((data) async {
+      try {
+        final ordenId = data['ordenId'] as int?;
+        final mensaje = data['mensaje'] as String? ?? 'Orden cancelada';
+        final emisor = data['emisor'] as Map<String, dynamic>?;
+        final rolEmisor = emisor?['rol'] as String?;
+        final mesaId = data['mesaId'] as int?;
+
+        print('🔔 Mesero: Alerta de cancelación recibida - OrdenId: $ordenId, Mensaje: $mensaje, Emisor: $rolEmisor, MesaId: $mesaId');
+
+        if (ordenId != null) {
+          // Remover de todos los historiales INMEDIATAMENTE (para que desaparezca de la UI al instante)
+          String? mesaKeyRemovida;
+          
+          _tableOrderHistory.forEach((tableId, orders) {
+            final antes = orders.length;
+            orders.removeWhere((order) => order['ordenId'] == ordenId);
+            if (orders.length < antes) {
+              mesaKeyRemovida = tableId;
+              print('🗑️ Mesero: Orden $ordenId removida del historial de mesa/tableId: $tableId');
+            }
+          });
+          
+          // Si es una orden para llevar, también remover del historial de takeaway
+          if (mesaId == null) {
+            // Buscar en historiales de takeaway
+            _tableOrderHistory.forEach((tableId, orders) {
+              if (tableId.startsWith('takeaway-') || tableId == 'takeaway-all') {
+                final antes = orders.length;
+                orders.removeWhere((order) => order['ordenId'] == ordenId);
+                if (orders.length < antes) {
+                  print('🗑️ Mesero: Orden $ordenId removida del historial de takeaway: $tableId');
+                }
+              }
+            });
+          }
+          
+          notifyListeners();
+
+          // Recargar historial desde el backend para asegurar que la orden cancelada no vuelva a aparecer
+          // Esto es importante especialmente si la orden estaba "en medio" del historial
+          if (mesaId != null && mesaKeyRemovida != null) {
+            try {
+              await loadTableOrderHistory(mesaId);
+              print('✅ Mesero: Historial de mesa $mesaId recargado después de cancelación');
+            } catch (e) {
+              print('⚠️ Mesero: Error al recargar historial después de cancelación: $e');
+            }
+          } else if (mesaId == null) {
+            // Es orden para llevar, recargar historial de takeaway
+            try {
+              await loadTakeawayOrderHistory();
+              print('✅ Mesero: Historial de takeaway recargado después de cancelación');
+            } catch (e) {
+              print('⚠️ Mesero: Error al recargar historial de takeaway después de cancelación: $e');
+            }
+          }
+
+          // Usar el mensaje específico de la alerta (ya incluye "Cocinero canceló la orden X" si fue cocinero)
+          addNotification(
+            '❌ Orden Cancelada',
+            mensaje,
+            ordenId: ordenId,
+            tipo: 'cancelada',
+          );
+        }
+      } catch (e) {
+        print('Error al procesar alerta de cancelación: $e');
       }
     });
 
@@ -1880,15 +2002,13 @@ class MeseroController extends ChangeNotifier {
       final ordenesActivas = ordenesEstaMesa.where((o) {
         final ordenData = o as Map<String, dynamic>;
         final ordenId = ordenData['id'] as int? ?? 0;
-        
+
         // Excluir órdenes ya enviadas al cajero (registro local)
         if (ordenId != 0 && _sentToCashierOrders.contains(ordenId)) {
-          print(
-            '🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)',
-          );
+          print('🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)');
           return false;
         }
-        
+
         final estadoNombre =
             (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
 
@@ -1916,12 +2036,10 @@ class MeseroController extends ChangeNotifier {
         final ordenId = ordenData['id'] as int?;
 
         if (ordenId == null) continue;
-        
+
         // Excluir órdenes ya enviadas al cajero (registro local)
         if (_sentToCashierOrders.contains(ordenId)) {
-          print(
-            '🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)',
-          );
+          print('🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)');
           continue;
         }
 
@@ -1996,7 +2114,7 @@ class MeseroController extends ChangeNotifier {
       for (final ordenLocal in historialLocal) {
         final ordenIdLocal = ordenLocal['ordenId'] as int?;
         if (ordenIdLocal == null) continue;
-        
+
         // Excluir órdenes ya enviadas al cajero (registro local)
         if (_sentToCashierOrders.contains(ordenIdLocal)) {
           continue;
@@ -2133,15 +2251,19 @@ class MeseroController extends ChangeNotifier {
         // Filtrar por mismo cliente (nombre y teléfono)
         final orderCustomerName = order['customerName'] as String? ?? '';
         final orderCustomerPhone = order['customerPhone'] as String? ?? '';
-        
-        final nombreCoincide = (clienteNombre?.toLowerCase().trim() ?? '') ==
+
+        final nombreCoincide =
+            (clienteNombre?.toLowerCase().trim() ?? '') ==
             (orderCustomerName.toLowerCase().trim());
-        final telefonoCoincide = (clienteTelefono?.trim() ?? '') ==
-            (orderCustomerPhone.trim());
-        
+        final telefonoCoincide =
+            (clienteTelefono?.trim() ?? '') == (orderCustomerPhone.trim());
+
         // Coincide si el nombre coincide Y (el teléfono coincide O ambos están vacíos)
-        final esMismoCliente = nombreCoincide && 
-            (telefonoCoincide || (clienteTelefono?.isEmpty ?? true && orderCustomerPhone.isEmpty));
+        final esMismoCliente =
+            nombreCoincide &&
+            (telefonoCoincide ||
+                (clienteTelefono?.isEmpty ??
+                    true && orderCustomerPhone.isEmpty));
 
         if (!esMismoCliente) return false;
 
@@ -2206,8 +2328,10 @@ class MeseroController extends ChangeNotifier {
             final ordenData = await _ordenesService.getOrden(ordenIdActual);
             if (ordenData != null) {
               // Acumular descuentos y propinas de todas las órdenes
-              final descuentoOrden = (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
-              final propinaOrden = (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+              final descuentoOrden =
+                  (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+              final propinaOrden =
+                  (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
               descuentoTotal += descuentoOrden;
               propinaSugerida += propinaOrden;
 
@@ -2225,8 +2349,11 @@ class MeseroController extends ChangeNotifier {
               final createdAt = ordenData['creadoEn'] as String?;
               if (createdAt != null) {
                 try {
-                  final fechaCreacion = date_utils.AppDateUtils.parseToLocal(createdAt);
-                  if (fechaCreacionMasAntigua == null || fechaCreacion.isBefore(fechaCreacionMasAntigua)) {
+                  final fechaCreacion = date_utils.AppDateUtils.parseToLocal(
+                    createdAt,
+                  );
+                  if (fechaCreacionMasAntigua == null ||
+                      fechaCreacion.isBefore(fechaCreacionMasAntigua)) {
                     fechaCreacionMasAntigua = fechaCreacion;
                   }
                 } catch (e) {
@@ -2239,9 +2366,17 @@ class MeseroController extends ChangeNotifier {
                 final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
                 final precioUnitario =
                     (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-                final totalLinea =
-                    (item['totalLinea'] as num?)?.toDouble() ??
-                    (precioUnitario * cantidad);
+                
+                // CRÍTICO: Calcular totalLinea siempre como cantidad × precioUnitario
+                // Si totalLinea viene del backend como 0 o incorrecto, recalcular
+                final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+                final totalLineaCalculado = precioUnitario * cantidad;
+                
+                // Usar el cálculo si el backend viene con 0 o si el calculado es diferente (tolerancia de 0.01)
+                final totalLinea = (totalLineaBackend <= 0.01 || (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
+                    ? totalLineaCalculado
+                    : totalLineaBackend;
+                
                 totalConsumo += totalLinea;
 
                 allBillItems.add(
@@ -2334,7 +2469,9 @@ class MeseroController extends ChangeNotifier {
           'discount': descuentoTotal,
           'tip': propinaSugerida,
           'status': 'pending',
-          'createdAt': (fechaCreacionMasAntigua ?? date_utils.AppDateUtils.now()).toIso8601String(),
+          'createdAt':
+              (fechaCreacionMasAntigua ?? date_utils.AppDateUtils.now())
+                  .toIso8601String(),
           'waiterName': bill.waiterName,
           'splitCount': splitCount,
           'isTakeaway': true,
@@ -2383,13 +2520,18 @@ class MeseroController extends ChangeNotifier {
           final ordenIdActual = order['ordenId'] as int?;
           if (ordenIdActual != null) {
             await _marcarOrdenComoCerradaEnBackend(ordenIdActual);
-            print('✅ Mesero: Orden $ordenIdActual marcada como cerrada en backend');
-            
+            print(
+              '✅ Mesero: Orden $ordenIdActual marcada como cerrada en backend',
+            );
+
             // Registrar también localmente como respaldo
             _sentToCashierOrders.add(ordenIdActual);
           }
         }
         await _saveSentToCashierOrders();
+
+        // Recargar historial de takeaway para que desaparezca la orden
+        await loadTakeawayOrderHistory();
       } else {
         throw Exception('No se encontraron items en las órdenes del cliente');
       }
@@ -2398,7 +2540,6 @@ class MeseroController extends ChangeNotifier {
       rethrow;
     }
   }
-
 
   // Enviar cuenta al cajero (ahora obtiene la orden del backend si es necesario)
   Future<void> sendToCashier(int tableId) async {
@@ -2495,9 +2636,17 @@ class MeseroController extends ChangeNotifier {
                 final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
                 final precioUnitario =
                     (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-                final totalLinea =
-                    (item['totalLinea'] as num?)?.toDouble() ??
-                    (precioUnitario * cantidad);
+                
+                // CRÍTICO: Calcular totalLinea siempre como cantidad × precioUnitario
+                // Si totalLinea viene del backend como 0 o incorrecto, recalcular
+                final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+                final totalLineaCalculado = precioUnitario * cantidad;
+                
+                // Usar el cálculo si el backend viene con 0 o si el calculado es diferente (tolerancia de 0.01)
+                final totalLinea = (totalLineaBackend <= 0.01 || (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
+                    ? totalLineaCalculado
+                    : totalLineaBackend;
+                
                 totalConsumo += totalLinea;
 
                 allBillItems.add(
@@ -2537,7 +2686,7 @@ class MeseroController extends ChangeNotifier {
           print(
             '⚠️ Mesero: Ya existe un bill pendiente con ID $billId, no se crea duplicado',
           );
-          
+
           // IMPORTANTE: Aunque ya exista el bill, las órdenes deben desaparecer del historial
           // porque ya fueron enviadas al cajero anteriormente
           final ordenIdsACerrar = allOrders
@@ -2665,15 +2814,17 @@ class MeseroController extends ChangeNotifier {
           if (ordenId != null) {
             await _marcarOrdenComoCerradaEnBackend(ordenId);
             print('✅ Mesero: Orden $ordenId marcada como cerrada en backend');
-            
+
             // Registrar también localmente como respaldo (igual que en takeaway)
             _sentToCashierOrders.add(ordenId);
           }
         }
-        
+
         // Guardar registro de órdenes enviadas al cajero
         await _saveSentToCashierOrders();
-        print('📝 ${ordenIdsACerrar.length} órdenes registradas localmente como enviadas al cajero');
+        print(
+          '📝 ${ordenIdsACerrar.length} órdenes registradas localmente como enviadas al cajero',
+        );
 
         // Actualizar valor de orden en la mesa
         _tables = _tables.map((tableEntry) {

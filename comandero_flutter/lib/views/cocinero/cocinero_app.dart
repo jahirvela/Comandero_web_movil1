@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cocinero_controller.dart';
 import '../../controllers/auth_controller.dart';
@@ -6,10 +7,15 @@ import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../../services/kitchen_order_service.dart';
+import '../../services/socket_service.dart';
 import 'ingredient_consumption_view.dart';
 import 'critical_notes_view.dart';
 import 'station_management_view.dart';
 import 'staff_management_view.dart';
+
+// El tipo de alerta (OldKitchenAlert) está definido en CocineroController
+// Como no podemos importarlo directamente, usamos el tipo que devuelve controller.alerts
+// que es List<OldKitchenAlert>, así que el tipo se infiere automáticamente
 
 class CocineroApp extends StatelessWidget {
   const CocineroApp({super.key});
@@ -132,7 +138,8 @@ class CocineroApp extends StatelessWidget {
             onPressed: () async {
               await authController.logout();
               if (context.mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
+                // Usar go_router en lugar de Navigator.pushReplacementNamed
+                context.go('/login');
               }
             },
           ),
@@ -187,6 +194,10 @@ class CocineroApp extends StatelessWidget {
 
           // Estadísticas rápidas
           _buildStatsCards(cocineroController, isTablet),
+          const SizedBox(height: 24),
+
+          // Sección de Alertas
+          _buildAlertsSection(context, cocineroController, isTablet),
           const SizedBox(height: 24),
 
           // Lista de pedidos
@@ -319,7 +330,12 @@ class CocineroApp extends StatelessWidget {
                     children: [
                       Icon(Icons.restaurant_menu, size: isTablet ? 16.0 : 14.0),
                       const SizedBox(width: 8),
-                      Text('Todas las Estaciones'),
+                      Expanded(
+                        child: Text(
+                          'Todas las Estaciones',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -329,7 +345,12 @@ class CocineroApp extends StatelessWidget {
                     children: [
                       Icon(Icons.restaurant, size: isTablet ? 16.0 : 14.0),
                       const SizedBox(width: 8),
-                      Text('Tacos'),
+                      Expanded(
+                        child: Text(
+                          'Tacos',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -339,7 +360,12 @@ class CocineroApp extends StatelessWidget {
                     children: [
                       Icon(Icons.soup_kitchen, size: isTablet ? 16.0 : 14.0),
                       const SizedBox(width: 8),
-                      Text('Consomes'),
+                      Expanded(
+                        child: Text(
+                          'Consomes',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -349,7 +375,12 @@ class CocineroApp extends StatelessWidget {
                     children: [
                       Icon(Icons.local_drink, size: isTablet ? 16.0 : 14.0),
                       const SizedBox(width: 8),
-                      Text('Bebidas'),
+                      Expanded(
+                        child: Text(
+                          'Bebidas',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -553,6 +584,700 @@ class CocineroApp extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Widget _buildAlertsSection(
+    BuildContext context,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final socketService = SocketService();
+    // Obtener todas las alertas (sin filtrar) para mostrar siempre que haya alertas
+    final allAlerts = controller.alerts;
+    final filteredAlerts = controller.filteredAlerts;
+
+    // Mostrar las alertas filtradas si hay filtro activo, sino mostrar todas
+    final alertsToShow =
+        controller.selectedAlert != 'todas' && filteredAlerts.isNotEmpty
+        ? filteredAlerts
+        : allAlerts;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: AppColors.warning.withValues(alpha: 0.3),
+          width: 2,
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: AppColors.warning.withValues(alpha: 0.05),
+        ),
+        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: AppColors.warning,
+                  size: isTablet ? 20.0 : 18.0,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Alertas (${alertsToShow.length})',
+                  style: TextStyle(
+                    fontSize: isTablet ? 16.0 : 14.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.warning,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<SocketConnectionState>(
+                  valueListenable: socketService.connectionState,
+                  builder: (context, state, _) {
+                    final connected = state == SocketConnectionState.connected;
+                    final color = connected ? Colors.green : Colors.grey;
+                    final label = connected ? 'En vivo' : 'Sin conexión';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            connected
+                                ? Icons.podcasts
+                                : Icons.podcasts_outlined,
+                            size: isTablet ? 12.0 : 10.0,
+                            color: color,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: isTablet ? 10.0 : 9.0,
+                              fontWeight: FontWeight.w600,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () async {
+                    // Limpiar todas las alertas
+                    for (final alert in alertsToShow) {
+                      await controller.removeAlert(alert.id);
+                    }
+                  },
+                  icon: const Icon(Icons.clear_all, size: 14),
+                  label: const Text('Limpiar todas'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.warning,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: const Size(0, 32),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (alertsToShow.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline,
+                      color: AppColors.textSecondary,
+                      size: isTablet ? 16.0 : 14.0,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child:                     Text(
+                      'Sin alertas pendientes. Seguimos escuchando en tiempo real.',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 11.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...alertsToShow
+                          .take(3)
+                          .map((alert) => _buildAlertCard(context, alert, controller, isTablet)),
+                      if (alertsToShow.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            'Y ${alertsToShow.length - 3} alerta(s) más...',
+                            style: TextStyle(
+                              fontSize: isTablet ? 11.0 : 10.0,
+                              color: AppColors.textSecondary,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // El tipo de alert se infiere automáticamente desde controller.alerts
+  // que es List<OldKitchenAlert>
+  Widget _buildAlertCard(
+    BuildContext context,
+    alert, // Tipo inferido: OldKitchenAlert desde CocineroController
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final priorityColor =
+        alert.priority == 'high' || alert.priority == 'urgente'
+        ? AppColors.error
+        : AppColors.warning;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: priorityColor.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: priorityColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(
+              _getAlertIcon(alert.type),
+              color: priorityColor,
+              size: isTablet ? 20.0 : 18.0,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        alert.type,
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 13.0,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: priorityColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        alert.priority == 'high' || alert.priority == 'urgente'
+                            ? 'URGENTE'
+                            : 'NORMAL',
+                        style: TextStyle(
+                          fontSize: isTablet ? 9.0 : 8.0,
+                          fontWeight: FontWeight.w600,
+                          color: priorityColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  alert.reason,
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 11.0,
+                    color: AppColors.textPrimary,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (alert.details != null && alert.details!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    alert.details!,
+                    style: TextStyle(
+                      fontSize: isTablet ? 11.0 : 10.0,
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.table_restaurant,
+                      size: isTablet ? 12.0 : 11.0,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Mesa: ${alert.tableNumber}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 11.0 : 10.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Icon(
+                      Icons.receipt_long,
+                      size: isTablet ? 12.0 : 11.0,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      alert.orderId,
+                      style: TextStyle(
+                        fontSize: isTablet ? 11.0 : 10.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    if (alert.sentBy != null) ...[
+                      const SizedBox(width: 10),
+                      Icon(
+                        alert.sentByRole == 'capitan' ? Icons.shield : Icons.person,
+                        size: isTablet ? 12.0 : 11.0,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        alert.sentBy!,
+                        style: TextStyle(
+                          fontSize: isTablet ? 11.0 : 10.0,
+                          color: AppColors.textSecondary,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                      if (alert.sentByRole != null) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: alert.sentByRole == 'capitan' 
+                                ? Colors.purple.withValues(alpha: 0.1)
+                                : Colors.blue.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            alert.sentByRole == 'capitan' ? 'Capitán' : 'Mesero',
+                            style: TextStyle(
+                              fontSize: isTablet ? 9.0 : 8.0,
+                              color: alert.sentByRole == 'capitan' 
+                                  ? Colors.purple
+                                  : Colors.blue,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                    const Spacer(),
+                    Text(
+                      _formatAlertTime(alert.timestamp),
+                      style: TextStyle(
+                        fontSize: isTablet ? 10.0 : 9.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                // Botón de acción según el tipo de alerta y motivo
+                if (_shouldShowActionButton(alert.type, alert.reason)) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: _buildActionButton(context, alert, controller, isTablet),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 16),
+            color: AppColors.textSecondary,
+            onPressed: () {
+              controller.removeAlert(alert.id);
+            },
+            tooltip: 'Cerrar alerta',
+            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getAlertIcon(String type) {
+    switch (type.toLowerCase()) {
+      case 'demora':
+        return Icons.timer_off;
+      case 'cancelación':
+      case 'cancelacion':
+        return Icons.cancel;
+      case 'cambio':
+      case 'cambio en orden':
+        return Icons.edit;
+      default:
+        return Icons.warning_amber_rounded;
+    }
+  }
+
+  String _formatAlertTime(DateTime timestamp) {
+    // Asegurar que el timestamp esté en hora local
+    final alertTime = timestamp.toLocal();
+    
+    // Formatear como HH:mm (formato 24 horas)
+    final hour = alertTime.hour.toString().padLeft(2, '0');
+    final minute = alertTime.minute.toString().padLeft(2, '0');
+    
+    return '$hour:$minute';
+  }
+
+  // Verificar si se debe mostrar un botón de acción según el tipo de alerta
+  bool _shouldShowActionButton(String alertType, String? reason) {
+    final typeLower = alertType.toLowerCase();
+    final reasonLower = (reason ?? '').toLowerCase();
+    
+    // Motivos válidos para cancelar (independientemente del tipo de alerta)
+    final motivosValidosParaCancelar = [
+      'cliente se retiró',
+      'cliente se retiro',
+      'cliente cambió pedido',
+      'cliente cambio pedido',
+      'error en comanda',
+      'error comanda',
+    ];
+    
+    // Verificar si el motivo es válido para cancelar
+    final motivoValido = motivosValidosParaCancelar.any(
+      (motivo) => reasonLower.contains(motivo)
+    );
+    
+    // Mostrar botón de cancelar si:
+    // 1. El tipo de alerta es "Cancelación" (cualquier motivo)
+    // 2. El tipo de alerta es "Cambio en orden" Y el motivo es válido para cancelar
+    // 3. El motivo es válido para cancelar (independientemente del tipo)
+    final esCancelacion = typeLower == 'cancelación' || 
+                          typeLower == 'cancelacion' ||
+                          typeLower.contains('cancelación') ||
+                          typeLower.contains('cancelacion');
+    
+    final esCambioEnOrden = typeLower.contains('cambio') ||
+                           typeLower.contains('modific');
+    
+    // NO mostrar para "Demora" u otros tipos que no sean cancelación o cambio
+    final esDemora = typeLower.contains('demora') ||
+                    typeLower.contains('tiempo de espera') ||
+                    typeLower.contains('mucho tiempo');
+    
+    if (esDemora) {
+      return false; // Nunca mostrar para demoras
+    }
+    
+    // Mostrar si es cancelación (cualquier motivo)
+    if (esCancelacion) {
+      return true;
+    }
+    
+    // Mostrar si es cambio en orden Y el motivo es válido para cancelar
+    if (esCambioEnOrden && motivoValido) {
+      return true;
+    }
+    
+    // Mostrar si el motivo es válido para cancelar (aunque el tipo no sea específico)
+    if (motivoValido) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  // Construir botón de acción según el tipo de alerta
+  Widget _buildActionButton(
+    BuildContext context,
+    dynamic alert,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final alertType = alert.type.toLowerCase();
+    final reason = (alert.reason ?? '').toLowerCase();
+    
+    // Determinar si es cancelación o cambio válido para cancelar
+    final esCancelacion = alertType.contains('cancelación') || 
+                         alertType.contains('cancelacion') || 
+                         alertType.contains('cancel');
+    
+    final esCambioValido = alertType.contains('cambio') ||
+                          alertType.contains('modific');
+    
+    final motivosValidos = [
+      'cliente se retiró',
+      'cliente se retiro',
+      'cliente cambió pedido',
+      'cliente cambio pedido',
+      'error en comanda',
+      'error comanda',
+    ];
+    
+    final motivoValido = motivosValidos.any((m) => reason.contains(m));
+    
+    // Mostrar botón si es cancelación o cambio válido
+    if (esCancelacion || (esCambioValido && motivoValido) || motivoValido) {
+      // Determinar el texto del botón según el contexto
+      String buttonText = 'Cancelar Orden';
+      if (esCambioValido && motivoValido) {
+        buttonText = 'Cancelar y Corregir';
+      }
+      
+      return ElevatedButton.icon(
+        onPressed: () => _showCancelOrderDialog(context, alert, controller),
+        icon: const Icon(Icons.cancel, size: 18),
+        label: Text(buttonText),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.error,
+          foregroundColor: Colors.white,
+          padding: EdgeInsets.symmetric(
+            horizontal: isTablet ? 16.0 : 12.0,
+            vertical: isTablet ? 10.0 : 8.0,
+          ),
+          textStyle: TextStyle(
+            fontSize: isTablet ? 13.0 : 12.0,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+    
+    // Para otros tipos de alertas, retornar un SizedBox vacío
+    return const SizedBox.shrink();
+  }
+
+  // Mostrar diálogo de confirmación para cancelar orden
+  Future<void> _showCancelOrderDialog(
+    BuildContext context,
+    dynamic alert,
+    CocineroController controller,
+  ) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: AppColors.error),
+              SizedBox(width: 8),
+              Text('Confirmar Cancelación'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                alert.type.toLowerCase().contains('cambio') 
+                  ? '¿Estás seguro de que deseas cancelar esta orden para que el mesero envíe la orden correcta?'
+                  : '¿Estás seguro de que deseas cancelar esta orden?',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppColors.warning.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.receipt_long, size: 16, color: AppColors.textSecondary),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Orden: ${alert.orderId}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.table_restaurant, size: 16, color: AppColors.textSecondary),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Mesa: ${alert.tableNumber}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (alert.reason != null && alert.reason.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Motivo del mesero:',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        alert.reason,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textPrimary,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Esta acción no se puede deshacer.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.error,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Sí, Cancelar Orden'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result == true) {
+      // El usuario confirmó la cancelación
+      try {
+        await controller.cancelOrder(alert.orderId, reason: alert.reason);
+        // Remover la alerta después de cancelar
+        controller.removeAlert(alert.id);
+        
+        // Mostrar mensaje de éxito
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Orden ${alert.orderId} cancelada exitosamente',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } catch (e) {
+        // Mostrar mensaje de error
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Error al cancelar la orden: $e',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: AppColors.error,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    }
   }
 
   Widget _buildStatCard(String title, int count, Color color, bool isTablet) {

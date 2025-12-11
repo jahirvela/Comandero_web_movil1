@@ -542,16 +542,26 @@ class _TakeawayViewState extends State<TakeawayView> {
           if (ordenDetalle != null) {
             final items = ordenDetalle['items'] as List<dynamic>? ?? [];
             for (var item in items) {
-              final cantidad = (item['cantidad'] as num?)?.toDouble() ?? 1.0;
+              final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
               final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-              final totalLinea = (item['totalLinea'] as num?)?.toDouble() ?? (precioUnitario * cantidad);
+              
+              // CRÍTICO: Calcular totalLinea siempre como cantidad × precioUnitario
+              // Si totalLinea viene del backend como 0 o incorrecto, recalcular
+              final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+              final totalLineaCalculado = precioUnitario * cantidad;
+              
+              // Usar el cálculo si el backend viene con 0 o si el calculado es diferente (tolerancia de 0.01)
+              final totalLinea = (totalLineaBackend <= 0.01 || (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
+                  ? totalLineaCalculado
+                  : totalLineaBackend;
+              
               totalConsumo += totalLinea;
               
               allItems.add({
                 'nombre': item['productoNombre'] as String? ?? 'Producto',
-                'cantidad': cantidad.toInt(),
+                'cantidad': cantidad,
                 'precioUnitario': precioUnitario,
-                'subtotal': totalLinea,
+                'subtotal': totalLinea, // Asegurar que siempre tenga el valor calculado correctamente
                 'extras': item['modificadores'] as List<dynamic>? ?? [],
                 'nota': item['nota'] as String?,
                 'ordenId': ordenIdActual, // Para identificar de qué orden viene cada item
@@ -719,7 +729,16 @@ class _TakeawayViewState extends State<TakeawayView> {
                                 final quantity = item['cantidad'] as int? ?? 1;
                                 final nombre = item['nombre'] as String? ?? 'Producto';
                                 final unitPrice = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-                                final subtotal = (item['subtotal'] as num?)?.toDouble() ?? (unitPrice * quantity);
+                                
+                                // CRÍTICO: Recalcular subtotal siempre como cantidad × precioUnitario
+                                // Si el subtotal viene como 0 o incorrecto, usar el cálculo
+                                final subtotalBackend = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+                                final subtotalCalculado = unitPrice * quantity;
+                                
+                                // Usar el cálculo si el backend viene con 0 o si hay diferencia significativa
+                                final subtotal = (subtotalBackend <= 0.01 || (subtotalCalculado - subtotalBackend).abs() > 0.01)
+                                    ? subtotalCalculado
+                                    : subtotalBackend;
 
                                 return DataRow(
                                   cells: [

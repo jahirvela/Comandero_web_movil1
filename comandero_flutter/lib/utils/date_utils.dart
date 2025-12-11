@@ -84,20 +84,58 @@ class AppDateUtils {
           }
         } else {
           // NO tiene indicador de zona horaria
-          // IMPORTANTE: Asumir que el backend envía UTC sin 'Z'
-          // Parsear como UTC y convertir a CDMX
-          parsedDate = DateTime.parse(fechaLimpia);
-          // Crear como UTC y convertir a CDMX
-          parsedDate = DateTime.utc(
-            parsedDate.year,
-            parsedDate.month,
-            parsedDate.day,
-            parsedDate.hour,
-            parsedDate.minute,
-            parsedDate.second,
-            parsedDate.millisecond,
-          );
-          parsedDate = _utcToCdmx(parsedDate);
+          // IMPORTANTE: El backend usa utcToMxISO que convierte fechas UTC de MySQL a CDMX
+          // y devuelve un ISO string en hora local (CDMX) sin 'Z'
+          // Por lo tanto, estas fechas YA están en hora local y NO deben convertirse de UTC
+          
+          // Si tiene espacio en lugar de 'T', es formato MySQL datetime
+          // El backend ya lo convirtió a CDMX, así que parsearlo como hora local directamente
+          if (fechaLimpia.contains(' ') && !fechaLimpia.contains('T')) {
+            // Formato MySQL datetime: "2025-12-09 15:15:20.000" (ya en CDMX local)
+            // Parsear manualmente y crear como DateTime local directamente
+            final mysqlFormat = RegExp(r'^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$');
+            final match = mysqlFormat.firstMatch(fechaLimpia);
+            if (match != null) {
+              final year = int.parse(match.group(1)!);
+              final month = int.parse(match.group(2)!);
+              final day = int.parse(match.group(3)!);
+              final hour = int.parse(match.group(4)!);
+              final minute = int.parse(match.group(5)!);
+              final second = int.parse(match.group(6)!);
+              final millis = match.group(7) != null 
+                  ? int.parse(match.group(7)!.substring(0, match.group(7)!.length > 3 ? 3 : match.group(7)!.length))
+                  : 0;
+              
+              // CRÍTICO: Crear como DateTime LOCAL (no UTC)
+              // El backend ya convirtió a CDMX, así que esta fecha ya está en hora local
+              parsedDate = DateTime(
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                millis,
+              ); // Sin isUtc: true = hora local
+            } else {
+              // Si no coincide el formato MySQL, intentar parseo ISO estándar
+              final fechaNormalizada = fechaLimpia.replaceFirst(' ', 'T');
+              parsedDate = DateTime.parse(fechaNormalizada);
+            }
+          } else {
+            // Formato ISO sin 'Z' - el backend ya lo convirtió a CDMX
+            // Parsear como hora local directamente
+            try {
+              parsedDate = DateTime.parse(fechaLimpia);
+              // Asegurar que sea hora local (no UTC)
+              if (parsedDate.isUtc) {
+                parsedDate = parsedDate.toLocal();
+              }
+            } catch (e) {
+              print('⚠️ AppDateUtils: Error al parsear fecha ISO: $fechaLimpia, error: $e');
+              return AppDateUtils.now();
+            }
+          }
         }
       } else if (fecha is DateTime) {
         // Si es DateTime, convertir a CDMX

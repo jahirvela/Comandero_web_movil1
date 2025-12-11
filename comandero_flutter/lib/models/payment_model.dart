@@ -156,6 +156,8 @@ class BillModel {
   final String id;
   final int? tableNumber;
   final int? ordenId; // ID de la orden en la BD (requerido para pagos)
+  final List<int>? ordenIds; // IDs de todas las órdenes (para cuentas agrupadas)
+  final bool? isGrouped; // Flag para indicar si es una cuenta agrupada
   final List<BillItem> items;
   final double subtotal;
   final double tax;
@@ -178,6 +180,8 @@ class BillModel {
     required this.id,
     this.tableNumber,
     this.ordenId, // ID de la orden en la BD
+    this.ordenIds, // IDs de todas las órdenes (para cuentas agrupadas)
+    this.isGrouped, // Flag para indicar si es una cuenta agrupada
     required this.items,
     required this.subtotal,
     required this.tax,
@@ -209,14 +213,28 @@ class BillModel {
 
   /// Genera un ID de visualización claro y legible para el cajero
   /// Ejemplos:
-  /// - "BILL-MESA-2-30-31-32" -> "Cuenta agrupada - Mesa 2"
+  /// - "BILL-MESA-2-30-31-32" -> "Cuenta agrupada (3 órdenes)"
+  /// - "CUENTA-AGRUPADA-000084-000085-000086" -> "Cuenta agrupada (3 órdenes)"
   /// - "BILL-ORD-30" -> "ORD-000030"
   String get displayId {
+    // Si es formato CUENTA-AGRUPADA- (tickets del administrador)
+    if (id.startsWith('CUENTA-AGRUPADA-')) {
+      final parts = id.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+      final ordenIds = parts
+          .map((part) => int.tryParse(part))
+          .whereType<int>()
+          .toList();
+      if (ordenIds.length > 1) {
+        return 'Cuenta agrupada (${ordenIds.length} órdenes)';
+      } else if (ordenIds.length == 1) {
+        return 'ORD-${ordenIds.first.toString().padLeft(6, '0')}';
+      }
+    }
+    
     // Si el ID contiene múltiples órdenes (formato BILL-MESA-X-Y-Z)
     if (id.contains('BILL-MESA-') && id.contains('-')) {
       final parts = id.split('-');
       if (parts.length >= 4) {
-        final mesaNumero = parts[2];
         final ordenIdsCount =
             parts.length - 3; // Número de órdenes después de "BILL-MESA-X"
 
@@ -249,7 +267,7 @@ class BillModel {
     return id;
   }
 
-  /// Extrae los IDs de órdenes del billId para mostrar información detallada
+  /// Extrae los IDs de órdenes del billId para mostrar información detallada (como strings)
   List<String> get ordenIdsFromBillId {
     if (id.contains('BILL-MESA-') && id.contains('-')) {
       final parts = id.split('-');
@@ -263,6 +281,63 @@ class BillModel {
     if (id.startsWith('BILL-ORD-')) {
       final ordenId = id.replaceFirst('BILL-ORD-', '');
       return ['ORD-${ordenId.padLeft(6, '0')}'];
+    }
+
+    // Para BILL-TAKEAWAY-X-Y-Z
+    if (id.startsWith('BILL-TAKEAWAY-')) {
+      final parts = id.split('-');
+      final ordenIds = <String>[];
+      // Recorrer desde el final hacia adelante para encontrar los números (ordenIds)
+      for (var i = parts.length - 1; i >= 2; i--) {
+        final posibleOrdenId = int.tryParse(parts[i]);
+        if (posibleOrdenId != null) {
+          ordenIds.insert(0, 'ORD-${parts[i].padLeft(6, '0')}');
+        } else {
+          break; // Ya pasamos todos los ordenIds
+        }
+      }
+      return ordenIds;
+    }
+
+    return [];
+  }
+
+  /// Extrae los IDs de órdenes del billId como números (int) para enviarlos al backend
+  List<int> get ordenIdsFromBillIdInt {
+    if (id.contains('BILL-MESA-') && id.contains('-')) {
+      final parts = id.split('-');
+      if (parts.length >= 4) {
+        // Obtener todas las partes después de "BILL-MESA-X"
+        final ordenIds = parts.sublist(3);
+        return ordenIds
+            .map((id) => int.tryParse(id))
+            .whereType<int>()
+            .toList();
+      }
+    }
+
+    if (id.startsWith('BILL-ORD-')) {
+      final ordenId = id.replaceFirst('BILL-ORD-', '');
+      final ordenIdInt = int.tryParse(ordenId);
+      if (ordenIdInt != null) {
+        return [ordenIdInt];
+      }
+    }
+
+    // Para BILL-TAKEAWAY-X-Y-Z
+    if (id.startsWith('BILL-TAKEAWAY-')) {
+      final parts = id.split('-');
+      final ordenIds = <int>[];
+      // Recorrer desde el final hacia adelante para encontrar los números (ordenIds)
+      for (var i = parts.length - 1; i >= 2; i--) {
+        final posibleOrdenId = int.tryParse(parts[i]);
+        if (posibleOrdenId != null) {
+          ordenIds.insert(0, posibleOrdenId);
+        } else {
+          break; // Ya pasamos todos los ordenIds
+        }
+      }
+      return ordenIds;
     }
 
     return [];
@@ -279,6 +354,10 @@ class BillModel {
       id: json['id'],
       tableNumber: json['tableNumber'],
       ordenId: json['ordenId'],
+      ordenIds: json['ordenIds'] != null
+          ? (json['ordenIds'] as List).map((e) => (e as num).toInt()).toList()
+          : null,
+      isGrouped: json['isGrouped'] as bool?,
       items: (json['items'] as List)
           .map((item) => BillItem.fromJson(item))
           .toList(),
@@ -308,6 +387,8 @@ class BillModel {
       'id': id,
       'tableNumber': tableNumber,
       'ordenId': ordenId,
+      'ordenIds': ordenIds,
+      'isGrouped': isGrouped,
       'items': items.map((item) => item.toJson()).toList(),
       'subtotal': subtotal,
       'tax': tax,
@@ -332,6 +413,8 @@ class BillModel {
     String? id,
     int? tableNumber,
     int? ordenId,
+    List<int>? ordenIds,
+    bool? isGrouped,
     List<BillItem>? items,
     double? subtotal,
     double? tax,
@@ -354,6 +437,8 @@ class BillModel {
       id: id ?? this.id,
       tableNumber: tableNumber ?? this.tableNumber,
       ordenId: ordenId ?? this.ordenId,
+      ordenIds: ordenIds ?? this.ordenIds,
+      isGrouped: isGrouped ?? this.isGrouped,
       items: items ?? this.items,
       subtotal: subtotal ?? this.subtotal,
       tax: tax ?? this.tax,

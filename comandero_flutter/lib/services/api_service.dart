@@ -142,11 +142,24 @@ class ApiService {
           }
           
           if (kDebugMode) {
-            print('❌ Error ${error.response?.statusCode ?? 'N/A'}: ${error.requestOptions.uri}');
+            final statusCode = error.response?.statusCode?.toString() ?? 'N/A';
+            final uri = error.requestOptions.uri.toString();
+            print('❌ Error $statusCode: $uri');
             if (error.response != null) {
-              print('   Response: ${error.response?.data}');
+              final responseData = error.response?.data;
+              if (responseData != null) {
+                final responseStr = responseData.toString();
+                print('   Response: $responseStr');
+              } else {
+                print('   Response: (vacío)');
+              }
             } else {
-              print('   Error: ${error.message}');
+              final errorMsg = error.message;
+              if (errorMsg != null && errorMsg.isNotEmpty) {
+                print('   Error: $errorMsg');
+              } else {
+                print('   Error: Error desconocido');
+              }
             }
           }
           

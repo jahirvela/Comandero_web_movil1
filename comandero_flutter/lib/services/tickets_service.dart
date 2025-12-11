@@ -112,9 +112,28 @@ class TicketsService {
                        data['customerName'].toString().isNotEmpty && 
                        (data['tableNumber'] == null || data['tableNumber'] == 0);
 
+    // Detectar si es cuenta agrupada y extraer ordenIds
+    final ticketId = data['id'] as String? ?? 'TICKET-${data['ordenId'] ?? 'UNKNOWN'}';
+    final ordenIdsFromBackend = data['ordenIds'] as List<dynamic>?;
+    List<int>? ordenIds;
+    
+    // Si el backend proporciona ordenIds directamente, usarlos
+    if (ordenIdsFromBackend != null && ordenIdsFromBackend.isNotEmpty) {
+      ordenIds = ordenIdsFromBackend.map((e) => (e as num).toInt()).toList();
+    }
+    // Si no, intentar extraerlos del ID del ticket (formato CUENTA-AGRUPADA-000084-000085-000086)
+    else if (ticketId.startsWith('CUENTA-AGRUPADA-')) {
+      final parts = ticketId.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+      ordenIds = parts
+          .map((part) => int.tryParse(part))
+          .whereType<int>()
+          .toList();
+    }
+
     return BillModel(
-      id: data['id'] as String? ?? 'TICKET-${data['ordenId'] ?? 'UNKNOWN'}',
+      id: ticketId,
       ordenId: data['ordenId'] as int?,
+      ordenIds: ordenIds, // Para cuentas agrupadas
       tableNumber: data['tableNumber'] as int?,
       items: items,
       subtotal: (data['subtotal'] as num?)?.toDouble() ?? 0.0,
@@ -130,12 +149,14 @@ class TicketsService {
       isPrinted: data['isPrinted'] as bool? ?? false,
       printedBy: data['printedBy'] as String?,
       printedAt: printedAt,
+      isGrouped: data['isGrouped'] as bool? ?? (ordenIds != null && ordenIds.length > 1),
     );
   }
 
-  /// Imprime un ticket para una orden
+  /// Imprime un ticket para una orden (o múltiples órdenes si es cuenta agrupada)
   /// 
-  /// [ordenId] - ID de la orden a imprimir
+  /// [ordenId] - ID de la orden principal a imprimir
+  /// [ordenIds] - IDs de todas las órdenes (para cuentas agrupadas, opcional)
   /// [incluirCodigoBarras] - Si incluir código de barras en el ticket (default: true)
   /// 
   /// Retorna un mapa con:
@@ -144,15 +165,23 @@ class TicketsService {
   /// - error: String - Mensaje de error si falló
   Future<Map<String, dynamic>> imprimirTicket({
     required int ordenId,
+    List<int>? ordenIds,
     bool incluirCodigoBarras = true,
   }) async {
     try {
+      final data = <String, dynamic>{
+        'ordenId': ordenId,
+        'incluirCodigoBarras': incluirCodigoBarras,
+      };
+      
+      // Si hay múltiples ordenIds (cuenta agrupada), incluirlos
+      if (ordenIds != null && ordenIds.length > 1) {
+        data['ordenIds'] = ordenIds;
+      }
+
       final response = await _api.post(
         '/tickets/imprimir',
-        data: {
-          'ordenId': ordenId,
-          'incluirCodigoBarras': incluirCodigoBarras,
-        },
+        data: data,
       );
 
       if (response.statusCode == 200) {

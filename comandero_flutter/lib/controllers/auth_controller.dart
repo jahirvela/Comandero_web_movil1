@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/auth_service.dart';
 import '../services/socket_service.dart';
+import '../utils/logger.dart';
 
 class AuthController extends ChangeNotifier {
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
@@ -17,16 +18,16 @@ class AuthController extends ChangeNotifier {
   String get userName => _userName;
   String get userId => _userId;
 
-  /// Login con el backend real
+  /// Login con el backend real (optimizado para rendimiento)
   Future<bool> login(String username, String password) async {
     try {
-      print('Intentando login con usuario: $username');
+      AppLogger.info('Intentando login con usuario: $username');
       final response = await _authService.login(username, password);
 
       if (response != null && response['user'] != null) {
         final user = response['user'];
         
-        print('Login exitoso. Usuario: ${user['username']}');
+        AppLogger.success('Login exitoso. Usuario: ${user['username']}');
         
         _isLoggedIn = true;
         _userName = user['username'] ?? username;
@@ -44,80 +45,114 @@ class AuthController extends ChangeNotifier {
           _userRole = 'mesero'; // Por defecto
         }
 
-        // Guardar información adicional
-        await _storage.write(key: 'isLoggedIn', value: 'true');
-        await _storage.write(key: 'userRole', value: _userRole);
-        await _storage.write(key: 'userName', value: _userName);
-        await _storage.write(key: 'userId', value: _userId);
-        await _storage.write(key: 'userNombre', value: user['nombre'] ?? '');
+        // Desconectar socket anterior ANTES de guardar datos de usuario
+        AppLogger.debug('Desconectando socket anterior...');
+        SocketService().disconnectCompletely();
+        
+        // Guardar información del usuario en paralelo
+        AppLogger.debug('Guardando información del usuario...');
+        await Future.wait([
+          _storage.write(key: 'isLoggedIn', value: 'true'),
+          _storage.write(key: 'userRole', value: _userRole),
+          _storage.write(key: 'userName', value: _userName),
+          _storage.write(key: 'userId', value: _userId),
+          _storage.write(key: 'userNombre', value: user['nombre'] ?? ''),
+        ]);
 
-        // Conectar Socket.IO después del login exitoso
+        // Verificar token una sola vez (optimizado)
+        final currentToken = await _storage.read(key: 'accessToken');
+        if (currentToken == null || currentToken.isEmpty) {
+          AppLogger.error('Token no disponible después del login');
+          throw Exception('Error: Token no disponible después del login');
+        }
+
+        // Conectar Socket.IO (sin delays innecesarios - el storage ya guardó)
+        AppLogger.debug('Conectando Socket.IO...');
         try {
           await SocketService().connect();
+          AppLogger.success('Socket.IO conectado exitosamente');
         } catch (e) {
-          print('Error al conectar Socket.IO: $e');
+          AppLogger.error('Error al conectar Socket.IO', e);
           // No fallar el login si Socket.IO falla
         }
 
         notifyListeners();
         return true;
       }
-      print('Error: Respuesta del login no contiene usuario');
+      AppLogger.warn('Respuesta del login no contiene usuario');
       return false;
     } catch (e) {
-      print('Error en login: $e');
-      // Re-lanzar el error para que la UI pueda mostrar el mensaje
+      AppLogger.error('Error en login', e);
       rethrow;
     }
   }
 
   Future<void> logout() async {
+    AppLogger.info('Iniciando proceso de cierre de sesión...');
+    
+    // Resetear estado en memoria PRIMERO
     _isLoggedIn = false;
     _userRole = '';
     _userName = '';
     _userId = '';
 
-    // Desconectar Socket.IO completamente (limpia todos los listeners activos y pendientes)
-    // Esto es importante para que al iniciar sesión con otro rol,
-    // los listeners se registren frescos sin duplicados
-    print('🚪 Logout: Desconectando Socket.IO completamente...');
-    SocketService().disconnectCompletely();
-
-    await _authService.logout();
-    
-    // Preservar flags importantes antes de limpiar storage
+    // Preservar flags importantes ANTES de limpiar
     final clearedHistory = await _storage.read(key: 'cleared_table_history');
     final completedOrders = await _storage.read(key: 'cocinero_completed_orders');
     final sentToCashierOrders = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+
+    // Desconectar Socket.IO y limpiar en paralelo (optimizado)
+    AppLogger.debug('Desconectando Socket.IO y limpiando storage...');
+    SocketService().disconnectCompletely();
+    await _authService.logout();
     
-    // Limpiar todo el storage
-    await _storage.deleteAll();
+    // Eliminar datos de autenticación en paralelo
+    await Future.wait([
+      _storage.delete(key: 'accessToken'),
+      _storage.delete(key: 'refreshToken'),
+      _storage.delete(key: 'userId'),
+      _storage.delete(key: 'userRole'),
+      _storage.delete(key: 'userName'),
+      _storage.delete(key: 'userNombre'),
+      _storage.delete(key: 'isLoggedIn'),
+      _storage.delete(key: 'station'),
+    ]);
     
-    // Restaurar flags que deben persistir entre sesiones
-    if (clearedHistory != null && clearedHistory != '{}') {
-      await _storage.write(key: 'cleared_table_history', value: clearedHistory);
-      print('💾 Logout: Preservado cleared_table_history');
+    // Restaurar flags que deben persistir entre sesiones (si existían)
+    final restoreOps = <Future>[];
+    if (clearedHistory != null && clearedHistory.isNotEmpty && clearedHistory != '{}') {
+      restoreOps.add(_storage.write(key: 'cleared_table_history', value: clearedHistory));
     }
-    if (completedOrders != null && completedOrders != '[]') {
-      await _storage.write(key: 'cocinero_completed_orders', value: completedOrders);
-      print('💾 Logout: Preservado cocinero_completed_orders');
+    if (completedOrders != null && completedOrders.isNotEmpty && completedOrders != '[]') {
+      restoreOps.add(_storage.write(key: 'cocinero_completed_orders', value: completedOrders));
     }
     if (sentToCashierOrders != null && sentToCashierOrders.isNotEmpty) {
-      await _storage.write(key: 'mesero_sent_to_cashier_orders', value: sentToCashierOrders);
-      print('💾 Logout: Preservado mesero_sent_to_cashier_orders: $sentToCashierOrders');
+      restoreOps.add(_storage.write(key: 'mesero_sent_to_cashier_orders', value: sentToCashierOrders));
+    }
+    if (restoreOps.isNotEmpty) {
+      await Future.wait(restoreOps);
     }
     
     notifyListeners();
-    print('✅ Logout completado');
+    AppLogger.success('Logout completado - Sesión cerrada completamente');
   }
 
   Future<void> checkAuthStatus() async {
     try {
-      final isLoggedIn = await _storage.read(key: 'isLoggedIn');
-      final userRole = await _storage.read(key: 'userRole');
-      final userName = await _storage.read(key: 'userName');
-      final userId = await _storage.read(key: 'userId');
-      final accessToken = await _storage.read(key: 'accessToken');
+      // Leer todas las claves en paralelo (optimizado)
+      final values = await Future.wait([
+        _storage.read(key: 'isLoggedIn'),
+        _storage.read(key: 'userRole'),
+        _storage.read(key: 'userName'),
+        _storage.read(key: 'userId'),
+        _storage.read(key: 'accessToken'),
+      ]);
+
+      final isLoggedIn = values[0];
+      final userRole = values[1];
+      final userName = values[2];
+      final userId = values[3];
+      final accessToken = values[4];
 
       if (isLoggedIn == 'true' && userRole != null && accessToken != null) {
         _isLoggedIn = true;
@@ -125,16 +160,15 @@ class AuthController extends ChangeNotifier {
         _userName = userName ?? '';
         _userId = userId ?? '';
         
-        // Reconectar Socket.IO en background (no bloquear)
-        // Esto se hará después de que la UI se muestre
-        SocketService().connect().catchError((e) {
-          print('Error al reconectar Socket.IO: $e');
-        });
+        // NO reconectar Socket.IO aquí automáticamente
+        // La conexión se debe hacer explícitamente después del login
+        // o cuando el usuario navegue a una vista que requiera socket
+        // Esto evita conexiones duplicadas y problemas de autenticación
         
         notifyListeners();
       }
     } catch (e) {
-      print('Error al verificar estado de autenticación: $e');
+      AppLogger.error('Error al verificar estado de autenticación', e);
     }
   }
 }

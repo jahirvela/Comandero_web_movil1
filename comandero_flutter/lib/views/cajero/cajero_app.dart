@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
@@ -196,7 +197,8 @@ class CajeroApp extends StatelessWidget {
             onPressed: () async {
               await authController.logout();
               if (context.mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
+                // Usar go_router en lugar de Navigator.pushReplacementNamed
+                context.go('/login');
               }
             },
           ),
