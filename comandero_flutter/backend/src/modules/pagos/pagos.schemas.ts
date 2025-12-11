@@ -4,6 +4,7 @@ import { parseMxToUtc } from '../../config/time.js';
 
 export const crearPagoSchema = z.object({
   ordenId: z.coerce.number().int().positive(),
+  ordenIds: z.array(z.coerce.number().int().positive()).optional(), // Para cuentas agrupadas
   formaPagoId: z.coerce.number().int().positive(),
   monto: z.coerce.number().positive(),
   referencia: z.string().max(120).nullable().optional(),

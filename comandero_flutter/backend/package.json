@@ -16,6 +16,7 @@
     "fix:cierre-caja-unique": "node scripts/fix-cierre-caja-unique.cjs",
     "crear-tabla-ingredientes": "tsx scripts/crear-tabla-producto-ingrediente.ts",
     "migrate:inventory-category": "tsx scripts/verificar-columna-categoria.ts",
+    "migrate:alert-metadata": "tsx scripts/agregar-metadata-alerta.ts",
     "backup:database": "tsx scripts/backup-database-node.ts",
     "backup:periodico": "tsx scripts/backup-periodico.ts",
     "restore:backup": "tsx scripts/restore-backup.ts",

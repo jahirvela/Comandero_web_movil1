@@ -1,0 +1,22 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000042
+Fecha: 04/12/25, 9:33 a.m.
+Mesa: 2
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  4  Taco de Barbacoa Suave      100.00
+------------------------------------------
+Subtotal:                    $  100.00
+E1TOTAL:                      $  100.00
+E0==========================================
+a1
+k4k10ORD-000042
+ORD-000042
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

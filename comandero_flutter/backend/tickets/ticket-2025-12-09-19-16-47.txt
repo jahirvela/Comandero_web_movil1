@@ -1,0 +1,28 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: Cuenta agrupada (4 órdenes): ORD-000080, ORD-000081, ORD-000082, ORD-000083
+Fecha: 09/12/25, 1:07 p.m.
+Mesa: 11
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  1  Taco de Barbacoa              0.00
+  Nota: Salsa: Salsa Verde
+  1  Agua de Jamaica Hecha ...     0.00
+  1  Taco Dorado de Barbacoa       0.00
+  Nota: Salsa: Salsa Verde
+  3  Taco de Barbacoa              0.00
+  Nota: Salsa: Salsa Verde
+------------------------------------------
+Subtotal:                    $  145.00
+E1TOTAL:                      $  145.00
+E0==========================================
+a1
+k4k75Cuenta agrupada (4 órdenes): ORD-000080, ORD-000081, ORD-000082, ORD-000083
+Cuenta agrupada (4 órdenes): ORD-000080, ORD-000081, ORD-000082, ORD-000083
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

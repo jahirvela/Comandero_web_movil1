@@ -1,0 +1,23 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000077
+Fecha: 09/12/25, 12:45 p.m.
+Mesa: 11
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  2  Taco Dorado de Barbacoa       0.00
+  Nota: Extras: Quesillo (+$5) | Salsa: Salsa Verde
+------------------------------------------
+Subtotal:                    $   60.00
+E1TOTAL:                      $   60.00
+E0==========================================
+a1
+k4k10ORD-000077
+ORD-000077
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

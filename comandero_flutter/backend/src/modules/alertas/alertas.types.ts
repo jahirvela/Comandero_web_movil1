@@ -35,12 +35,13 @@ export interface AlertaDB {
   ordenId: number | null;
   mesaId: number | null;
   productoId: number | null;
-  prioridad: string;
-  estacion: string | null;
+  prioridad?: string;
+  estacion?: string | null;
   creadoPorUsuarioId: number;
   leido: boolean;
-  leidoPorUsuarioId: number | null;
-  leidoEn: Date | null;
+  leidoPorUsuarioId?: number | null;
+  leidoEn?: Date | null;
   creadoEn: Date;
+  metadata?: Record<string, unknown> | null;
 }
 

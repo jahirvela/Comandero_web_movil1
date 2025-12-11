@@ -43,13 +43,55 @@ const registrarBitacora = async (
   }
 };
 
+/**
+ * Registra múltiples impresiones en la bitácora (para cuentas agrupadas)
+ */
+const registrarBitacoraMultiples = async (
+  ordenIds: number[],
+  usuarioId: number | null,
+  exito: boolean,
+  mensaje: string | null = null
+): Promise<void> => {
+  if (ordenIds.length === 0) return;
+  
+  try {
+    // Crear array de valores para INSERT múltiple
+    const values = ordenIds.map(() => '(?, ?, ?, ?, NOW())').join(', ');
+    const params: any[] = [];
+    
+    for (const ordenId of ordenIds) {
+      params.push(ordenId, usuarioId, exito ? 1 : 0, mensaje);
+    }
+    
+    await pool.query(
+      `INSERT INTO bitacora_impresion (orden_id, usuario_id, exito, mensaje, creado_en)
+       VALUES ${values}`,
+      params
+    );
+    
+    logger.info({ ordenIds, usuarioId, count: ordenIds.length }, 'Registradas múltiples impresiones en bitácora');
+  } catch (error: any) {
+    // Si la tabla no existe, solo logueamos el error pero no fallamos
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      logger.debug('Tabla bitacora_impresion no existe, omitiendo registro');
+    } else {
+      logger.warn({ err: error }, 'Error al registrar múltiples impresiones en bitácora');
+      // Intentar registrar una por una como fallback
+      for (const ordenId of ordenIds) {
+        await registrarBitacora(ordenId, usuarioId, exito, mensaje);
+      }
+    }
+  }
+};
+
 export const imprimirTicket = async (
   input: ImprimirTicketInput,
   usuarioId: number
 ): Promise<{ exito: boolean; mensaje: string; rutaArchivo?: string }> => {
   try {
-    // Obtener datos del ticket
-    const datosTicket = await obtenerDatosTicket(input.ordenId, usuarioId);
+    // Obtener datos del ticket - si hay múltiples ordenIds, obtener datos de todas las órdenes
+    const ordenIds = (input.ordenIds && input.ordenIds.length > 1) ? input.ordenIds : undefined;
+    const datosTicket = await obtenerDatosTicket(input.ordenId, usuarioId, ordenIds);
 
     if (!datosTicket) {
       throw notFound('Orden no encontrada');
@@ -63,10 +105,29 @@ export const imprimirTicket = async (
     await printer.print(contenido);
     await printer.close();
 
-    // Registrar en bitácora
-    await registrarBitacora(input.ordenId, usuarioId, true, 'Ticket impreso exitosamente');
-
-    logger.info({ ordenId: input.ordenId, usuarioId }, 'Ticket impreso exitosamente');
+    // Registrar en bitácora - si hay múltiples ordenIds (cuenta agrupada), registrar todos
+    if (input.ordenIds && input.ordenIds.length > 1) {
+      await registrarBitacoraMultiples(
+        input.ordenIds,
+        usuarioId,
+        true,
+        `Ticket agrupado impreso exitosamente (${input.ordenIds.length} órdenes)`
+      );
+      logger.info({ ordenIds: input.ordenIds, usuarioId, count: input.ordenIds.length }, 'Ticket agrupado impreso exitosamente');
+    } else {
+      // Registrar solo la orden principal (o todas si son múltiples pero se pasaron como array)
+      const ordenIdsToRegister = input.ordenIds && input.ordenIds.length > 0 
+        ? input.ordenIds 
+        : [input.ordenId];
+      
+      if (ordenIdsToRegister.length === 1) {
+        await registrarBitacora(ordenIdsToRegister[0], usuarioId, true, 'Ticket impreso exitosamente');
+        logger.info({ ordenId: ordenIdsToRegister[0], usuarioId }, 'Ticket impreso exitosamente');
+      } else {
+        await registrarBitacoraMultiples(ordenIdsToRegister, usuarioId, true, 'Ticket impreso exitosamente');
+        logger.info({ ordenIds: ordenIdsToRegister, usuarioId, count: ordenIdsToRegister.length }, 'Ticket impreso exitosamente');
+      }
+    }
 
     const { getEnv } = await import('../../config/env.js');
     const env = getEnv();
@@ -76,15 +137,22 @@ export const imprimirTicket = async (
         : undefined;
 
     // Emitir evento de ticket impreso para que el administrador se entere
-    emitTicketPrinted({
-      id: `ORD-${String(input.ordenId).padStart(6, '0')}`,
-      ordenId: input.ordenId,
-      impresoPor: datosTicket.cajero?.nombre || 'Cajero',
-      impresoPorId: usuarioId,
-      total: datosTicket.orden.total,
-      mesaCodigo: datosTicket.orden.mesaCodigo,
-      timestamp: nowMxISO(),
-    });
+    // Si hay múltiples ordenIds, emitir evento para cada uno
+    const ordenIdsToEmit = input.ordenIds && input.ordenIds.length > 1 
+      ? input.ordenIds 
+      : [input.ordenId];
+    
+    for (const ordenIdEmit of ordenIdsToEmit) {
+      emitTicketPrinted({
+        id: `ORD-${String(ordenIdEmit).padStart(6, '0')}`,
+        ordenId: ordenIdEmit,
+        impresoPor: datosTicket.cajero?.nombre || 'Cajero',
+        impresoPorId: usuarioId,
+        total: datosTicket.orden.total,
+        mesaCodigo: datosTicket.orden.mesaCodigo,
+        timestamp: nowMxISO(),
+      });
+    }
 
     return {
       exito: true,

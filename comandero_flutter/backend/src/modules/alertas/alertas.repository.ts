@@ -8,41 +8,96 @@ interface AlertaRow extends RowDataPacket {
   mensaje: string;
   orden_id: number | null;
   mesa_id: number | null;
-  producto_id: number | null;
-  prioridad: string;
-  estacion: string | null;
   usuario_origen_id: number;
   usuario_destino_id: number | null;
   leida: boolean;
-  leido_por_usuario_id: number | null;
-  leido_en: Date | null;
   creado_en: Date;
+  metadata?: string | null; // JSON string
 }
 
 /**
  * Crea una nueva alerta en la base de datos
+ * El schema actual de la tabla alerta tiene:
+ * - tipo ENUM('sistema','operacion','inventario','mensaje')
+ * - metadata JSON (opcional) para guardar información adicional como prioridad
  */
-export const crearAlerta = async (payload: AlertaPayload, usuarioId: number): Promise<number> => {
-  const [result] = await pool.query<ResultSetHeader>(
-    `
-    INSERT INTO alerta (
-      tipo, mensaje, orden_id, mesa_id, producto_id,
-      prioridad, estacion, usuario_origen_id, leida, creado_en
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())
-    `,
-    [
-      payload.tipo,
-      payload.mensaje,
-      payload.ordenId || null,
-      payload.mesaId || null,
-      payload.productoId || null,
-      payload.prioridad || 'media',
-      payload.estacion || null,
-      usuarioId
-    ]
-  );
-
-  return result.insertId;
+export const crearAlerta = async (
+  params: {
+    tipo: 'sistema' | 'operacion' | 'inventario' | 'mensaje';
+    mensaje: string;
+    ordenId: number | null;
+    mesaId: number | null;
+    usuarioOrigenId: number;
+    usuarioDestinoId?: number | null;
+    metadata?: Record<string, unknown> | null;
+  }
+): Promise<number> => {
+  // Convertir metadata a JSON string si existe
+  const metadataJson = params.metadata ? JSON.stringify(params.metadata) : null;
+  
+  // Intentar insertar con metadata si existe, sino usar campos básicos
+  // Si la columna metadata no existe, MySQL simplemente la ignorará
+  try {
+    if (metadataJson) {
+      // Intentar insertar con metadata
+      const [result] = await pool.query<ResultSetHeader>(
+        `
+        INSERT INTO alerta (
+          tipo, mensaje, orden_id, mesa_id, usuario_origen_id, usuario_destino_id, leida, creado_en, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), ?)
+        `,
+        [
+          params.tipo,
+          params.mensaje,
+          params.ordenId,
+          params.mesaId,
+          params.usuarioOrigenId,
+          params.usuarioDestinoId || null,
+          metadataJson
+        ]
+      );
+      return result.insertId;
+    } else {
+      // Insertar sin metadata
+      const [result] = await pool.query<ResultSetHeader>(
+        `
+        INSERT INTO alerta (
+          tipo, mensaje, orden_id, mesa_id, usuario_origen_id, usuario_destino_id, leida, creado_en
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, NOW())
+        `,
+        [
+          params.tipo,
+          params.mensaje,
+          params.ordenId,
+          params.mesaId,
+          params.usuarioOrigenId,
+          params.usuarioDestinoId || null
+        ]
+      );
+      return result.insertId;
+    }
+  } catch (error: any) {
+    // Si hay error por columna metadata no existente, intentar sin metadata
+    if (error.code === 'ER_BAD_FIELD_ERROR' && metadataJson) {
+      const [result] = await pool.query<ResultSetHeader>(
+        `
+        INSERT INTO alerta (
+          tipo, mensaje, orden_id, mesa_id, usuario_origen_id, usuario_destino_id, leida, creado_en
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, NOW())
+        `,
+        [
+          params.tipo,
+          params.mensaje,
+          params.ordenId,
+          params.mesaId,
+          params.usuarioOrigenId,
+          params.usuarioDestinoId || null
+        ]
+      );
+      return result.insertId;
+    }
+    throw error;
+  }
 };
 
 /**
@@ -74,21 +129,38 @@ export const obtenerAlertasNoLeidas = async (
 
   const [rows] = await pool.query<AlertaRow[]>(query, params);
 
-  return rows.map((row) => ({
-    id: row.id,
-    tipo: row.tipo,
-    mensaje: row.mensaje,
-    ordenId: row.orden_id,
-    mesaId: row.mesa_id,
-    productoId: row.producto_id,
-    prioridad: row.prioridad,
-    estacion: row.estacion,
-    creadoPorUsuarioId: row.usuario_origen_id,
-    leido: Boolean(row.leida),
-    leidoPorUsuarioId: row.leido_por_usuario_id,
-    leidoEn: row.leido_en,
-    creadoEn: row.creado_en
-  }));
+  return rows.map((row) => {
+    // Parsear metadata JSON si existe (puede no existir si la columna no está en la tabla)
+    let metadata: Record<string, unknown> | null = null;
+    if (row.metadata !== undefined && row.metadata !== null) {
+      try {
+        metadata = typeof row.metadata === 'string' 
+          ? JSON.parse(row.metadata) 
+          : (row.metadata as Record<string, unknown>);
+      } catch (e) {
+        // Si hay error al parsear, dejar como null
+        metadata = null;
+      }
+    }
+    
+    const alerta: any = {
+      id: row.id,
+      tipo: row.tipo,
+      mensaje: row.mensaje,
+      ordenId: row.orden_id,
+      mesaId: row.mesa_id,
+      creadoPorUsuarioId: row.usuario_origen_id,
+      leido: Boolean(row.leida),
+      creadoEn: row.creado_en
+    };
+    
+    // Solo agregar metadata si existe
+    if (metadata !== null) {
+      alerta.metadata = metadata;
+    }
+    
+    return alerta;
+  });
 };
 
 /**

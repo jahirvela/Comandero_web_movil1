@@ -55,16 +55,25 @@ export interface TicketData {
   };
 }
 
-export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number): Promise<TicketData> => {
-  // Obtener orden base
+export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number, ordenIds?: number[]): Promise<TicketData> => {
+  // Si hay múltiples ordenIds (cuenta agrupada), obtener datos de todas las órdenes
+  const ordenIdsToProcess = (ordenIds && ordenIds.length > 1) ? ordenIds : [ordenId];
+  
+  // Obtener orden base principal
   const ordenBase = await obtenerOrdenBasePorId(ordenId);
   if (!ordenBase) {
     throw new Error(`Orden ${ordenId} no encontrada`);
   }
 
-  // Obtener items de la orden
-  const items = await obtenerItemsOrden(ordenId);
-  const itemIds = items.map((item) => item.id);
+  // Obtener items de todas las órdenes si es cuenta agrupada
+  let todosLosItems: Awaited<ReturnType<typeof obtenerItemsOrden>> = [];
+  for (const ordenIdItem of ordenIdsToProcess) {
+    const items = await obtenerItemsOrden(ordenIdItem);
+    todosLosItems = todosLosItems.concat(items);
+  }
+
+  // Obtener todos los modificadores de todos los items
+  const itemIds = todosLosItems.map((item) => item.id);
   const modificadores = await obtenerModificadoresItem(itemIds);
 
   // Crear mapa de modificadores por item
@@ -74,6 +83,36 @@ export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number): Pr
       modificadoresPorItem.set(mod.ordenItemId, []);
     }
     modificadoresPorItem.get(mod.ordenItemId)!.push(mod);
+  }
+
+  // Calcular totales combinados si hay múltiples órdenes
+  let subtotalTotal = ordenBase.subtotal;
+  let descuentoTotal = ordenBase.descuentoTotal;
+  let impuestoTotal = ordenBase.impuestoTotal;
+  let propinaTotal = ordenBase.propinaSugerida || 0;
+  let totalTotal = ordenBase.total;
+  let fechaMasAntigua = typeof ordenBase.creadoEn === 'string' ? new Date(ordenBase.creadoEn) : ordenBase.creadoEn;
+
+  if (ordenIdsToProcess.length > 1) {
+    // Obtener datos de todas las órdenes para calcular totales
+    for (const ordenIdItem of ordenIdsToProcess) {
+      if (ordenIdItem !== ordenId) {
+        const ordenBaseItem = await obtenerOrdenBasePorId(ordenIdItem);
+        if (ordenBaseItem) {
+          subtotalTotal += ordenBaseItem.subtotal;
+          descuentoTotal += ordenBaseItem.descuentoTotal;
+          impuestoTotal += ordenBaseItem.impuestoTotal;
+          propinaTotal += (ordenBaseItem.propinaSugerida || 0);
+          totalTotal += ordenBaseItem.total;
+          
+          // Usar la fecha más antigua
+          const fechaItem = typeof ordenBaseItem.creadoEn === 'string' ? new Date(ordenBaseItem.creadoEn) : ordenBaseItem.creadoEn;
+          if (fechaItem < fechaMasAntigua) {
+            fechaMasAntigua = fechaItem;
+          }
+        }
+      }
+    }
   }
 
   // Obtener datos del cajero si se proporciona
@@ -102,7 +141,7 @@ export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number): Pr
   };
 
   // Formatear items con modificadores
-  const itemsFormateados = items.map((item) => ({
+  const itemsFormateados = todosLosItems.map((item) => ({
     cantidad: item.cantidad,
     productoNombre: item.productoNombre,
     productoTamanoEtiqueta: item.productoTamanoEtiqueta,
@@ -119,20 +158,29 @@ export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number): Pr
   // Determinar si es pedido para llevar (no tiene mesa pero tiene clienteNombre)
   const isTakeaway = !ordenBase.mesaCodigo && ordenBase.clienteNombre;
 
+  // Crear folio que indique si es cuenta agrupada
+  let folio: string;
+  if (ordenIdsToProcess.length > 1) {
+    const folios = ordenIdsToProcess.map(id => `ORD-${String(id).padStart(6, '0')}`).join(', ');
+    folio = `Cuenta agrupada (${ordenIdsToProcess.length} órdenes): ${folios}`;
+  } else {
+    folio = `ORD-${String(ordenBase.id).padStart(6, '0')}`;
+  }
+
   return {
     orden: {
       id: ordenBase.id,
-      folio: `ORD-${String(ordenBase.id).padStart(6, '0')}`,
-      // Convertir creadoEn (string ISO) a Date para mantener compatibilidad con TicketData
-      fecha: typeof ordenBase.creadoEn === 'string' ? new Date(ordenBase.creadoEn) : ordenBase.creadoEn,
+      folio: folio,
+      // Usar la fecha más antigua si es cuenta agrupada
+      fecha: fechaMasAntigua,
       mesaCodigo: ordenBase.mesaCodigo,
       clienteNombre: ordenBase.clienteNombre,
       clienteTelefono: ordenBase.clienteTelefono || null,
-      subtotal: ordenBase.subtotal,
-      descuentoTotal: ordenBase.descuentoTotal,
-      impuestoTotal: ordenBase.impuestoTotal,
-      propinaSugerida: ordenBase.propinaSugerida,
-      total: ordenBase.total
+      subtotal: subtotalTotal,
+      descuentoTotal: descuentoTotal,
+      impuestoTotal: impuestoTotal,
+      propinaSugerida: propinaTotal || null,
+      total: totalTotal
     },
     cajero,
     items: itemsFormateados,
@@ -168,13 +216,18 @@ interface TicketListRow extends RowDataPacket {
 }
 
 export interface TicketListItem {
-  id: string; // Folio de la orden
-  ordenId: number;
+  id: string; // Folio de la orden o ID de cuenta agrupada
+  ordenId: number; // Orden principal (para compatibilidad)
+  ordenIds?: number[]; // Para cuentas agrupadas: todas las órdenes
+  mesaCodigo?: string | null;
+  mesaNombre?: string | null;
+  customerPhone?: string | null;
   tableNumber: number | null;
   customerName: string | null;
   subtotal: number;
   discount: number;
   tax: number;
+  tip?: number | null;
   total: number;
   status: string; // 'pending', 'printed', 'delivered'
   createdAt: string; // ISO string en zona CDMX
@@ -183,6 +236,7 @@ export interface TicketListItem {
   isPrinted: boolean;
   printedBy: string | null;
   printedAt: string | null; // ISO string en zona CDMX
+  isGrouped?: boolean; // Flag para indicar que es una cuenta agrupada
 }
 
 export const listarTickets = async (): Promise<TicketListItem[]> => {
@@ -275,40 +329,176 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
       JOIN estado_orden eo ON eo.id = o.estado_orden_id
       LEFT JOIN usuario u_mesero ON u_mesero.id = o.creado_por_usuario_id
       WHERE eo.nombre = 'pagada'
+        -- Excluir órdenes que son parte de una cuenta agrupada (tienen referencia "Cuenta agrupada")
+        AND NOT EXISTS (
+          SELECT 1 
+          FROM pago p 
+          WHERE p.orden_id = o.id 
+            AND p.referencia LIKE 'Cuenta agrupada (%'
+        )
       ORDER BY o.creado_en DESC
     `;
 
     const [rows] = await pool.query<TicketListRow[]>(query);
 
-    return rows.map((row) => {
-      // Determinar el estado del ticket
-      let status = 'pending';
-      if (row.impreso === 1 && row.ultima_impresion_exitosa === 1) {
-        status = 'printed';
+    // Mapa para rastrear órdenes que son parte de cuentas agrupadas
+    const ordenesAgrupadas = new Map<number, number[]>(); // ordenPrincipal -> [ordenId1, ordenId2, ...]
+    
+    // Buscar todas las órdenes que son parte de cuentas agrupadas (optimización: una sola query)
+    const [pagosAgrupados] = await pool.query<RowDataPacket[]>(
+      `SELECT 
+         p.orden_id,
+         p.referencia
+       FROM pago p 
+       WHERE p.referencia LIKE 'Cuenta agrupada (%'
+       ORDER BY p.orden_id`
+    );
+    
+    // Extraer órdenes principales desde las referencias
+    for (const pago of pagosAgrupados) {
+      const referencia = pago.referencia as string;
+      const match = referencia.match(/Cuenta agrupada \(Orden (\d+)\)/);
+      if (match) {
+        const ordenPrincipalId = parseInt(match[1]);
+        const ordenSecundariaId = pago.orden_id as number;
+        
+        // Agregar a la lista de órdenes agrupadas
+        if (!ordenesAgrupadas.has(ordenPrincipalId)) {
+          ordenesAgrupadas.set(ordenPrincipalId, [ordenPrincipalId]);
+        }
+        const ordenIds = ordenesAgrupadas.get(ordenPrincipalId)!;
+        if (!ordenIds.includes(ordenSecundariaId)) {
+          ordenIds.push(ordenSecundariaId);
+        }
+      }
+    }
+
+    // Filtrar tickets: solo incluir órdenes principales (no las relacionadas)
+    const tickets: TicketListItem[] = [];
+    const ordenesProcesadas = new Set<number>();
+
+    for (const row of rows) {
+      // Si esta orden es parte de una cuenta agrupada, ya fue procesada o será procesada como principal
+      if (ordenesProcesadas.has(row.orden_id)) {
+        continue;
       }
 
-      return {
-        id: row.orden_folio,
-        ordenId: row.orden_id,
-        tableNumber: row.mesa_codigo ? parseInt(row.mesa_codigo.replace(/\D/g, '')) || null : null,
-        mesaCodigo: row.mesa_codigo,
-        mesaNombre: row.mesa_nombre,
-        customerName: row.cliente_nombre,
-        customerPhone: row.cliente_telefono || null,
-        subtotal: Number(row.orden_subtotal),
-        discount: Number(row.orden_descuento),
-        tax: Number(row.orden_impuesto),
-        tip: row.orden_propina ? Number(row.orden_propina) : null,
-        total: Number(row.orden_total),
-        status,
-        createdAt: utcToMxISO(row.orden_fecha) ?? new Date().toISOString(),
-        waiterName: row.mesero_nombre,
-        cashierName: row.cajero_nombre,
-        isPrinted: row.impreso === 1,
-        printedBy: row.impreso_por_nombre,
-        printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null
-      };
-    });
+      const ordenIdsAgrupados = ordenesAgrupadas.get(row.orden_id);
+      
+      if (ordenIdsAgrupados && ordenIdsAgrupados.length > 1) {
+        // Esta es una cuenta agrupada: obtener datos de todas las órdenes y combinarlos
+        const [ordenesAgrupadasData] = await pool.query<RowDataPacket[]>(
+          `SELECT 
+            o.id, o.subtotal, o.descuento_total, o.impuesto_total, 
+            o.propina_sugerida, o.total, o.creado_en
+           FROM orden o
+           WHERE o.id IN (${ordenIdsAgrupados.map(() => '?').join(',')})`,
+          ordenIdsAgrupados
+        );
+
+        // Calcular totales combinados
+        let subtotalTotal = Number(row.orden_subtotal);
+        let descuentoTotal = Number(row.orden_descuento);
+        let impuestoTotal = Number(row.orden_impuesto);
+        let propinaTotal = row.orden_propina ? Number(row.orden_propina) : 0;
+        let totalTotal = Number(row.orden_total);
+        let fechaMasAntigua = new Date(row.orden_fecha);
+
+        for (const ordenData of ordenesAgrupadasData) {
+          if (ordenData.id !== row.orden_id) {
+            subtotalTotal += Number(ordenData.subtotal);
+            descuentoTotal += Number(ordenData.descuento_total);
+            impuestoTotal += Number(ordenData.impuesto_total);
+            propinaTotal += ordenData.propina_sugerida ? Number(ordenData.propina_sugerida) : 0;
+            totalTotal += Number(ordenData.total);
+            const fechaOrden = new Date(ordenData.creado_en);
+            if (fechaOrden < fechaMasAntigua) {
+              fechaMasAntigua = fechaOrden;
+            }
+          }
+        }
+
+        // Generar ID de ticket agrupado
+        const ordenIdsOrdenados = [...ordenIdsAgrupados].sort((a, b) => a - b);
+        const ticketId = `CUENTA-AGRUPADA-${ordenIdsOrdenados.map(id => String(id).padStart(6, '0')).join('-')}`;
+
+        // Determinar el estado del ticket (considerando todas las órdenes)
+        let status = 'pending';
+        if (hasBitacoraTable) {
+          const [impresiones] = await pool.query<RowDataPacket[]>(
+            `SELECT COUNT(*) as count 
+             FROM bitacora_impresion bi 
+             WHERE bi.orden_id IN (${ordenIdsAgrupados.map(() => '?').join(',')}) 
+               AND bi.exito = 1`,
+            ordenIdsAgrupados
+          );
+          if ((impresiones[0]?.count as number) > 0) {
+            status = 'printed';
+          }
+        }
+
+        tickets.push({
+          id: ticketId,
+          ordenId: row.orden_id, // Orden principal para compatibilidad
+          ordenIds: ordenIdsAgrupados, // TODAS las órdenes agrupadas
+          tableNumber: row.mesa_codigo ? parseInt(row.mesa_codigo.replace(/\D/g, '')) || null : null,
+          mesaCodigo: row.mesa_codigo,
+          mesaNombre: row.mesa_nombre,
+          customerName: row.cliente_nombre,
+          customerPhone: row.cliente_telefono || null,
+          subtotal: subtotalTotal,
+          discount: descuentoTotal,
+          tax: impuestoTotal,
+          tip: propinaTotal > 0 ? propinaTotal : null,
+          total: totalTotal,
+          status,
+          createdAt: utcToMxISO(fechaMasAntigua) ?? new Date().toISOString(),
+          waiterName: row.mesero_nombre,
+          cashierName: row.cajero_nombre,
+          isPrinted: status === 'printed',
+          printedBy: row.impreso_por_nombre,
+          printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null,
+          isGrouped: true
+        });
+
+        // Marcar todas las órdenes como procesadas
+        for (const ordenId of ordenIdsAgrupados) {
+          ordenesProcesadas.add(ordenId);
+        }
+      } else {
+        // Ticket individual (no agrupado)
+        let status = 'pending';
+        if (row.impreso === 1 && row.ultima_impresion_exitosa === 1) {
+          status = 'printed';
+        }
+
+        tickets.push({
+          id: row.orden_folio,
+          ordenId: row.orden_id,
+          tableNumber: row.mesa_codigo ? parseInt(row.mesa_codigo.replace(/\D/g, '')) || null : null,
+          mesaCodigo: row.mesa_codigo,
+          mesaNombre: row.mesa_nombre,
+          customerName: row.cliente_nombre,
+          customerPhone: row.cliente_telefono || null,
+          subtotal: Number(row.orden_subtotal),
+          discount: Number(row.orden_descuento),
+          tax: Number(row.orden_impuesto),
+          tip: row.orden_propina ? Number(row.orden_propina) : null,
+          total: Number(row.orden_total),
+          status,
+          createdAt: utcToMxISO(row.orden_fecha) ?? new Date().toISOString(),
+          waiterName: row.mesero_nombre,
+          cashierName: row.cajero_nombre,
+          isPrinted: row.impreso === 1,
+          printedBy: row.impreso_por_nombre,
+          printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null
+        });
+
+        ordenesProcesadas.add(row.orden_id);
+      }
+    }
+
+    return tickets;
   } catch (error: any) {
     // Si hay error con bitacora_impresion, retornar lista vacía o manejar el error
     if (error.code === 'ER_NO_SUCH_TABLE') {

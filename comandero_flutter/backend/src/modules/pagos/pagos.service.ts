@@ -39,51 +39,137 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number) 
     throw badRequest('Forma de pago inválida');
   }
 
-  const pagoId = await crearPago({
-    ordenId: input.ordenId,
-    formaPagoId: input.formaPagoId,
-    monto: input.monto,
-    referencia: input.referencia ?? null,
-    estado: input.estado ?? 'aplicado',
-    fechaPago: input.fechaPago ?? null,
-    empleadoId: usuarioId ?? null
-  });
+  // Si hay múltiples ordenIds (cuenta agrupada), procesar todas las órdenes
+  const ordenIdsToProcess = (input.ordenIds && input.ordenIds.length > 1) 
+    ? input.ordenIds 
+    : [input.ordenId];
 
-  const pago = await obtenerPago(pagoId);
-  
-  // Emitir evento de pago creado
-  emitPaymentCreated(pago);
-  
-  if ((input.estado ?? 'aplicado') === 'aplicado') {
-    const totalPagado = await obtenerTotalPagado(input.ordenId);
-    if (totalPagado >= orden.total) {
-      const estadoPagada = await obtenerEstadoOrdenPorNombre('pagada');
-      if (estadoPagada) {
-        await actualizarEstadoOrden(input.ordenId, estadoPagada.id, usuarioId ?? null);
-        
-        // Obtener orden actualizada para emitir eventos
-        const ordenActualizada = await obtenerOrdenDetalle(input.ordenId);
-        
-        // Emitir evento de orden actualizada para que el mesero actualice su historial
-        await emitOrderUpdated(ordenActualizada, usuarioId, pago?.empleadoNombre || 'Cajero', 'cajero', 'Orden pagada');
-        
-        // Emitir alerta de pago cuando la orden se marca como pagada
-        emitPaymentAlert(input.ordenId, orden.total);
-        
-        // Emitir evento de ticket creado para que el admin vea el nuevo ticket
-        emitTicketCreated({
-          id: `ORD-${String(input.ordenId).padStart(6, '0')}`,
-          ordenId: input.ordenId,
-          total: orden.total,
-          status: 'pending',
-          createdAt: nowMxISO(),
-          cashierName: pago?.empleadoNombre || 'Cajero',
-        });
+  // Calcular totales de todas las órdenes para distribución proporcional del pago
+  let totalTodasLasOrdenes = orden.total;
+  type OrdenData = { total: number; ordenBase: Awaited<ReturnType<typeof obtenerOrdenBasePorId>> };
+  const ordenesData = new Map<number, OrdenData>();
+  ordenesData.set(input.ordenId, { total: orden.total, ordenBase: orden });
+
+  if (ordenIdsToProcess.length > 1) {
+    // Obtener datos de todas las órdenes
+    for (const ordenId of ordenIdsToProcess) {
+      if (ordenId !== input.ordenId) {
+        const ordenBase = await obtenerOrdenBasePorId(ordenId);
+        if (ordenBase) {
+          ordenesData.set(ordenId, { total: ordenBase.total, ordenBase });
+          totalTodasLasOrdenes += ordenBase.total;
+        }
       }
     }
   }
 
-  return pago;
+  // Crear pagos para cada orden de la cuenta agrupada
+  type PagoCreado = { ordenId: number; monto: number; pago: Awaited<ReturnType<typeof obtenerPago>> };
+  const pagosCreados: PagoCreado[] = [];
+  const estadoPagada = await obtenerEstadoOrdenPorNombre('pagada');
+  
+  // Ordenar para procesar la orden principal al final (para usar el monto restante)
+  const ordenIdsOrdenados = ordenIdsToProcess.filter(id => id !== input.ordenId).concat([input.ordenId]);
+  
+  // Para cuentas agrupadas, rastrear todas las órdenes pagadas para emitir un solo ticket
+  const ordenesPagadas: Array<{ ordenId: number; total: number }> = [];
+  const esCuentaAgrupada = ordenIdsToProcess.length > 1;
+  
+  for (let i = 0; i < ordenIdsOrdenados.length; i++) {
+    const ordenId = ordenIdsOrdenados[i];
+    const ordenData = ordenesData.get(ordenId);
+    if (!ordenData) continue;
+
+    const esUltima = i === ordenIdsOrdenados.length - 1;
+    
+    // Calcular monto proporcional para esta orden
+    let montoParaEstaOrden: number;
+    if (esUltima) {
+      // Última orden (principal): usar el monto restante para evitar errores de redondeo
+      const montoDistribuido = pagosCreados.reduce((sum, p) => sum + p.monto, 0);
+      montoParaEstaOrden = Math.round((input.monto - montoDistribuido) * 100) / 100;
+    } else {
+      // Órdenes secundarias: monto proporcional al total
+      const proporcion = ordenData.total / totalTodasLasOrdenes;
+      montoParaEstaOrden = Math.round((input.monto * proporcion) * 100) / 100; // Redondear a 2 decimales
+    }
+
+    // Asegurar que el monto no sea negativo ni mayor al total de la orden
+    montoParaEstaOrden = Math.max(0, Math.min(montoParaEstaOrden, ordenData.total));
+
+    // Crear pago para esta orden
+    const pagoId = await crearPago({
+      ordenId: ordenId,
+      formaPagoId: input.formaPagoId,
+      monto: montoParaEstaOrden,
+      referencia: ordenId === input.ordenId ? input.referencia ?? null : `Cuenta agrupada (Orden ${input.ordenId})`,
+      estado: input.estado ?? 'aplicado',
+      fechaPago: input.fechaPago ?? null,
+      empleadoId: usuarioId ?? null
+    });
+
+    const pago = await obtenerPago(pagoId);
+    pagosCreados.push({ ordenId, monto: montoParaEstaOrden, pago });
+    
+    // Emitir evento de pago creado
+    emitPaymentCreated(pago);
+    
+    // Si el pago está aplicado, verificar si la orden queda pagada
+    if ((input.estado ?? 'aplicado') === 'aplicado') {
+      const totalPagado = await obtenerTotalPagado(ordenId);
+      if (totalPagado >= ordenData.total && estadoPagada) {
+        await actualizarEstadoOrden(ordenId, estadoPagada.id, usuarioId ?? null);
+        
+        // Obtener orden actualizada para emitir eventos
+        const ordenActualizada = await obtenerOrdenDetalle(ordenId);
+        
+        // Emitir evento de orden actualizada
+        await emitOrderUpdated(ordenActualizada, usuarioId, pago?.empleadoNombre || 'Cajero', 'cajero', 'Orden pagada');
+        
+        // Emitir alerta de pago
+        emitPaymentAlert(ordenId, ordenData.total);
+        
+        // Para cuentas agrupadas, acumular información de órdenes pagadas
+        // Solo emitiremos un evento de ticket al final
+        if (esCuentaAgrupada) {
+          ordenesPagadas.push({ ordenId, total: ordenData.total });
+        } else {
+          // Para órdenes individuales, emitir evento de ticket inmediatamente
+          emitTicketCreated({
+            id: `ORD-${String(ordenId).padStart(6, '0')}`,
+            ordenId: ordenId,
+            total: ordenData.total,
+            status: 'pending',
+            createdAt: nowMxISO(),
+            cashierName: pago?.empleadoNombre || 'Cajero',
+          });
+        }
+      }
+    }
+  }
+  
+  // CRÍTICO: Para cuentas agrupadas, emitir UN SOLO evento de ticket con todos los ordenIds
+  if (esCuentaAgrupada && ordenesPagadas.length > 0) {
+    // Generar un ID único para el ticket agrupado basado en todas las órdenes
+    const ordenIdsOrdenadosStr = ordenIdsToProcess.sort((a, b) => a - b).map(id => String(id).padStart(6, '0')).join('-');
+    const ticketId = `CUENTA-AGRUPADA-${ordenIdsOrdenadosStr}`;
+    const totalAgrupado = ordenesPagadas.reduce((sum, o) => sum + o.total, 0);
+    
+    emitTicketCreated({
+      id: ticketId,
+      ordenId: input.ordenId, // Orden principal para compatibilidad
+      ordenIds: ordenIdsToProcess, // TODAS las órdenes agrupadas
+      total: totalAgrupado,
+      status: 'pending',
+      createdAt: nowMxISO(),
+      cashierName: pagosCreados[0]?.pago?.empleadoNombre || 'Cajero',
+      isGrouped: true, // Flag para indicar que es una cuenta agrupada
+    });
+  }
+
+  // Retornar el pago principal (de la orden principal)
+  const pagoPrincipal = pagosCreados.find(p => p.ordenId === input.ordenId);
+  return pagoPrincipal ? pagoPrincipal.pago : pagosCreados[0]?.pago;
 };
 
 export const obtenerFormasPago = () => listarFormasPago();

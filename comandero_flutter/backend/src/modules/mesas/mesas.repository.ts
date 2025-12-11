@@ -84,6 +84,34 @@ export const obtenerMesaPorId = async (id: number) => {
   };
 };
 
+export const obtenerMesaPorCodigo = async (codigo: string) => {
+  const [rows] = await pool.query<MesaRow[]>(
+    `
+    SELECT
+      m.*,
+      em.nombre AS estado_nombre
+    FROM mesa m
+    LEFT JOIN estado_mesa em ON em.id = m.estado_mesa_id
+    WHERE m.codigo = :codigo AND m.activo = 1
+    `,
+    { codigo }
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    codigo: row.codigo,
+    nombre: row.nombre,
+    capacidad: row.capacidad,
+    ubicacion: row.ubicacion,
+    estadoMesaId: row.estado_mesa_id,
+    estadoNombre: row.estado_nombre,
+    activo: Boolean(row.activo),
+    creadoEn: row.creado_en,
+    actualizadoEn: row.actualizado_en
+  };
+};
+
 export const crearMesa = async ({
   codigo,
   nombre,
