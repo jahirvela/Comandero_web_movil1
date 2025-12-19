@@ -89,7 +89,37 @@ export const actualizarEstadoCierreHandler = async (req: Request, res: Response,
       throw badRequest('Usuario no autenticado');
     }
 
-    const usuarioNombre = req.user?.nombre || req.user?.username || 'Administrador';
+    // Obtener el rol del usuario (puede ser array o string)
+    const userRoles = req.user?.roles;
+    const usuarioRol = Array.isArray(userRoles) && userRoles.length > 0 
+      ? String(userRoles[0]).toLowerCase() 
+      : null;
+    const usuarioNombre = req.user?.nombre || req.user?.username || 'Usuario';
+
+    // Si el usuario es cajero, solo puede descartar aclaraciones (clarification -> approved)
+    if (usuarioRol === 'cajero') {
+      // Obtener el estado actual del cierre
+      const { obtenerCierreCajaPorId } = await import('./cierres.repository.js');
+      const cierreActual = await obtenerCierreCajaPorId(cierreId);
+      
+      if (!cierreActual) {
+        throw notFound('Cierre de caja no encontrado');
+      }
+
+      // Verificar que el estado actual sea "clarification" y el nuevo estado sea "approved"
+      if (cierreActual.status !== 'clarification') {
+        throw badRequest('Solo puedes descartar aclaraciones pendientes');
+      }
+
+      if (parsed.data.estado !== 'approved') {
+        throw badRequest('Como cajero, solo puedes aprobar aclaraciones para descartarlas');
+      }
+
+      // Verificar que el cajero sea el dueño del cierre
+      if (cierreActual.cajeroId !== usuarioId) {
+        throw badRequest('Solo puedes descartar tus propias aclaraciones');
+      }
+    }
 
     const cierreActualizado = await actualizarEstadoCierre(
       cierreId,

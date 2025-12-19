@@ -1256,6 +1256,64 @@ class AdminController extends ChangeNotifier {
   }
 
   // Obtener cierres de caja filtrados
+  // Obtener la apertura de caja del día actual
+  // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo) y numeroOrdenes = 0
+  CashCloseModel? getTodayCashOpening() {
+    final hoy = DateTime.now();
+    final aperturas = _cashClosures.where((cierre) {
+      // Verificar que sea del día de hoy
+      final esHoy = cierre.fecha.year == hoy.year &&
+          cierre.fecha.month == hoy.month &&
+          cierre.fecha.day == hoy.day;
+      
+      // Verificar que sea una apertura: tiene efectivo inicial y no tiene ventas significativas
+      final esApertura = cierre.efectivoInicial > 0 &&
+          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0) &&
+          cierre.pedidosParaLlevar == 0;
+      
+      return esHoy && esApertura;
+    }).toList();
+
+    // Retornar la más reciente (última apertura del día)
+    if (aperturas.isEmpty) return null;
+    
+    aperturas.sort((a, b) => b.fecha.compareTo(a.fecha));
+    return aperturas.first;
+  }
+
+  // Verificar si la caja está abierta hoy
+  bool isCashRegisterOpen() {
+    final apertura = getTodayCashOpening();
+    if (apertura == null) return false; // No hay apertura, caja cerrada
+    
+    final hoy = DateTime.now();
+    // Buscar cierres de caja del día con ventas significativas (totalNeto > 0)
+    // que sean más recientes que la apertura
+    final cierresConVentas = _cashClosures.where((cierre) {
+      final esHoy = cierre.fecha.year == hoy.year &&
+          cierre.fecha.month == hoy.month &&
+          cierre.fecha.day == hoy.day;
+      
+      // Verificar que sea un cierre con ventas (no una apertura)
+      final esCierreConVentas = cierre.totalNeto > 0 &&
+          cierre.fecha.isAfter(apertura.fecha); // Más reciente que la apertura
+      
+      return esHoy && esCierreConVentas;
+    }).toList();
+    
+    // Si hay un cierre con ventas más reciente que la apertura, la caja está cerrada
+    if (cierresConVentas.isNotEmpty) {
+      // Ordenar por fecha descendente para obtener el más reciente
+      cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
+      final cierreMasReciente = cierresConVentas.first;
+      // Si el cierre más reciente tiene ventas, la caja está cerrada
+      return cierreMasReciente.totalNeto <= 0;
+    }
+    
+    // Si no hay cierres con ventas, la caja está abierta
+    return true;
+  }
+
   List<CashCloseModel> get filteredCashClosures {
     print('🔍 AdminController: Filtrando ${_cashClosures.length} cierres - Período: $_selectedCashClosePeriod, Estado: $_selectedCashCloseStatus');
     final filtered = _cashClosures.where((closure) {

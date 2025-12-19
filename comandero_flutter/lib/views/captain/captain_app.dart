@@ -626,8 +626,6 @@ class _CaptainAppState extends State<CaptainApp> {
     CocineroController cocineroController,
     bool isTablet,
   ) {
-    final alertTypeText = AlertType.getTypeText(alert.type);
-
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
@@ -663,39 +661,15 @@ class _CaptainAppState extends State<CaptainApp> {
                         ),
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                      ),
-                      child: Text(
-                        alertTypeText,
-                        style: TextStyle(
-                          fontSize: isTablet ? 10.0 : 8.0,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.red,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
           const SizedBox(height: 8),
           Text(
             alert.tableNumber != null
-                ? 'Mesa ${alert.tableNumber} • ${alert.message}'
-                : alert.message,
+                ? 'Mesa ${alert.tableNumber} • ${_formatAlertMessage(alert.message)}'
+                : 'Para llevar • ${_formatAlertMessage(alert.message)}',
             style: TextStyle(
               fontSize: isTablet ? 14.0 : 12.0,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '${alert.minutes} min de retraso',
-            style: TextStyle(
-              fontSize: isTablet ? 12.0 : 10.0,
               color: AppColors.textSecondary,
             ),
           ),
@@ -750,30 +724,8 @@ class _CaptainAppState extends State<CaptainApp> {
     CaptainController controller,
     CocineroController cocineroController,
   ) {
-    // Mostrar mensaje
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          alert.orderNumber != null ? 'Orden ${alert.orderNumber}' : 'Alerta',
-        ),
-        content: Text(
-          alert.tableNumber != null
-              ? 'Abriendo orden ${alert.orderNumber ?? ''} - Mesa ${alert.tableNumber}'
-              : 'Abriendo alerta...',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-              // Buscar la orden en el CaptainController y abrirla
-              _openOrderDetail(context, alert, controller, cocineroController);
-            },
-            child: const Text('Aceptar'),
-          ),
-        ],
-      ),
-    );
+    // Abrir directamente el modal de orden sin mostrar diálogo intermedio
+    _openOrderDetail(context, alert, controller, cocineroController);
   }
 
   void _openOrderDetail(
@@ -790,14 +742,25 @@ class _CaptainAppState extends State<CaptainApp> {
       if (alert.orderNumber != null) {
         order = orders.firstWhere((o) => o.id == alert.orderNumber);
       } else if (alert.tableNumber != null) {
+        // Buscar orden de mesa (no para llevar)
         order = orders.firstWhere(
           (o) => o.tableNumber == alert.tableNumber && !o.isTakeaway,
         );
+      } else {
+        // Si tableNumber es null, es una orden para llevar
+        // Buscar por orderNumber si está disponible
+        if (alert.orderNumber != null) {
+          order = orders.firstWhere((o) => o.id == alert.orderNumber && o.isTakeaway);
+        }
       }
     } catch (e) {
-      // Orden no encontrada, usar la primera disponible como demo
-      if (orders.isNotEmpty) {
-        order = orders.first;
+      // Orden no encontrada, intentar buscar por orderNumber como último recurso
+      if (alert.orderNumber != null) {
+        try {
+          order = orders.firstWhere((o) => o.id == alert.orderNumber);
+        } catch (_) {
+          // Si aún no se encuentra, mostrar mensaje de error
+        }
       }
     }
 
@@ -953,13 +916,13 @@ class _CaptainAppState extends State<CaptainApp> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  order.isTakeaway 
+                  order.isTakeaway || order.tableNumber == null
                       ? 'Para llevar' 
-                      : 'Mesa ${order.tableNumber ?? 'N/A'}',
+                      : 'Mesa ${order.tableNumber}',
                   style: TextStyle(
                     fontSize: isTablet ? 11.0 : 9.0,
                     fontWeight: FontWeight.w600,
-                    color: order.isTakeaway ? AppColors.warning : AppColors.success,
+                    color: (order.isTakeaway || order.tableNumber == null) ? AppColors.warning : AppColors.success,
                   ),
                 ),
               ],
@@ -1344,7 +1307,7 @@ class _CaptainAppState extends State<CaptainApp> {
       case OrderStatus.pendiente:
         return Colors.red;
       case OrderStatus.enPreparacion:
-        return Colors.yellow;
+        return Colors.amber.shade700; // Amarillo más fuerte
       case OrderStatus.listo:
         return Colors.green;
       case OrderStatus.listoParaRecoger:
@@ -1367,6 +1330,17 @@ class _CaptainAppState extends State<CaptainApp> {
       default:
         return status.toUpperCase();
     }
+  }
+
+  // Formatear mensaje de alerta para mostrar estados de forma legible
+  String _formatAlertMessage(String message) {
+    // Reemplazar "en_preparacion" con "En preparación"
+    String formatted = message.replaceAll('en_preparacion', 'En preparación');
+    // También reemplazar variantes comunes
+    formatted = formatted.replaceAll('en_preparación', 'En preparación');
+    formatted = formatted.replaceAll('En_preparacion', 'En preparación');
+    formatted = formatted.replaceAll('En_preparación', 'En preparación');
+    return formatted;
   }
 
   // Estimar total de orden basado en items

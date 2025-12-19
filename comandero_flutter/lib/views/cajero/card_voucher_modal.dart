@@ -59,8 +59,9 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   @override
   void initState() {
     super.initState();
-    // Inicializar con hora CDMX
-    _selectedDateTime = date_utils.AppDateUtils.now();
+    // Inicializar con hora CDMX actual (hora local del sistema)
+    // Usar DateTime.now() directamente ya que Flutter usa la zona horaria del sistema
+    _selectedDateTime = DateTime.now();
   }
   bool _voucherPrinted = false;
   bool _submitted = false;
@@ -448,7 +449,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   }
 
   Future<void> _selectDateTime() async {
-    final now = date_utils.AppDateUtils.now();
+    final now = DateTime.now(); // Usar hora local del sistema
     final date = await showDatePicker(
       context: context,
       initialDate: _selectedDateTime,
@@ -482,13 +483,14 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     if (time == null) return;
 
     setState(() {
+      // Crear DateTime local (no UTC) con la fecha y hora seleccionadas
       _selectedDateTime = DateTime(
         date.year,
         date.month,
         date.day,
         time.hour,
         time.minute,
-      );
+      ); // Sin isUtc: true = hora local
     });
   }
 

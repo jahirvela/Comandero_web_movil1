@@ -115,9 +115,12 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
         return;
       }
 
+      // Determinar el rol del emisor (mesero o capitan) - debe definirse antes de usarse
+      const userRole = user.roles.includes('capitan') ? 'capitan' : 'mesero';
+
       logger.info(
         { socketId: socket.id, userId: user.id, orderId: data.orderId, type: data.type, role: userRole },
-        'KitchenAlerts: Alerta recibida desde $userRole'
+        `KitchenAlerts: Alerta recibida desde ${userRole}`
       );
 
       // Obtener información de la orden
@@ -210,9 +213,6 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
       if (mesaIdReal != null) {
         tableId = mesaIdReal;
       }
-
-      // Determinar el rol del emisor (mesero o capitan)
-      const userRole = user.roles.includes('capitan') ? 'capitan' : 'mesero';
       
       // Construir payload completo de la alerta
       const alertPayload: KitchenAlertPayload = {

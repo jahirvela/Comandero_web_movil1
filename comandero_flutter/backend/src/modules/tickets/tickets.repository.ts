@@ -208,6 +208,8 @@ interface TicketListRow extends RowDataPacket {
   mesero_id: number | null;
   mesero_nombre: string | null;
   mesero_username: string | null;
+  forma_pago_nombre: string | null;
+  pago_referencia: string | null;
   impreso: number; // 0 o 1
   impreso_por_id: number | null;
   impreso_por_nombre: string | null;
@@ -233,6 +235,8 @@ export interface TicketListItem {
   createdAt: string; // ISO string en zona CDMX
   waiterName: string | null;
   cashierName: string | null;
+  paymentMethod: string | null; // Método de pago (ej: 'Efectivo', 'Tarjeta', etc.)
+  paymentReference: string | null; // Referencia del pago (incluye info de débito/crédito)
   isPrinted: boolean;
   printedBy: string | null;
   printedAt: string | null; // ISO string en zona CDMX
@@ -241,6 +245,8 @@ export interface TicketListItem {
 
 export const listarTickets = async (): Promise<TicketListItem[]> => {
   try {
+    const { logger } = await import('../../config/logger.js');
+    
     // Verificar si la tabla bitacora_impresion existe
     const [tableCheck] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) as count 
@@ -250,6 +256,8 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
     );
 
     const hasBitacoraTable = (tableCheck[0]?.count as number) > 0;
+    
+    logger.debug('TicketsRepository: Listando tickets - hasBitacoraTable: ' + hasBitacoraTable);
 
     // Query para obtener tickets de órdenes pagadas
     const query = `
@@ -285,6 +293,19 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
          WHERE p.orden_id = o.id 
          ORDER BY p.fecha_pago DESC 
          LIMIT 1) AS cajero_username,
+        -- Método de pago (del último pago)
+        (SELECT fp.nombre 
+         FROM pago p 
+         JOIN forma_pago fp ON fp.id = p.forma_pago_id 
+         WHERE p.orden_id = o.id 
+         ORDER BY p.fecha_pago DESC 
+         LIMIT 1) AS forma_pago_nombre,
+        -- Referencia del pago (incluye info de débito/crédito)
+        (SELECT p.referencia 
+         FROM pago p 
+         WHERE p.orden_id = o.id 
+         ORDER BY p.fecha_pago DESC 
+         LIMIT 1) AS pago_referencia,
         -- Mesero (quien creó la orden)
         o.creado_por_usuario_id AS mesero_id,
         u_mesero.nombre AS mesero_nombre,
@@ -330,11 +351,21 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
       LEFT JOIN usuario u_mesero ON u_mesero.id = o.creado_por_usuario_id
       WHERE eo.nombre = 'pagada'
         -- Excluir órdenes que son parte de una cuenta agrupada (tienen referencia "Cuenta agrupada")
+        -- PERO solo si NO es la orden principal (la orden principal debe aparecer)
         AND NOT EXISTS (
           SELECT 1 
           FROM pago p 
           WHERE p.orden_id = o.id 
             AND p.referencia LIKE 'Cuenta agrupada (%'
+            -- Excluir solo si la referencia menciona otra orden (no esta misma)
+            AND p.referencia NOT LIKE CONCAT('Cuenta agrupada (Orden ', o.id, ')')
+        )
+        -- Asegurar que la orden tenga al menos un pago aplicado (esto garantiza que realmente fue pagada)
+        AND EXISTS (
+          SELECT 1 
+          FROM pago p 
+          WHERE p.orden_id = o.id 
+            AND p.estado = 'aplicado'
         )
       ORDER BY o.creado_en DESC
     `;
@@ -437,6 +468,24 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           }
         }
 
+        // Obtener método de pago y referencia del último pago de la orden principal
+        const [pagoAgrupado] = await pool.query<RowDataPacket[]>(
+          `SELECT fp.nombre, p.referencia 
+           FROM pago p 
+           JOIN forma_pago fp ON fp.id = p.forma_pago_id 
+           WHERE p.orden_id = ? 
+           ORDER BY p.fecha_pago DESC 
+           LIMIT 1`,
+          [row.orden_id]
+        );
+        // Si la referencia contiene información de débito/crédito, usarla; si no, usar el nombre de la forma de pago
+        const referencia = pagoAgrupado[0]?.referencia;
+        const formaPagoNombre = pagoAgrupado[0]?.nombre || null;
+        const paymentMethod = (referencia && (referencia.includes('Tarjeta Débito') || referencia.includes('Tarjeta Crédito')))
+          ? referencia.split(' - ')[0] // Extraer solo el tipo de tarjeta (ej: "Tarjeta Débito")
+          : formaPagoNombre;
+        const paymentReference = referencia || null;
+
         tickets.push({
           id: ticketId,
           ordenId: row.orden_id, // Orden principal para compatibilidad
@@ -455,6 +504,8 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           createdAt: utcToMxISO(fechaMasAntigua) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,
           cashierName: row.cajero_nombre,
+          paymentMethod: paymentMethod,
+          paymentReference: paymentReference,
           isPrinted: status === 'printed',
           printedBy: row.impreso_por_nombre,
           printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null,
@@ -489,6 +540,16 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           createdAt: utcToMxISO(row.orden_fecha) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,
           cashierName: row.cajero_nombre,
+          paymentMethod: (() => {
+            // Si la referencia contiene información de débito/crédito, usarla
+            const referencia = row.pago_referencia;
+            const formaPagoNombre = row.forma_pago_nombre || null;
+            if (referencia && (referencia.includes('Tarjeta Débito') || referencia.includes('Tarjeta Crédito'))) {
+              return referencia.split(' - ')[0]; // Extraer solo el tipo de tarjeta
+            }
+            return formaPagoNombre;
+          })(),
+          paymentReference: row.pago_referencia || null,
           isPrinted: row.impreso === 1,
           printedBy: row.impreso_por_nombre,
           printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
+import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
 import '../../models/admin_model.dart';
 import '../../utils/date_utils.dart' as date_utils;
+import '../../services/cierres_service.dart';
 
 class CashClosureView extends StatefulWidget {
   const CashClosureView({super.key});
@@ -74,68 +76,76 @@ class _CashClosureViewState extends State<CashClosureView> {
   }
 
   Widget _buildHeader(BuildContext context, bool isTablet) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.primary,
-        boxShadow: [
-          BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
-        ],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-          child: Row(
-            children: [
-              // Botón de regreso
-              IconButton(
-                onPressed: () {
-                  context.read<CajeroController>().setCurrentView('main');
-                },
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white.withValues(alpha: 0.1),
-                ),
-              ),
-              const SizedBox(width: 16),
-
-              // Título
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Gestión de Cortes de Caja',
-                      style: TextStyle(
-                        fontSize: isTablet ? 24.0 : 20.0,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      'Juan Martínez • Cajero',
-                      style: TextStyle(
-                        fontSize: isTablet ? 16.0 : 14.0,
-                        color: Colors.white.withValues(alpha: 0.8),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Botón de estadísticas
-              IconButton(
-                onPressed: () {
-                  _showStatisticsDialog(context);
-                },
-                icon: const Icon(Icons.analytics, color: Colors.white),
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white.withValues(alpha: 0.1),
-                ),
-              ),
+    return Consumer<AuthController>(
+      builder: (context, authController, child) {
+        final userName = authController.userName.isNotEmpty
+            ? authController.userName
+            : 'Cajero';
+        
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppColors.primary,
+            boxShadow: [
+              BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
             ],
           ),
-        ),
-      ),
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+              child: Row(
+                children: [
+                  // Botón de regreso
+                  IconButton(
+                    onPressed: () {
+                      context.read<CajeroController>().setCurrentView('main');
+                    },
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+
+                  // Título
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Gestión de Cortes de Caja',
+                          style: TextStyle(
+                            fontSize: isTablet ? 24.0 : 20.0,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Text(
+                          '$userName • Cajero',
+                          style: TextStyle(
+                            fontSize: isTablet ? 16.0 : 14.0,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Botón de estadísticas
+                  IconButton(
+                    onPressed: () {
+                      _showStatisticsDialog(context);
+                    },
+                    icon: const Icon(Icons.analytics, color: Colors.white),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -674,7 +684,7 @@ class _CashClosureViewState extends State<CashClosureView> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        closure.id,
+                        _formatClosureId(closure.id),
                         style: TextStyle(
                           fontSize: isTablet ? 18.0 : 16.0,
                           fontWeight: FontWeight.bold,
@@ -717,7 +727,7 @@ class _CashClosureViewState extends State<CashClosureView> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              closure.estado.toUpperCase(),
+                              _translateStatus(closure.estado),
                               style: TextStyle(
                                 fontSize: isTablet ? 12.0 : 10.0,
                                 fontWeight: FontWeight.w500,
@@ -837,47 +847,25 @@ class _CashClosureViewState extends State<CashClosureView> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  if (closure.estado == 'pendiente') ...[
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          _showEditClosureDialog(closure, controller);
-                        },
-                        icon: const Icon(Icons.edit),
-                        label: Text(
-                          'Editar',
-                          style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.warning,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        _showAuditLog(closure);
+                      },
+                      icon: const Icon(Icons.history),
+                      label: Text(
+                        'Historial',
+                        style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.info,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
                         ),
                       ),
                     ),
-                  ] else ...[
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          _showAuditLog(closure);
-                        },
-                        icon: const Icon(Icons.history),
-                        label: Text(
-                          'Historial',
-                          style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.info,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ],
@@ -926,15 +914,48 @@ class _CashClosureViewState extends State<CashClosureView> {
   String _getStatusIcon(String status) {
     switch (status.toLowerCase()) {
       case 'pendiente':
+      case 'pending':
         return '⏳';
       case 'aprobado':
+      case 'approved':
         return '✅';
       case 'rechazado':
+      case 'rejected':
         return '❌';
       case 'aclaración':
+      case 'clarification':
         return '❓';
       default:
         return '❓';
+    }
+  }
+
+  // Formatear ID del cierre: "cierre-13" -> "Cierre 13"
+  String _formatClosureId(String id) {
+    if (id.startsWith('cierre-')) {
+      final number = id.substring(7);
+      return 'Cierre $number';
+    }
+    return id;
+  }
+
+  // Traducir estado al español
+  String _translateStatus(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+      case 'pendiente':
+        return 'PENDIENTE';
+      case 'approved':
+      case 'aprobado':
+        return 'APROBADO';
+      case 'rejected':
+      case 'rechazado':
+        return 'RECHAZADO';
+      case 'clarification':
+      case 'aclaración':
+        return 'ACLARACIÓN';
+      default:
+        return status.toUpperCase();
     }
   }
 
@@ -942,24 +963,96 @@ class _CashClosureViewState extends State<CashClosureView> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Detalles - ${closure.id}'),
+        title: Text('Detalles - ${_formatClosureId(closure.id)}'),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Período: ${closure.periodo}'),
-              Text('Usuario: ${closure.usuario}'),
-              Text('Fecha: ${controller.formatDate(closure.fecha)}'),
-              Text('Estado: ${closure.estado}'),
-              const SizedBox(height: 16),
-              Text('Efectivo: ${controller.formatCurrency(closure.efectivo)}'),
-              Text('Tarjeta: ${controller.formatCurrency(closure.tarjeta)}'),
-              Text(
-                'Otros Ingresos: ${controller.formatCurrency(closure.otrosIngresos ?? 0)}',
+              // Información general
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildDetailRow('Período', closure.periodo),
+                    _buildDetailRow('Usuario', closure.usuario),
+                    _buildDetailRow('Fecha', controller.formatDate(closure.fecha)),
+                    _buildDetailRow('Estado', _translateStatus(closure.estado)),
+                  ],
+                ),
               ),
+              const SizedBox(height: 16),
+              
+              // Resumen financiero
               Text(
-                'Total Neto: ${controller.formatCurrency(closure.totalNeto)}',
+                'Resumen Financiero',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (closure.efectivoInicial > 0)
+                      _buildDetailRow(
+                        'Efectivo Inicial',
+                        controller.formatCurrency(closure.efectivoInicial),
+                      ),
+                    _buildDetailRow(
+                      'Efectivo',
+                      controller.formatCurrency(closure.efectivo),
+                    ),
+                    _buildDetailRow(
+                      'Tarjeta',
+                      controller.formatCurrency(closure.tarjeta),
+                    ),
+                    if ((closure.otrosIngresos ?? 0) > 0)
+                      _buildDetailRow(
+                        'Otros Ingresos',
+                        controller.formatCurrency(closure.otrosIngresos ?? 0),
+                      ),
+                    if ((closure.propinasEfectivo ?? 0) > 0 ||
+                        (closure.propinasTarjeta ?? 0) > 0) ...[
+                      const Divider(),
+                      _buildDetailRow(
+                        'Propinas Efectivo',
+                        controller.formatCurrency(closure.propinasEfectivo ?? 0),
+                      ),
+                      _buildDetailRow(
+                        'Propinas Tarjeta',
+                        controller.formatCurrency(closure.propinasTarjeta ?? 0),
+                      ),
+                    ],
+                    const Divider(),
+                    _buildDetailRow(
+                      'Total Neto',
+                      controller.formatCurrency(closure.totalNeto),
+                      isBold: true,
+                    ),
+                    if (closure.efectivoContado != null &&
+                        closure.efectivoContado! > 0)
+                      _buildDetailRow(
+                        'Efectivo Contado',
+                        controller.formatCurrency(closure.efectivoContado!),
+                      ),
+                  ],
+                ),
               ),
               if (closure.notaCajero != null) ...[
                 const SizedBox(height: 16),
@@ -1043,18 +1136,71 @@ class _CashClosureViewState extends State<CashClosureView> {
     );
   }
 
-  void _showEditClosureDialog(dynamic closure, CajeroController controller) {
+  void _showAuditLog(dynamic closure) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Editar Corte - ${closure.id}'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('• Modificar montos'),
-            Text('• Actualizar notas'),
-            Text('• Cambiar estado'),
-          ],
+        title: Text('Historial - ${_formatClosureId(closure.id)}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildHistoryItem(
+                'Creado',
+                'Creado por: ${closure.usuario}',
+                closure.fecha,
+                Icons.add_circle_outline,
+                Colors.blue,
+              ),
+              if (closure.estado == CashCloseStatus.approved ||
+                  closure.estado == CashCloseStatus.rejected ||
+                  closure.estado == CashCloseStatus.clarification) ...[
+                const SizedBox(height: 12),
+                _buildHistoryItem(
+                  'Revisado',
+                  'Estado: ${_translateStatus(closure.estado)}',
+                  null,
+                  closure.estado == CashCloseStatus.approved
+                      ? Icons.check_circle_outline
+                      : closure.estado == CashCloseStatus.rejected
+                          ? Icons.cancel_outlined
+                          : Icons.help_outline,
+                  closure.estado == CashCloseStatus.approved
+                      ? Colors.green
+                      : closure.estado == CashCloseStatus.rejected
+                          ? Colors.red
+                          : Colors.orange,
+                ),
+              ],
+              if (closure.comentarioRevision != null &&
+                  closure.comentarioRevision!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Comentario de Revisión:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(closure.comentarioRevision!),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -1066,27 +1212,129 @@ class _CashClosureViewState extends State<CashClosureView> {
     );
   }
 
-  void _showAuditLog(dynamic closure) {
-    showDialog(
+  Widget _buildHistoryItem(
+    String title,
+    String subtitle,
+    DateTime? date,
+    IconData icon,
+    Color color,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: const TextStyle(fontSize: 12),
+              ),
+              if (date != null)
+                Text(
+                  date_utils.AppDateUtils.formatDateTime(date),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _dismissClarification(
+    dynamic closure,
+    CajeroController controller,
+  ) async {
+    // Confirmar eliminación
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Historial - ${closure.id}'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('• Enviado por Cajero'),
-            Text('• Revisado por Admin'),
-            Text('• Aprobado por Admin'),
-          ],
+        title: const Text('Eliminar Aclaración'),
+        content: Text(
+          '¿Estás seguro de que deseas eliminar esta aclaración?\n\n'
+          'Cierre: ${_formatClosureId(closure.id)}\n'
+          'Fecha: ${controller.formatDate(closure.fecha)}',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Eliminar'),
           ),
         ],
       ),
     );
+
+    if (confirm != true) return;
+
+    try {
+      // Obtener el ID real del cierre
+      int? cierreId = closure.cierreId;
+      
+      // Si no hay cierreId, intentar extraerlo del ID
+      if (cierreId == null) {
+        final idStr = closure.id;
+        if (idStr.startsWith('cierre-')) {
+          final idPart = idStr.substring(7);
+          cierreId = int.tryParse(idPart);
+        }
+      }
+      
+      if (cierreId == null) {
+        throw Exception('No se pudo obtener el ID del cierre. ID: ${closure.id}');
+      }
+
+      // Actualizar el estado a "approved" para eliminar la aclaración
+      final cierresService = CierresService();
+      await cierresService.actualizarEstadoCierre(
+        cierreId: cierreId,
+        estado: 'approved',
+        comentarioRevision: 'Aclaración descartada por el cajero',
+      );
+
+      // Recargar cierres para actualizar la vista
+      await controller.loadCashClosures();
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Aclaración eliminada correctamente'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error al eliminar aclaración: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildClarificationBanner(bool isTablet) {
@@ -1163,7 +1411,7 @@ class _CashClosureViewState extends State<CashClosureView> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Cierre ${cierre.id} - ${controller.formatDate(cierre.fecha)}',
+                              '${_formatClosureId(cierre.id)} - ${controller.formatDate(cierre.fecha)}',
                               style: TextStyle(
                                 fontSize: screenIsTablet ? 16.0 : 14.0,
                                 fontWeight: FontWeight.w600,
@@ -1250,25 +1498,46 @@ class _CashClosureViewState extends State<CashClosureView> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            _showClosureDetails(cierre, controller);
-                          },
-                          icon: const Icon(Icons.visibility),
-                          label: const Text('Ver Detalles'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue.shade700,
-                            foregroundColor: Colors.white,
-                            padding: EdgeInsets.symmetric(
-                              vertical: screenIsTablet ? 14.0 : 12.0,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                _showClosureDetails(cierre, controller);
+                              },
+                              icon: const Icon(Icons.visibility),
+                              label: const Text('Ver Detalles'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue.shade700,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  vertical: screenIsTablet ? 14.0 : 12.0,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              _dismissClarification(cierre, controller);
+                            },
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Eliminar'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red.shade700,
+                              side: BorderSide(color: Colors.red.shade300),
+                              padding: EdgeInsets.symmetric(
+                                vertical: screenIsTablet ? 14.0 : 12.0,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1278,6 +1547,32 @@ class _CashClosureViewState extends State<CashClosureView> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

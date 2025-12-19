@@ -107,14 +107,14 @@ class CierresService {
         '/cierres',
         data: {
           'fecha': cierre.fecha.toIso8601String(),
-          'efectivoInicial': 0.0, // Por ahora 0, se puede mejorar después
+          'efectivoInicial': cierre.efectivoInicial,
           'efectivoFinal': cierre.efectivoContado,
           'totalPagos': cierre.totalNeto,
           'totalEfectivo': cierre.efectivo,
           'totalTarjeta': cierre.tarjeta,
           'notas': cierre.notaCajero ?? '',
-          'notaCajero': cierre.notaCajero,
-          'otrosIngresos': cierre.otrosIngresos ?? 0.0,
+          if (cierre.notaCajero != null) 'notaCajero': cierre.notaCajero,
+          'otrosIngresos': cierre.otrosIngresos,
           'otrosIngresosTexto': cierre.otrosIngresosTexto,
           'efectivoContado': cierre.efectivoContado,
           'totalDeclarado': cierre.totalDeclarado,
@@ -218,6 +218,9 @@ class CierresService {
                            (data['efectivoContado'] as num?)?.toDouble() ?? 
                            totalEfectivo;
     
+    // Obtener efectivo inicial del backend
+    final efectivoInicial = (data['efectivoInicial'] as num?)?.toDouble() ?? 0.0;
+    
     // Obtener total de pagos del backend (totalVentas incluye todo)
     final totalPagos = totalVentas;
     
@@ -261,6 +264,7 @@ class CierresService {
       auditLog: [], // Se puede poblar después si hay información
       cierreId: cierreIdReal,
       comentarioRevision: data['comentarioRevision'] as String?,
+      efectivoInicial: efectivoInicial,
     );
   }
 }

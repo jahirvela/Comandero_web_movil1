@@ -13,6 +13,7 @@ import 'views/admin/access_denied_view.dart';
 import 'services/payment_repository.dart';
 import 'services/bill_repository.dart';
 import 'services/api_service.dart';
+import 'config/api_config.dart';
 import 'views/admin/admin_app.dart';
 import 'views/admin/admin_web_app.dart';
 import 'views/cajero/cajero_app.dart';
@@ -22,6 +23,7 @@ import 'views/home_screen.dart';
 import 'views/login_screen.dart';
 import 'views/mesero/mesero_app.dart';
 import 'views/splash_screen.dart';
+import 'views/server_config_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +34,10 @@ Future<void> main() async {
     initializeDateFormatting('es_MX', null).then((_) {
       Intl.defaultLocale = 'es_MX';
     }),
+    // Cargar IP guardada manualmente
+    if (!kIsWeb) ApiConfig.loadSavedManualIp(),
+    // Detectar IP local si no está en web (para Android/iOS)
+    if (!kIsWeb) ApiConfig.detectLocalIp(),
     // Inicializar el servicio de API (no bloqueante)
     Future(() => ApiService().initialize()),
   ]);
@@ -158,6 +164,10 @@ class ComanderoApp extends StatelessWidget {
         GoRoute(
           path: '/access-denied',
           builder: (context, state) => const AccessDeniedView(),
+        ),
+        GoRoute(
+          path: '/server-config',
+          builder: (context, state) => const ServerConfigScreen(),
         ),
       ],
     );

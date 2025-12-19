@@ -62,15 +62,11 @@ class BillRepository extends ChangeNotifier {
       final ordenes = await _ordenesService.getOrdenes();
 
       // PRIMERO: Eliminar bills de órdenes que ya están pagadas/cerradas
-      // CRÍTICO: NO eliminar bills pendientes que fueron creados vía cuenta.enviada
-      // porque estas cuentas aún no están pagadas, solo fueron enviadas al cajero.
-      // Las bills solo deben eliminarse cuando se procesa el pago o se cancela explícitamente la orden.
+      // CRÍTICO: Eliminar bills pendientes si la orden está pagada Y tiene pagos registrados
+      // Las bills solo deben mantenerse si la orden fue enviada al cajero pero aún no se ha procesado el pago
       _bills.removeWhere((bill) {
-        // CRÍTICO: NUNCA eliminar bills pendientes durante loadBills()
-        // Solo eliminar si están explícitamente canceladas
         if (bill.status == BillStatus.pending) {
-          // Bill pendiente, NO eliminar aquí
-          // Solo eliminar si la orden fue explícitamente cancelada
+          // Bill pendiente: verificar si la orden está pagada o cancelada
           if (bill.ordenId == null) return false;
           
           final ordenData = ordenes.firstWhere(
@@ -79,21 +75,53 @@ class BillRepository extends ChangeNotifier {
           );
           
           if (ordenData.isEmpty) {
-            // Orden no existe en backend, pero mantener el bill (puede ser nueva)
+            // Orden no existe en backend, mantener el bill (puede ser nueva)
             return false;
           }
           
           final estadoNombre =
               (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
           
-          // SOLO eliminar si fue explícitamente cancelada
-          // NO eliminar si está "pagada" porque eso puede ser solo el estado cuando se envía la cuenta
+          // Eliminar si fue cancelada
           if (estadoNombre.contains('cancel')) {
             print('🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Orden ${bill.ordenId} cancelada');
-            return true; // Orden cancelada, eliminar bill
+            return true;
           }
           
-          // Mantener el bill en cualquier otro caso
+          // CRÍTICO: Eliminar si está pagada Y fue creada hace más de 5 minutos
+          // (lo que indicaría que ya fue cobrada anteriormente, no recién enviada)
+          if (estadoNombre.contains('pagada')) {
+            final creadoEnStr = ordenData['creadoEn'] as String?;
+            if (creadoEnStr != null) {
+              try {
+                final creadoEn = date_utils.AppDateUtils.parseToLocal(creadoEnStr);
+                final ahora = date_utils.AppDateUtils.now();
+                final diferenciaMinutos = ahora.difference(creadoEn).inMinutes;
+                
+                // Si la orden fue creada hace más de 5 minutos y está pagada,
+                // significa que ya fue cobrada anteriormente, eliminar bill
+                if (diferenciaMinutos > 5) {
+                  print('🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Orden ${bill.ordenId} pagada hace más de 5 minutos (fue cobrada anteriormente)');
+                  return true;
+                } else {
+                  // Orden pagada pero creada recientemente, probablemente fue enviada al cajero
+                  // Mantener el bill
+                  print('✅ BillRepository: Manteniendo bill pendiente ${bill.id} - Orden ${bill.ordenId} pagada pero creada recientemente (enviada al cajero)');
+                  return false;
+                }
+              } catch (e) {
+                // Si no se puede parsear la fecha, eliminar por seguridad si está pagada
+                print('🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Orden ${bill.ordenId} pagada sin fecha válida');
+                return true;
+              }
+            } else {
+              // Sin fecha de creación, eliminar si está pagada
+              print('🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Orden ${bill.ordenId} pagada sin fecha de creación');
+              return true;
+            }
+          }
+          
+          // Mantener el bill si está en cualquier otro estado que no sea cancelada o pagada (antigua)
           return false;
         }
         
@@ -122,6 +150,8 @@ class BillRepository extends ChangeNotifier {
 
       // CRÍTICO: Crear un set de todos los ordenIds que ya están en bills agrupados (requestedByWaiter: true)
       // Esto evita crear bills individuales para órdenes que ya están agrupadas
+      // IMPORTANTE: Solo considerar bills agrupados (BILL-MESA-* o BILL-TAKEAWAY-* con múltiples órdenes)
+      // NO considerar bills individuales (BILL-ORD-*) como agrupados
       final ordenIdsEnBillsAgrupados = <int>{};
       for (final bill in _bills) {
         if (bill.requestedByWaiter == true) {
@@ -164,11 +194,8 @@ class BillRepository extends ChangeNotifier {
             // Agregar todos los ordenIds encontrados al set
             ordenIdsEnBillsAgrupados.addAll(ordenIdsEncontrados);
           }
-          
-          // También verificar el ordenId directo si existe (para compatibilidad con bills no agrupados)
-          if (bill.ordenId != null) {
-            ordenIdsEnBillsAgrupados.add(bill.ordenId!);
-          }
+          // NO agregar bills individuales (BILL-ORD-*) al set de agrupados
+          // Los bills individuales pueden coexistir con bills agrupados
         }
       }
 
@@ -207,13 +234,32 @@ class BillRepository extends ChangeNotifier {
         final estadoNombre =
             (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
 
-        // Solo crear bills para órdenes que estén listas y no pagadas
-        // (excluir órdenes canceladas y pagadas)
-        if (estadoNombre.contains('cancel') ||
-            estadoNombre.contains('pagada') ||
+        // Excluir órdenes canceladas siempre
+        if (estadoNombre.contains('cancel')) {
+          continue;
+        }
+
+        // CRÍTICO: Para órdenes "pagadas", verificar si fueron enviadas al cajero
+        // Si la orden está "pagada" pero NO tiene pagos registrados,
+        // significa que fue enviada al cajero pero aún no se ha procesado el pago
+        // IMPORTANTE: No importa cuándo fue creada, si está "pagada" sin pagos, fue enviada al cajero
+        if (estadoNombre.contains('pagada') ||
             estadoNombre.contains('cerrada') ||
             estadoNombre.contains('cobrada')) {
-          continue;
+          // Verificar si tiene pagos registrados
+          final pagos = ordenData['pagos'] as List<dynamic>? ?? [];
+          final tienePagosRegistrados = pagos.isNotEmpty;
+          
+          if (tienePagosRegistrados) {
+            // Ya tiene pagos, fue cobrada realmente, excluir
+            print('⏭️ BillRepository: Saltando orden $ordenId - Ya tiene pagos registrados (fue cobrada)');
+            continue;
+          }
+          
+          // No tiene pagos pero está "pagada" - fue enviada al cajero
+          // Incluir siempre, sin importar cuándo fue creada
+          print('✅ BillRepository: Incluyendo orden $ordenId - Pagada sin pagos (enviada al cajero)');
+          // Continuar para crear el bill
         }
 
         // CRÍTICO: NO crear bill individual si esta orden ya está en un bill agrupado

@@ -309,6 +309,10 @@ class AdminApp extends StatelessWidget {
           _buildGeneralSummarySection(context, adminController, isTablet),
           SizedBox(height: AppTheme.spacingXL),
 
+          // Información de apertura de caja
+          _buildCashOpeningSection(context, adminController, isTablet),
+          SizedBox(height: AppTheme.spacingXL),
+
           // Consumo del Día con Filtros
           _buildDailyConsumptionSection(
             context,
@@ -451,6 +455,195 @@ class AdminApp extends StatelessWidget {
         icon: Icons.warning_amber,
       ),
     ];
+  }
+
+  Widget _buildCashOpeningSection(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final apertura = controller.getTodayCashOpening();
+    final isOpen = controller.isCashRegisterOpen();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLG),
+        side: BorderSide(
+          color: isOpen ? AppColors.success : AppColors.warning,
+          width: 2,
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(
+          isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      isOpen ? Icons.lock_open : Icons.lock,
+                      color: isOpen ? AppColors.success : AppColors.warning,
+                      size: isTablet ? 28.0 : 24.0,
+                    ),
+                    SizedBox(width: AppTheme.spacingMD),
+                    Text(
+                      'Estado de Caja del Día',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: AppTheme.fontWeightBold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isTablet ? 16.0 : 12.0,
+                    vertical: isTablet ? 8.0 : 6.0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isOpen ? AppColors.success.withValues(alpha: 0.1) : AppColors.warning.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                    style: TextStyle(
+                      fontSize: isTablet ? 14.0 : 12.0,
+                      fontWeight: FontWeight.w600,
+                      color: isOpen ? AppColors.success : AppColors.warning,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (apertura != null) ...[
+              SizedBox(height: AppTheme.spacingLG),
+              Divider(color: AppColors.border),
+              SizedBox(height: AppTheme.spacingMD),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Efectivo Inicial',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: isTablet ? 24.0 : 20.0,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Cajero',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          apertura.usuario,
+                          style: TextStyle(
+                            fontSize: isTablet ? 16.0 : 14.0,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'Fecha y Hora',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          date_utils.AppDateUtils.formatDateTime(apertura.fecha),
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
+                SizedBox(height: AppTheme.spacingMD),
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                  decoration: BoxDecoration(
+                    color: AppColors.inputBackground,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.note,
+                        size: isTablet ? 18.0 : 16.0,
+                        color: AppColors.textSecondary,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          apertura.notaCajero!,
+                          style: TextStyle(
+                            fontSize: isTablet ? 13.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ] else ...[
+              SizedBox(height: AppTheme.spacingMD),
+              Text(
+                'No se ha registrado una apertura de caja hoy',
+                style: TextStyle(
+                  fontSize: isTablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   // Sección de Consumo del Día
@@ -7674,6 +7867,12 @@ class AdminApp extends StatelessWidget {
               ),
               DataColumn(
                 label: Text(
+                  'Método de pago',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
                   'Estado',
                   style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
                 ),
@@ -7784,6 +7983,15 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                   DataCell(Text('\$${ticket.total.toStringAsFixed(2)}')),
+                  DataCell(
+                    Text(
+                      ticket.paymentMethod ?? 'N/A',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12 : 11,
+                        fontWeight: ticket.paymentMethod != null ? FontWeight.w500 : FontWeight.normal,
+                      ),
+                    ),
+                  ),
                   DataCell(
                     Chip(
                       label: Text(
@@ -7959,6 +8167,16 @@ class AdminApp extends StatelessWidget {
                 ),
               ],
             ),
+            if (ticket.paymentMethod != null) ...[
+              SizedBox(height: AppTheme.spacingXS),
+              Text(
+                'Método de pago: ${ticket.paymentMethod}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.textSecondary,
+                  fontSize: AppTheme.fontSizeXS,
+                ),
+              ),
+            ],
             if (ticket.printedBy != null) ...[
               SizedBox(height: AppTheme.spacingXS),
               Text(
@@ -8179,6 +8397,10 @@ class AdminApp extends StatelessWidget {
           _buildCashCloseDateFilters(context, controller, isTablet),
           SizedBox(height: AppTheme.spacingLG),
 
+          // Información de apertura de caja del día
+          _buildCashOpeningInfoInClosures(context, controller, isTablet),
+          SizedBox(height: AppTheme.spacingLG),
+
           // Tabla/Lista de cierres (usar Consumer para asegurar reconstrucción)
           Consumer<AdminController>(
             builder: (context, adminController, child) {
@@ -8359,6 +8581,196 @@ class AdminApp extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  // Información de apertura de caja en vista de cierres
+  Widget _buildCashOpeningInfoInClosures(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final apertura = controller.getTodayCashOpening();
+    final isOpen = controller.isCashRegisterOpen();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLG),
+        side: BorderSide(
+          color: isOpen ? AppColors.success : AppColors.warning,
+          width: 2,
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(
+          isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      isOpen ? Icons.lock_open : Icons.lock,
+                      color: isOpen ? AppColors.success : AppColors.warning,
+                      size: isTablet ? 28.0 : 24.0,
+                    ),
+                    SizedBox(width: AppTheme.spacingMD),
+                    Text(
+                      'Apertura de Caja del Día',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: AppTheme.fontWeightBold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isTablet ? 16.0 : 12.0,
+                    vertical: isTablet ? 8.0 : 6.0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isOpen ? AppColors.success.withValues(alpha: 0.1) : AppColors.warning.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                    style: TextStyle(
+                      fontSize: isTablet ? 14.0 : 12.0,
+                      fontWeight: FontWeight.w600,
+                      color: isOpen ? AppColors.success : AppColors.warning,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (apertura != null) ...[
+              SizedBox(height: AppTheme.spacingLG),
+              Divider(color: AppColors.border),
+              SizedBox(height: AppTheme.spacingMD),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Efectivo Inicial',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: isTablet ? 24.0 : 20.0,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Cajero',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          apertura.usuario,
+                          style: TextStyle(
+                            fontSize: isTablet ? 16.0 : 14.0,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'Fecha y Hora',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          date_utils.AppDateUtils.formatDateTime(apertura.fecha),
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
+                SizedBox(height: AppTheme.spacingMD),
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                  decoration: BoxDecoration(
+                    color: AppColors.inputBackground,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.note,
+                        size: isTablet ? 18.0 : 16.0,
+                        color: AppColors.textSecondary,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          apertura.notaCajero!,
+                          style: TextStyle(
+                            fontSize: isTablet ? 13.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ] else ...[
+              SizedBox(height: AppTheme.spacingMD),
+              Text(
+                'No se ha registrado una apertura de caja hoy',
+                style: TextStyle(
+                  fontSize: isTablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

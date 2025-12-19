@@ -32,6 +32,7 @@ export interface CierreCajaItem {
   creadoEn?: string; // Fecha de creación del cierre manual (opcional)
   notas?: string | null; // Notas/comentarios del cajero (opcional)
   comentarioRevision?: string | null; // Comentario del administrador al revisar (opcional)
+  efectivoInicial?: number; // Efectivo inicial de la apertura de caja (opcional)
 }
 
 export const listarCierresCaja = async (
@@ -223,7 +224,8 @@ export const listarCierresCaja = async (
       cierreId: cierreId ?? undefined,
       creadoEn: utcToMxISO(row.creado_en) ?? undefined,
       notas: row.notas ?? null, // Incluir las notas del cajero
-      comentarioRevision: row.comentario_revision ?? null // Comentario del administrador
+      comentarioRevision: row.comentario_revision ?? null, // Comentario del administrador
+      efectivoInicial: row.efectivo_inicial != null ? Number(row.efectivo_inicial) : undefined, // Efectivo inicial de la apertura
     };
     
     cierresList.push(cierreManual);
@@ -491,7 +493,8 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
     cierreId: cierreId,
     creadoEn: utcToMxISO(row.creado_en) ?? undefined,
     notas: row.notas ?? null,
-    comentarioRevision: row.comentario_revision ?? null
+    comentarioRevision: row.comentario_revision ?? null,
+    efectivoInicial: row.efectivo_inicial != null ? Number(row.efectivo_inicial) : undefined,
   };
 };
 

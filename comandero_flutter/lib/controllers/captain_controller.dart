@@ -185,8 +185,24 @@ class CaptainController extends ChangeNotifier {
           return;
         }
         
-        final tableNumber = alert.tableId;
         final orderIdStr = 'ORD-${alert.orderId.toString().padLeft(6, '0')}';
+        
+        // Obtener número de mesa correcto desde la orden activa
+        int? tableNumber;
+        try {
+          final order = _activeOrders.firstWhere(
+            (o) => o.id == orderIdStr,
+            orElse: () => _activeOrders.firstWhere(
+              (o) => o.id.replaceAll('ORD-', '').replaceAll(RegExp(r'^0+'), '') == alert.orderId.toString(),
+              orElse: () => throw Exception('Orden no encontrada'),
+            ),
+          );
+          tableNumber = order.tableNumber;
+        } catch (e) {
+          // Si no se encuentra la orden, usar tableId como fallback
+          tableNumber = alert.tableId;
+          print('⚠️ Capitán: No se encontró orden $orderIdStr, usando tableId: $tableNumber');
+        }
         
         // Mapear prioridad
         String priority = 'medium';
@@ -217,18 +233,31 @@ class CaptainController extends ChangeNotifier {
           timestamp: alert.createdAt ?? DateTime.now(),
         );
         
-        // Evitar duplicados
-        final isDuplicate = _alerts.any((a) => 
-          a.id == captainAlert.id || 
-          (a.orderNumber == captainAlert.orderNumber && 
-           a.type == captainAlert.type &&
-           (captainAlert.timestamp.difference(a.timestamp).inMinutes < 2))
-        );
+        // Mejorar lógica de detección de duplicados: verificar por ID, orden+tipo, o orden+mensaje similar
+        final isDuplicate = _alerts.any((a) {
+          // Mismo ID
+          if (a.id == captainAlert.id) return true;
+          // Misma orden, mismo tipo, y menos de 5 minutos de diferencia
+          if (a.orderNumber == captainAlert.orderNumber && 
+              a.type == captainAlert.type &&
+              (captainAlert.timestamp.difference(a.timestamp).inMinutes.abs() < 5)) {
+            return true;
+          }
+          // Misma orden y mensaje muy similar (para evitar duplicados por diferentes fuentes)
+          if (a.orderNumber == captainAlert.orderNumber &&
+              a.message == captainAlert.message &&
+              (captainAlert.timestamp.difference(a.timestamp).inMinutes.abs() < 10)) {
+            return true;
+          }
+          return false;
+        });
         
         if (!isDuplicate) {
           _alerts.insert(0, captainAlert);
           notifyListeners();
-          print('✅ Capitán: Alerta agregada - Tipo: ${alert.type.displayName}, Orden: $orderIdStr');
+          print('✅ Capitán: Alerta agregada - Tipo: ${alert.type.displayName}, Orden: $orderIdStr, Mesa: $tableNumber');
+        } else {
+          print('⚠️ Capitán: Alerta duplicada ignorada - Orden: $orderIdStr, Tipo: ${alert.type.displayName}');
         }
       } catch (e, stackTrace) {
         print('❌ Error al procesar alerta en capitán: $e');
@@ -989,7 +1018,7 @@ class CaptainController extends ChangeNotifier {
               ? date_utils.AppDateUtils.parseToLocal(creadoEn)
               : DateTime.now();
             
-            // Parsear metadata para obtener prioridad
+            // Parsear metadata para obtener prioridad y mesaCodigo
             final metadataRaw = alertaData['metadata'];
             Map<String, dynamic> metadata = {};
             if (metadataRaw is String && metadataRaw.isNotEmpty) {
@@ -1030,22 +1059,65 @@ class CaptainController extends ChangeNotifier {
               continue;
             }
             
+            // Obtener número de mesa correcto: primero intentar desde metadata.mesaCodigo, luego desde orden activa
+            int? tableNumber;
+            final mesaCodigo = metadata['mesaCodigo'] as String?;
+            if (mesaCodigo != null) {
+              tableNumber = int.tryParse(mesaCodigo);
+            }
+            
+            // Si no hay mesaCodigo, buscar en la orden activa
+            if (tableNumber == null) {
+              try {
+                final order = _activeOrders.firstWhere(
+                  (o) => o.id == orderIdStr,
+                  orElse: () => _activeOrders.firstWhere(
+                    (o) => o.id.replaceAll('ORD-', '').replaceAll(RegExp(r'^0+'), '') == ordenId.toString(),
+                    orElse: () => throw Exception('Orden no encontrada'),
+                  ),
+                );
+                tableNumber = order.tableNumber;
+              } catch (e) {
+                // Si no se encuentra, usar mesaId como fallback
+                tableNumber = mesaId;
+              }
+            }
+            
             final captainAlert = CaptainAlert(
               id: alertId,
               type: alertType,
               title: alertTypeDisplay,
               message: mensaje,
-              tableNumber: mesaId,
+              tableNumber: tableNumber,
               orderNumber: orderIdStr,
               minutes: 0,
               priority: priorityOldFormat,
               timestamp: timestampParsed,
             );
             
-            // Evitar duplicados
-            final isDuplicate = _alerts.any((a) => a.id == captainAlert.id);
+            // Mejorar lógica de detección de duplicados: verificar por ID, orden+tipo, o orden+mensaje similar
+            final isDuplicate = _alerts.any((a) {
+              // Mismo ID
+              if (a.id == captainAlert.id) return true;
+              // Misma orden, mismo tipo, y menos de 5 minutos de diferencia
+              if (a.orderNumber == captainAlert.orderNumber && 
+                  a.type == captainAlert.type &&
+                  (captainAlert.timestamp.difference(a.timestamp).inMinutes.abs() < 5)) {
+                return true;
+              }
+              // Misma orden y mensaje muy similar (para evitar duplicados por diferentes fuentes)
+              if (a.orderNumber == captainAlert.orderNumber &&
+                  a.message == captainAlert.message &&
+                  (captainAlert.timestamp.difference(a.timestamp).inMinutes.abs() < 10)) {
+                return true;
+              }
+              return false;
+            });
+            
             if (!isDuplicate) {
               _alerts.add(captainAlert);
+            } else {
+              print('⚠️ Capitán: Alerta duplicada ignorada al cargar desde BD - Orden: $orderIdStr, Tipo: $alertType');
             }
           } catch (e) {
             print('⚠️ Capitán: Error al parsear alerta: $e');
@@ -1211,16 +1283,16 @@ class CaptainController extends ChangeNotifier {
     final ordenIdStr = 'ORD-${ordenId.toString().padLeft(6, '0')}';
     final estadoNombre = (data['estadoNombre'] as String?)?.toLowerCase() ?? 'pendiente';
     
-    // Mapear estado
-    String status = 'pendiente';
+    // Mapear estado - usar constantes de OrderStatus para consistencia
+    String status = OrderStatus.pendiente;
     if (estadoNombre.contains('preparacion') || estadoNombre.contains('preparación')) {
-      status = 'enPreparacion';
+      status = OrderStatus.enPreparacion;
     } else if (estadoNombre.contains('listo') && !estadoNombre.contains('recoger')) {
-      status = 'listo';
+      status = OrderStatus.listo;
     } else if (estadoNombre.contains('listo') && estadoNombre.contains('recoger')) {
-      status = 'listoParaRecoger';
+      status = OrderStatus.listoParaRecoger;
     } else if (estadoNombre.contains('cancelada') || estadoNombre.contains('cancelado')) {
-      status = 'cancelada';
+      status = OrderStatus.cancelada;
     }
     
     // Obtener items
@@ -1288,6 +1360,11 @@ class CaptainController extends ChangeNotifier {
       tableNumber = mesaId;
     }
     
+    // CRÍTICO: Determinar si es para llevar basándose en mesaId
+    // Si mesaId es null, entonces es un pedido para llevar
+    // Esto es más confiable que depender de campos booleanos que pueden no estar presentes
+    final isTakeaway = mesaId == null;
+    
     // Parsear fecha
     final fechaCreacion = data['creadoEn'] as String? ?? 
                          data['createdAt'] as String? ?? 
@@ -1314,7 +1391,7 @@ class CaptainController extends ChangeNotifier {
               data['waiter'] as String? ?? 
               'Mesero',
       priority: priority,
-      isTakeaway: data['paraLlevar'] as bool? ?? data['isTakeaway'] as bool? ?? false,
+      isTakeaway: isTakeaway,
       customerName: data['clienteNombre'] as String? ?? data['customerName'] as String?,
       customerPhone: data['clienteTelefono'] as String? ?? data['customerPhone'] as String?,
       pickupTime: data['pickupTime'] as String?,

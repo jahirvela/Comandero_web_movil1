@@ -864,7 +864,9 @@ class CocineroApp extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      'Mesa: ${alert.tableNumber}',
+                      alert.tableNumber == 'Para llevar'
+                          ? 'Para llevar'
+                          : 'Mesa: ${alert.tableNumber}',
                       style: TextStyle(
                         fontSize: isTablet ? 11.0 : 10.0,
                         color: AppColors.textSecondary,

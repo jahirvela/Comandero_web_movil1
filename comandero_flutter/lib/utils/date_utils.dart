@@ -182,17 +182,13 @@ class AppDateUtils {
   /// Horario de verano en México (aproximado):
   /// - Comienza: primer domingo de abril a las 2:00 AM
   /// - Termina: último domingo de octubre a las 2:00 AM
+  /// Obtiene la fecha/hora actual en zona horaria local del sistema
+  /// Si el sistema está configurado con zona horaria de México, devuelve hora de CDMX
+  /// Si no, devuelve la hora local del sistema
   static DateTime now() {
-    final utcNow = DateTime.now().toUtc();
-    
-    // Calcular si estamos en horario de verano en CDMX
-    // Aproximación práctica: abril-octubre = horario de verano (UTC-5)
-    // Noviembre-marzo = horario estándar (UTC-6)
-    final isDaylightSaving = _isDaylightSavingTime(utcNow);
-    final offsetHours = isDaylightSaving ? -5 : -6;
-    
-    // Aplicar offset de CDMX
-    return utcNow.add(Duration(hours: offsetHours));
+    // Usar DateTime.now() directamente que usa la zona horaria del sistema
+    // Si el sistema está configurado con zona horaria de México, ya será correcta
+    return DateTime.now();
   }
   
   /// Verifica si una fecha UTC está en horario de verano de CDMX
@@ -268,9 +264,18 @@ class AppDateUtils {
 
   /// Formatea una fecha para mostrar en la interfaz
   /// Formato: dd/MM/yyyy HH:mm
+  /// Siempre muestra la hora en zona local (CDMX)
   static String formatDateTime(DateTime fecha) {
-    // Asegurar que la fecha esté en hora local
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    // Si la fecha es UTC, convertir a hora local del sistema
+    // Si ya es local, usar directamente
+    DateTime localDate;
+    if (fecha.isUtc) {
+      // Convertir de UTC a hora local del sistema
+      localDate = fecha.toLocal();
+    } else {
+      // Ya es hora local, usar directamente
+      localDate = fecha;
+    }
     
     final day = localDate.day.toString().padLeft(2, '0');
     final month = localDate.month.toString().padLeft(2, '0');

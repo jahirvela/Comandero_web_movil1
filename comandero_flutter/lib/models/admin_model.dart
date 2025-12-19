@@ -1096,6 +1096,7 @@ class CashCloseModel {
   final List<AuditLogEntry> auditLog;
   final int? cierreId; // ID real del cierre en la BD (opcional, solo para manuales)
   final String? comentarioRevision; // Comentario del administrador al revisar (para aclaraciones/rechazos)
+  final double efectivoInicial; // Efectivo inicial de la apertura de caja
 
   CashCloseModel({
     required this.id,
@@ -1118,6 +1119,7 @@ class CashCloseModel {
     required this.auditLog,
     this.cierreId,
     this.comentarioRevision,
+    this.efectivoInicial = 0.0,
   });
 
   // Helper estático para parsear fechas
@@ -1150,6 +1152,7 @@ class CashCloseModel {
           .toList() ?? [],
       cierreId: json['cierreId'] as int?,
       comentarioRevision: json['comentarioRevision'] as String?,
+      efectivoInicial: (json['efectivoInicial'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -1175,6 +1178,7 @@ class CashCloseModel {
       'auditLog': auditLog.map((entry) => entry.toJson()).toList(),
       'cierreId': cierreId,
       'comentarioRevision': comentarioRevision,
+      'efectivoInicial': efectivoInicial,
     };
   }
 
@@ -1199,6 +1203,7 @@ class CashCloseModel {
     List<AuditLogEntry>? auditLog,
     int? cierreId,
     String? comentarioRevision,
+    double? efectivoInicial,
   }) {
     return CashCloseModel(
       id: id ?? this.id,
@@ -1221,6 +1226,7 @@ class CashCloseModel {
       auditLog: auditLog ?? this.auditLog,
       cierreId: cierreId ?? this.cierreId,
       comentarioRevision: comentarioRevision ?? this.comentarioRevision,
+      efectivoInicial: efectivoInicial ?? this.efectivoInicial,
     );
   }
 }

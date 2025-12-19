@@ -214,10 +214,13 @@ class ApiService {
   /// Verificar conectividad con el servidor
   Future<bool> checkConnection() async {
     try {
+      // SIEMPRE imprimir la URL que se está usando (incluso en release para debugging)
+      print('🔍 Verificando conexión con el backend...');
+      print('   URL: ${ApiConfig.baseUrl}');
+      print('   Socket URL: ${ApiConfig.socketUrl}');
+      print('   IsWeb: $kIsWeb');
       if (kDebugMode) {
-        print('🔍 Verificando conexión con el backend...');
-        print('   URL: ${ApiConfig.baseUrl}');
-        print('   IsWeb: $kIsWeb');
+        print('   Debug mode: ON');
       }
       
       // Crear un cliente simple sin interceptores para la verificación

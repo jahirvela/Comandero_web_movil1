@@ -433,7 +433,8 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
                 : DateTime.now();
 
             // Convertir al formato viejo para la UI
-            final tableNumber = mesaId?.toString() ?? 'N/A';
+            // Si mesaId es null, es un pedido para llevar
+            final tableNumber = mesaId?.toString() ?? 'Para llevar';
             final orderIdStr = 'ORD-${ordenId.toString().padLeft(6, '0')}';
 
             final oldFormatAlert = OldKitchenAlert(
@@ -509,7 +510,8 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
         );
 
         // Convertir la nueva alerta al formato del KitchenAlert viejo para mantener compatibilidad con la UI
-        final tableNumber = alert.tableId?.toString() ?? 'N/A';
+        // Si tableId es null, es un pedido para llevar
+        final tableNumber = alert.tableId?.toString() ?? 'Para llevar';
         final orderId = 'ORD-${alert.orderId.toString().padLeft(6, '0')}';
 
         // Mapear tipo del nuevo sistema al formato viejo
@@ -607,11 +609,12 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
         final metadata = dataMap['metadata'] as Map<String, dynamic>? ?? {};
 
         // Preferir mesaCodigo (número visible) sobre mesaId (ID de BD)
+        // Si no hay mesa, es un pedido para llevar
         final tableNumber =
             dataMap['mesaCodigo']?.toString() ??
             metadata['tableNumber']?.toString() ??
             dataMap['mesaId']?.toString() ??
-            'N/A';
+            'Para llevar';
         final orderId =
             dataMap['ordenId']?.toString() ??
             metadata['orderId']?.toString() ??

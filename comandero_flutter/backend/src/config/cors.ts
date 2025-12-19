@@ -25,6 +25,13 @@ const originChecker = (origin: string | undefined, callback: (err: Error | null,
     }
   }
 
+  // Permitir conexiones desde la red local (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  // Esto es necesario para que el APK en el celular pueda conectarse
+  const localNetworkPattern = /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+):\d+$/;
+  if (localNetworkPattern.test(origin)) {
+    return callback(null, true);
+  }
+
   // Verificar coincidencia exacta
   if (allowedOrigins.includes(origin)) {
     return callback(null, true);

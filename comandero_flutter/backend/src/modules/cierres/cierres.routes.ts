@@ -24,11 +24,13 @@ cierresRouter.post(
 );
 
 // PATCH /api/cierres/:id/estado
-// Actualizar el estado de un cierre de caja (solo administrador)
+// Actualizar el estado de un cierre de caja
+// - Administrador: puede cambiar a cualquier estado
+// - Cajero: solo puede descartar aclaraciones (clarification -> approved)
 cierresRouter.patch(
   '/:id/estado',
   authenticate,
-  requireRoles('administrador'),
+  requireRoles('administrador', 'cajero'),
   actualizarEstadoCierreHandler
 );
 

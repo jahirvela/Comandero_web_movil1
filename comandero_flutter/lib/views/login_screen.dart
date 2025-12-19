@@ -3,8 +3,10 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../controllers/auth_controller.dart';
 import '../utils/app_colors.dart';
+import '../config/api_config.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -63,29 +65,72 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } on DioException catch (e) {
       String errorMsg = 'Error al iniciar sesión';
-      
+
       if (e.type == DioExceptionType.connectionError) {
-        errorMsg = 'No se pudo conectar al servidor.\n\nVerifica que:\n• El backend esté corriendo (npm run dev)\n• La URL sea http://localhost:3000/api\n• No haya errores en la terminal del backend';
-      } else if (e.type == DioExceptionType.connectionTimeout || 
-                 e.type == DioExceptionType.receiveTimeout) {
-        errorMsg = 'Tiempo de espera agotado.\n\nEl servidor no respondió a tiempo. Verifica tu conexión.';
+        final baseUrl = ApiConfig.baseUrl;
+        final urlDisplay = kIsWeb ? 'http://localhost:3000/api' : baseUrl;
+        errorMsg =
+            'No se pudo conectar al servidor.\n\nVerifica que:\n• El backend esté corriendo (npm run dev)\n• La URL sea $urlDisplay\n• Tu celular esté en la misma red WiFi que tu laptop\n• No haya errores en la terminal del backend';
+
+        // En Android, mostrar diálogo con opción de configurar servidor
+        if (mounted && !kIsWeb) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Error de Conexión'),
+              content: Text(errorMsg),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cerrar'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    context.push('/server-config');
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Configurar IP'),
+                ),
+              ],
+            ),
+          );
+          return; // Salir temprano para no mostrar toast también
+        }
+      } else if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        errorMsg =
+            'Tiempo de espera agotado.\n\nEl servidor no respondió a tiempo. Verifica tu conexión.';
       } else if (e.response != null) {
         final statusCode = e.response!.statusCode;
         final data = e.response!.data;
-        
+
         if (statusCode == 401) {
-          errorMsg = data['message'] ?? 'Credenciales incorrectas. Verifica usuario y contraseña.';
+          errorMsg =
+              data['message'] ??
+              'Credenciales incorrectas. Verifica usuario y contraseña.';
         } else if (statusCode == 400) {
-          errorMsg = data['message'] ?? 'Datos inválidos. Verifica el formato de los datos.';
+          errorMsg =
+              data['message'] ??
+              'Datos inválidos. Verifica el formato de los datos.';
         } else if (statusCode == 403) {
-          errorMsg = data['message'] ?? 'Usuario deshabilitado. Contacta al administrador.';
+          errorMsg =
+              data['message'] ??
+              'Usuario deshabilitado. Contacta al administrador.';
         } else if (statusCode == 429) {
-          errorMsg = data['message'] ?? 'Demasiados intentos de inicio de sesión. Espera un momento e intenta de nuevo.';
+          errorMsg =
+              data['message'] ??
+              'Demasiados intentos de inicio de sesión. Espera un momento e intenta de nuevo.';
         } else {
-          errorMsg = data['message'] ?? 'Error en el servidor (${statusCode}). Intenta más tarde.';
+          errorMsg =
+              data['message'] ??
+              'Error en el servidor (${statusCode}). Intenta más tarde.';
         }
       }
-      
+
       if (mounted) {
         Fluttertoast.showToast(
           msg: errorMsg,
@@ -139,10 +184,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [
-                          Colors.white,
-                          const Color(0xFFFFF8F0),
-                        ],
+                        colors: [Colors.white, const Color(0xFFFFF8F0)],
                       ),
                     ),
                     padding: const EdgeInsets.all(28),
@@ -276,20 +318,30 @@ class _LoginScreenState extends State<LoginScreen> {
                           decoration: InputDecoration(
                             labelText: 'Nombre de usuario',
                             hintText: 'Ingresa tu nombre de usuario',
-                            prefixIcon: Icon(Icons.person, color: AppColors.primary),
+                            prefixIcon: Icon(
+                              Icons.person,
+                              color: AppColors.primary,
+                            ),
                             filled: true,
                             fillColor: Colors.white,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                              borderSide: BorderSide(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                              borderSide: BorderSide(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: AppColors.primary, width: 2),
+                              borderSide: BorderSide(
+                                color: AppColors.primary,
+                                width: 2,
+                              ),
                             ),
                           ),
                           validator: (value) {
@@ -309,7 +361,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           decoration: InputDecoration(
                             labelText: 'Contraseña',
                             hintText: 'Ingresa tu contraseña',
-                            prefixIcon: Icon(Icons.lock, color: AppColors.primary),
+                            prefixIcon: Icon(
+                              Icons.lock,
+                              color: AppColors.primary,
+                            ),
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword
@@ -327,15 +382,22 @@ class _LoginScreenState extends State<LoginScreen> {
                             fillColor: Colors.white,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                              borderSide: BorderSide(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                              borderSide: BorderSide(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: AppColors.primary, width: 2),
+                              borderSide: BorderSide(
+                                color: AppColors.primary,
+                                width: 2,
+                              ),
                             ),
                           ),
                           validator: (value) {
@@ -405,7 +467,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           '¿Problemas para entrar? Contacta al administrador',
                           style: TextStyle(
                             fontSize: 11,
-                            color: AppColors.textSecondary.withValues(alpha: 0.7),
+                            color: AppColors.textSecondary.withValues(
+                              alpha: 0.7,
+                            ),
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -420,7 +484,6 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-
 }
 
 /// Widget optimizado con const para roles en login
@@ -450,10 +513,7 @@ class _RoleCard extends StatelessWidget {
           ],
         ),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: color.withValues(alpha: 0.3),
-          width: 1.5,
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
         boxShadow: [
           BoxShadow(
             color: color.withValues(alpha: 0.1),

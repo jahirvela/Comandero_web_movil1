@@ -251,6 +251,10 @@ class CajeroApp extends StatelessWidget {
           _buildActionButtons(context, cajeroController, isTablet),
           const SizedBox(height: 24),
 
+          // Información de apertura de caja
+          _buildCashOpeningInfo(cajeroController, isTablet),
+          const SizedBox(height: 24),
+
           // Resumen de consumo del día
           _buildDailyConsumptionSummary(cajeroController, isTablet),
           const SizedBox(height: 24),
@@ -338,6 +342,167 @@ class CajeroApp extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  // Información de apertura de caja
+  Widget _buildCashOpeningInfo(
+    CajeroController controller,
+    bool isTablet,
+  ) {
+    final apertura = controller.getTodayCashOpening();
+    final isOpen = controller.isCashRegisterOpen();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isOpen ? AppColors.success : AppColors.warning,
+          width: 2,
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      isOpen ? Icons.lock_open : Icons.lock,
+                      color: isOpen ? AppColors.success : AppColors.warning,
+                      size: isTablet ? 28.0 : 24.0,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Estado de Caja',
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isTablet ? 16.0 : 12.0,
+                    vertical: isTablet ? 8.0 : 6.0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isOpen ? AppColors.success.withValues(alpha: 0.1) : AppColors.warning.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                    style: TextStyle(
+                      fontSize: isTablet ? 14.0 : 12.0,
+                      fontWeight: FontWeight.w600,
+                      color: isOpen ? AppColors.success : AppColors.warning,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (apertura != null) ...[
+              const SizedBox(height: 16),
+              Divider(color: AppColors.border),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Efectivo Inicial',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: isTablet ? 20.0 : 18.0,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Apertura',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        date_utils.AppDateUtils.formatDateTime(apertura.fecha),
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                  decoration: BoxDecoration(
+                    color: AppColors.inputBackground,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.note,
+                        size: isTablet ? 18.0 : 16.0,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          apertura.notaCajero!,
+                          style: TextStyle(
+                            fontSize: isTablet ? 13.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ] else ...[
+              const SizedBox(height: 12),
+              Text(
+                'No se ha registrado una apertura de caja hoy',
+                style: TextStyle(
+                  fontSize: isTablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -615,18 +780,63 @@ class CajeroApp extends StatelessWidget {
   }
 
   void _showDownloadCSVDialog(BuildContext context, bool isTablet) {
+    final controller = Provider.of<CajeroController>(context, listen: false);
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Figma'),
-        content: const Text('Exportando reporte en formato CSV...'),
+        title: const Text('Exportar CSV'),
+        content: const Text('¿Deseas descargar el reporte de cierres de caja en formato CSV?'),
         actions: [
           TextButton(
-            onPressed: () {
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
               Navigator.of(context).pop();
-              // TODO: Implementar descarga de CSV
+              try {
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+                
+                await controller.exportCashClosuresToCSV();
+                
+                // Cerrar indicador de carga
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de éxito
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ CSV descargado correctamente'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar indicador de carga si está abierto
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de error
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Error al descargar CSV: $e'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              }
             },
-            child: const Text('Aceptar'),
+            child: const Text('Descargar'),
           ),
         ],
       ),
@@ -634,18 +844,49 @@ class CajeroApp extends StatelessWidget {
   }
 
   void _showDownloadPDFDialog(BuildContext context, bool isTablet) {
+    final controller = Provider.of<CajeroController>(context, listen: false);
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Figma'),
-        content: const Text('Exportando reporte en formato PDF...'),
+        title: const Text('Generar PDF'),
+        content: const Text('¿Deseas generar el reporte de cierres de caja en formato PDF?'),
         actions: [
           TextButton(
-            onPressed: () {
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
               Navigator.of(context).pop();
-              // TODO: Implementar descarga de PDF
+              try {
+                // Generar PDF (Printing.layoutPdf abre su propio diálogo del navegador)
+                await controller.generateCashClosuresPDF();
+                
+                // Mostrar mensaje de éxito después de que se cierre el diálogo de impresión
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ PDF generado correctamente'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Mostrar mensaje de error
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Error al generar PDF: $e'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              }
             },
-            child: const Text('Aceptar'),
+            child: const Text('Generar'),
           ),
         ],
       ),
@@ -1864,26 +2105,159 @@ class _CashCloseModalState extends State<_CashCloseModal> {
       ],
     );
 
+    // Guardar el ScaffoldMessenger antes de cerrar el modal
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    
     try {
       await widget.controller.sendCashClose(cashClose);
-      Navigator.of(context).pop();
-    } catch (e) {
-      // Si falla, aún cerrar el modal pero mostrar error
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error al enviar cierre: ${e.toString()}'),
-          backgroundColor: Colors.red,
+      
+      // Cerrar el modal de cierre de caja
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      // Esperar un momento para que el modal se cierre completamente
+      await Future.delayed(const Duration(milliseconds: 300));
+      
+      // Después de completar el cierre, ofrecer generar reportes (CSV y PDF)
+      if (!mounted) return;
+      
+      // Obtener un contexto fresco del Scaffold
+      if (!mounted) return;
+      final scaffoldContext = scaffoldMessenger.context;
+      
+      // Mostrar diálogo preguntando qué reportes quiere generar
+      final reportType = await showDialog<String>(
+        context: scaffoldContext,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Cierre de Caja Completado'),
+          content: const Text(
+            'El cierre de caja se ha enviado correctamente.\n\n'
+            '¿Deseas generar reportes con toda la información financiera del día?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop('later'),
+              child: const Text('Más tarde'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop('csv'),
+              child: const Text('Solo CSV'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop('pdf'),
+              child: const Text('Solo PDF'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop('both'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('CSV y PDF'),
+            ),
+          ],
         ),
       );
+
+      if (reportType != null && reportType != 'later') {
+        try {
+          final List<String> errors = [];
+
+          // Generar CSV si es necesario
+          if (reportType == 'csv' || reportType == 'both') {
+            try {
+              await widget.controller.exportCashClosuresToCSV();
+              print('✅ CSV exportado correctamente');
+            } catch (e) {
+              errors.add('Error al generar CSV: $e');
+              print('❌ Error al exportar CSV: $e');
+            }
+          }
+
+          // Generar PDF si es necesario
+          if (reportType == 'pdf' || reportType == 'both') {
+            try {
+              await widget.controller.generateCashClosuresPDF();
+              print('✅ PDF generado correctamente');
+            } catch (e) {
+              errors.add('Error al generar PDF: $e');
+              print('❌ Error al generar PDF: $e');
+            }
+          }
+
+          // Mostrar mensajes de éxito o error
+          if (mounted) {
+            final messenger = ScaffoldMessenger.of(scaffoldContext);
+            
+            if (errors.isNotEmpty) {
+              // Hubo errores
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text('⚠️ Cierre enviado, pero hubo errores:\n${errors.join('\n')}'),
+                  backgroundColor: Colors.orange,
+                  duration: const Duration(seconds: 5),
+                ),
+              );
+            } else {
+              // Todo salió bien
+              if (reportType == 'csv') {
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ CSV generado y descargado correctamente'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              } else if (reportType == 'pdf') {
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ PDF generado correctamente'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              } else if (reportType == 'both') {
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ CSV y PDF generados correctamente'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
+            }
+          }
+        } catch (e) {
+          print('❌ Error general al generar reportes: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+              SnackBar(
+                content: Text('⚠️ Cierre enviado, pero error al generar reportes: $e'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // Si falla, aún cerrar el modal pero mostrar error
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error al enviar cierre: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
       return;
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Cierre de caja enviado'),
-        backgroundColor: AppColors.success,
-      ),
-    );
   }
 }
