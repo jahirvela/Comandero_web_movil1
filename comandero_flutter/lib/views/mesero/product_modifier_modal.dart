@@ -147,16 +147,12 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
     final category = widget.product['category'] as String?;
 
     // Inicializar salsas según el tipo de producto
+    // NO inicializar automáticamente - dejar que el usuario seleccione
     if (category == 'Tacos' ||
         category == 'Platos Especiales' ||
         category == 'Salsas') {
-      // Seleccionar la primera salsa disponible si existe
-      if (_salsasProducts.isNotEmpty) {
-        final primeraSalsa = _salsasProducts[0];
-        selectedSauce = primeraSalsa['nombre'] as String?;
-      } else {
-        selectedSauce = 'Sin salsa';
-      }
+      // No preseleccionar ninguna salsa - dejar en null para que el usuario elija
+      selectedSauce = null;
     }
 
     // Inicializar tamaño para consomés
@@ -739,6 +735,14 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
 
     // Crear lista de salsas desde la BD + opción "Sin salsa"
     final sauces = <Map<String, dynamic>>[];
+    
+    // Agregar opción "Sin salsa" al PRINCIPIO (como opción por defecto)
+    sauces.add({
+      'nombre': 'Sin salsa',
+      'precio': 0.0,
+    });
+    
+    // Luego agregar las salsas de la BD
     for (var salsa in _salsasProducts) {
       final nombre = salsa['nombre'] as String? ?? '';
       final precio = (salsa['precio'] as num?)?.toDouble() ?? 0.0;
@@ -747,12 +751,8 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
         'precio': precio,
       });
     }
-    // Agregar opción "Sin salsa" al final
-    sauces.add({
-      'nombre': 'Sin salsa',
-      'precio': 0.0,
-    });
 
+    // Si no hay salsas en la BD, solo mostrar "Sin salsa" pero NO preseleccionarla
     if (sauces.isEmpty) return const SizedBox.shrink();
 
     return Card(
@@ -795,7 +795,12 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                 ),
                 onTap: () {
                   setState(() {
-                    selectedSauce = sauce['nombre'] as String;
+                    // Si se hace clic en la opción ya seleccionada, deseleccionarla
+                    if (selectedSauce == sauce['nombre']) {
+                      selectedSauce = null;
+                    } else {
+                      selectedSauce = sauce['nombre'] as String;
+                    }
                   });
                 },
               ),
@@ -919,11 +924,14 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
             height: isTablet ? 56.0 : 48.0,
             child: ElevatedButton(
               onPressed: () {
+                // Si no hay salsa seleccionada, usar "Sin salsa" por defecto
+                final finalSauce = selectedSauce ?? 'Sin salsa';
+                
                 // Obtener el precio de la salsa seleccionada
                 double saucePrice = 0.0;
-                if (selectedSauce != null && selectedSauce != 'Sin salsa') {
+                if (finalSauce != 'Sin salsa') {
                   for (var salsa in _salsasProducts) {
-                    if (salsa['nombre'] == selectedSauce) {
+                    if (salsa['nombre'] == finalSauce) {
                       saucePrice = (salsa['precio'] as num?)?.toDouble() ?? 0.0;
                       break;
                     }
@@ -932,7 +940,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
 
                 final result = {
                   'quantity': quantity,
-                  'sauce': selectedSauce,
+                  'sauce': finalSauce,
                   'saucePrice': saucePrice, // Precio de la salsa seleccionada
                   'size': selectedSize,
                   'temperature': selectedTemperature,

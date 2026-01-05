@@ -226,8 +226,8 @@ class ApiService {
       // Crear un cliente simple sin interceptores para la verificación
       final testDio = Dio(BaseOptions(
         baseUrl: ApiConfig.baseUrl,
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
+        connectTimeout: const Duration(seconds: 20), // Aumentado para web
+        receiveTimeout: const Duration(seconds: 20), // Aumentado para web
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -286,16 +286,25 @@ class ApiService {
   void initialize() {
     ApiConfig.printConfig();
     
-    // Verificar conexión al iniciar (solo en debug y después de un delay)
+    // Verificar conexión al iniciar (solo en debug y después de un delay más largo)
+    // En web, hacerlo de forma completamente asíncrona para no bloquear el inicio
     if (kDebugMode) {
-      // Esperar un poco para que la app termine de inicializar
-      Future.delayed(const Duration(milliseconds: 500), () {
+      // En web, esperar más tiempo y hacerlo completamente en background
+      final delay = kIsWeb ? const Duration(seconds: 2) : const Duration(milliseconds: 500);
+      
+      Future.delayed(delay, () {
+        // Ejecutar en background sin bloquear
         checkConnection().then((connected) {
           if (connected) {
             print('✅ Conexión con el backend verificada');
           } else {
             print('⚠️  No se pudo conectar al backend');
             print('   Verifica que esté corriendo en ${ApiConfig.baseUrl}');
+          }
+        }).catchError((e) {
+          // Ignorar errores en la verificación para no bloquear
+          if (kDebugMode) {
+            print('⚠️  Error al verificar conexión: $e');
           }
         });
       });

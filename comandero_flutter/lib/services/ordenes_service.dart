@@ -157,6 +157,36 @@ class OrdenesService {
     }
   }
 
+  /// Actualizar tiempo estimado de preparación
+  Future<bool> updateTiempoEstimado(int id, int tiempoEstimado) async {
+    try {
+      final response = await _api.patch(
+        '/ordenes/$id/tiempo-estimado',
+        data: {'tiempoEstimado': tiempoEstimado},
+      );
+      if (response.statusCode == 200) {
+        return true;
+      }
+      final errorMsg = response.data?['message'] ?? response.data?['error'] ?? 'Error desconocido';
+      throw Exception('Error del servidor (${response.statusCode}): $errorMsg');
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout) {
+        throw Exception('No se pudo conectar al servidor. Verifica que el backend esté corriendo.');
+      }
+      if (e.response != null) {
+        final errorMsg = e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error del servidor';
+        throw Exception('Error (${e.response!.statusCode}): $errorMsg');
+      }
+      throw Exception('Error de conexión: ${e.message}');
+    } catch (e) {
+      if (e is Exception && !e.toString().contains('Exception: Exception:')) {
+        rethrow;
+      }
+      throw Exception('Error al actualizar tiempo estimado: $e');
+    }
+  }
+
   /// Obtener órdenes con estado "listo" del día actual que NO han sido pagadas
   /// Se usa para cargar notificaciones pendientes cuando el mesero hace login
   Future<List<dynamic>> getOrdenesListas() async {

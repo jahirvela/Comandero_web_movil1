@@ -768,6 +768,28 @@ class SocketService {
     });
   }
 
+  /// Escuchar eventos de inventario - usa el sistema robusto de listeners
+  void onInventoryCreated(Function(dynamic) callback) {
+    on('inventario.creado', (data) {
+      print('📦 Socket: Evento inventario.creado recibido');
+      callback(data);
+    });
+  }
+
+  void onInventoryUpdated(Function(dynamic) callback) {
+    on('inventario.actualizado', (data) {
+      print('📦 Socket: Evento inventario.actualizado recibido');
+      callback(data);
+    });
+  }
+
+  void onInventoryDeleted(Function(dynamic) callback) {
+    on('inventario.eliminado', (data) {
+      print('📦 Socket: Evento inventario.eliminado recibido');
+      callback(data);
+    });
+  }
+
   /// Escuchar cualquier tipo de alerta
   void onAlerta(Function(String tipo, dynamic data) callback) {
     final tipos = [
@@ -784,6 +806,9 @@ class SocketService {
       'ticket.actualizado',
       'cierre.creado',
       'cierre.actualizado',
+      'inventario.creado',
+      'inventario.actualizado',
+      'inventario.eliminado',
     ];
 
     // Usar el método on() que maneja listeners pendientes y activos correctamente

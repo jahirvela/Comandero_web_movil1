@@ -227,7 +227,63 @@ export const crearInsumo = async ({
     await ensureProveedorColumnExists();
     await ensureStockMaximoColumnExists();
     
-    const [result] = await pool.execute<ResultSetHeader>(
+    // Usar transacción para eliminar duplicados y crear nuevo registro de forma atómica
+    return await withTransaction(async (conn) => {
+      // Primero, eliminar cualquier registro existente con el mismo nombre (activo o inactivo)
+      // Esto evita problemas con el constraint único ux_inventario_nombre
+      try {
+        // Obtener IDs de registros existentes con ese nombre
+        const [existingRows] = await conn.query<Array<{ id: number }>>(
+          `SELECT id FROM inventario_item WHERE nombre = :nombre`,
+          { nombre }
+        );
+        
+        if (existingRows.length > 0) {
+          const existingIds = existingRows.map(row => row.id);
+          console.log(`⚠️ Encontrados ${existingIds.length} registro(s) existente(s) con el nombre "${nombre}". Eliminando antes de crear uno nuevo.`);
+          
+          // Eliminar referencias en producto_ingrediente
+          for (const id of existingIds) {
+            try {
+              await conn.execute(
+                `DELETE FROM producto_ingrediente WHERE inventario_item_id = :id`,
+                { id }
+              );
+            } catch (error: any) {
+              // Si la tabla no existe o hay error, continuar
+              console.warn(`Advertencia: No se pudo eliminar referencias en producto_ingrediente para item ${id}:`, error.message);
+            }
+          }
+          
+          // Eliminar referencias en movimiento_inventario
+          for (const id of existingIds) {
+            try {
+              await conn.execute(
+                `DELETE FROM movimiento_inventario WHERE inventario_item_id = :id`,
+                { id }
+              );
+            } catch (error: any) {
+              console.warn(`Advertencia: No se pudo eliminar referencias en movimiento_inventario para item ${id}:`, error.message);
+            }
+          }
+          
+          // Finalmente eliminar los registros del inventario
+          for (const id of existingIds) {
+            await conn.execute(
+              `DELETE FROM inventario_item WHERE id = :id`,
+              { id }
+            );
+          }
+          
+          console.log(`✅ Registro(s) duplicado(s) eliminado(s) correctamente. Procediendo a crear nuevo registro.`);
+        }
+      } catch (error: any) {
+        // Si hay error al eliminar duplicados, registrar pero continuar
+        console.warn(`Advertencia al eliminar registros duplicados:`, error.message);
+      }
+      
+      // Crear el nuevo registro
+      const [result] = await conn.execute<ResultSetHeader>(
       `
       INSERT INTO inventario_item (nombre, categoria, unidad, cantidad_actual, stock_minimo, stock_maximo, costo_unitario, proveedor, activo)
       VALUES (:nombre, :categoria, :unidad, :cantidadActual, :stockMinimo, :stockMaximo, :costoUnitario, :proveedor, :activo)
@@ -243,8 +299,9 @@ export const crearInsumo = async ({
         proveedor: proveedor ?? null,
         activo: activo ? 1 : 0
       }
-    );
-    return result.insertId;
+      );
+      return result.insertId;
+    });
   } catch (error: any) {
     // Si la columna no existe después de intentar crearla, dar un error más claro
     if (error.code === 'ER_BAD_FIELD_ERROR' || error.message?.includes('Unknown column')) {
@@ -341,10 +398,38 @@ export const actualizarInsumo = async (
 };
 
 export const desactivarInsumo = async (id: number) => {
+  // Eliminar físicamente el registro para permitir recrear con el mismo nombre
+  // Primero eliminar referencias en movimiento_inventario
   await pool.execute(
     `
-    UPDATE inventario_item
-    SET activo = 0, actualizado_en = NOW()
+    DELETE FROM movimiento_inventario
+    WHERE inventario_item_id = :id
+    `,
+    { id }
+  );
+  
+  // Eliminar referencias en producto_ingrediente (si existe la tabla)
+  try {
+    const [deleteResult] = await pool.execute<ResultSetHeader>(
+      `
+      DELETE FROM producto_ingrediente
+      WHERE inventario_item_id = :id
+      `,
+      { id }
+    );
+    const deletedCount = deleteResult.affectedRows;
+    if (deletedCount > 0) {
+      console.log(`✅ Se eliminaron ${deletedCount} ingrediente(s) de las recetas que usaban este item del inventario`);
+    }
+  } catch (error: any) {
+    // Si la tabla no existe o hay error, continuar
+    console.warn('Error al eliminar referencias en producto_ingrediente:', error.message);
+  }
+  
+  // Finalmente eliminar el registro del inventario
+  await pool.execute(
+    `
+    DELETE FROM inventario_item
     WHERE id = :id
     `,
     { id }
@@ -386,14 +471,27 @@ export const registrarMovimiento = async ({
         { nuevaCantidad, inventarioItemId }
       );
     } else {
-      await conn.execute(
-        `
-        UPDATE inventario_item
-        SET cantidad_actual = cantidad_actual + (:signo * :cantidad), actualizado_en = NOW()
-        WHERE id = :inventarioItemId
-        `,
-        { inventarioItemId, signo, cantidad }
-      );
+      // Para salidas, asegurar que el stock no sea negativo (establecer en 0 si sería negativo)
+      if (tipo === 'salida') {
+        await conn.execute(
+          `
+          UPDATE inventario_item
+          SET cantidad_actual = GREATEST(0, cantidad_actual - :cantidad), actualizado_en = NOW()
+          WHERE id = :inventarioItemId
+          `,
+          { inventarioItemId, cantidad }
+        );
+      } else {
+        // Para entradas, suma normal
+        await conn.execute(
+          `
+          UPDATE inventario_item
+          SET cantidad_actual = cantidad_actual + :cantidad, actualizado_en = NOW()
+          WHERE id = :inventarioItemId
+          `,
+          { inventarioItemId, cantidad }
+        );
+      }
     }
 
     await conn.execute(

@@ -7,6 +7,7 @@ import {
   crearOrdenController,
   actualizarOrdenController,
   actualizarEstadoOrdenController,
+  actualizarTiempoEstimadoController,
   agregarItemsOrdenController,
   listarEstadosOrdenController,
   listarOrdenesCocinaController
@@ -36,6 +37,11 @@ ordenesRouter.patch(
   '/:id/estado',
   requireRoles('administrador', 'capitan', 'mesero', 'cocinero', 'cajero'),
   actualizarEstadoOrdenController
+);
+ordenesRouter.patch(
+  '/:id/tiempo-estimado',
+  requireRoles('administrador', 'cocinero'),
+  actualizarTiempoEstimadoController
 );
 
 export default ordenesRouter;

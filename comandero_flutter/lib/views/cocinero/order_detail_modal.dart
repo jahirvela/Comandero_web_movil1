@@ -12,11 +12,14 @@ class OrderDetailModal {
     final isTablet = MediaQuery.of(context).size.width > 600;
     final statusColor = controller.getStatusColor(order.status);
     final priorityColor = controller.getPriorityColor(order.priority);
-    final elapsedTime = controller.formatElapsedTime(order.orderTime);
 
     showDialog(
       context: context,
-      builder: (dialogContext) => Dialog(
+      builder: (dialogContext) {
+        // Calcular tiempo transcurrido cada vez que se construye el diálogo
+        final elapsedTime = controller.formatElapsedTime(order.orderTime);
+        
+        return Dialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -141,6 +144,7 @@ class OrderDetailModal {
                         isTablet,
                       ),
                       const SizedBox(height: 8),
+                      // El tiempo se recalcula cada vez que se abre el modal
                       _buildDetailItem(
                         context,
                         'Tiempo transcurrido',
@@ -188,7 +192,8 @@ class OrderDetailModal {
             ],
           ),
         ),
-      ),
+      );
+      },
     );
   }
 

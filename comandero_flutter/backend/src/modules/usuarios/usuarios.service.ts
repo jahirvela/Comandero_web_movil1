@@ -40,17 +40,15 @@ export const crearNuevoUsuario = async (input: CrearUsuarioInput, actorId: numbe
   const usuarioId = await crearUsuario({
     ...rest,
     passwordHash,
+    passwordPlain: password, // Guardar contraseña en texto plano para visualización del administrador
     roles: roles ?? [],
     activo: rest.activo ?? true,
     actualizadoPor: actorId
   });
 
   const usuario = await obtenerUsuario(usuarioId);
-  // Incluir la contraseña en texto plano en la respuesta (solo para el administrador)
-  return {
-    ...usuario,
-    password: password // Agregar contraseña en texto plano para que el admin la vea
-  };
+  // La contraseña ya está incluida en el usuario desde el repositorio
+  return usuario;
 };
 
 export const actualizarUsuarioExistente = async (
@@ -67,7 +65,7 @@ export const actualizarUsuarioExistente = async (
   let passwordPlain: string | undefined;
   if (input.password) {
     passwordHash = await hashPassword(input.password);
-    passwordPlain = input.password; // Guardar contraseña en texto plano para la respuesta
+    passwordPlain = input.password; // Guardar contraseña en texto plano
   }
 
   await actualizarUsuario(id, {
@@ -75,16 +73,14 @@ export const actualizarUsuarioExistente = async (
     telefono: input.telefono,
     activo: input.activo,
     passwordHash,
+    passwordPlain, // Guardar contraseña en texto plano para visualización del administrador
     roles: input.roles,
     actualizadoPor: actorId
   });
 
   const usuario = await obtenerUsuario(id);
-  // Incluir la contraseña en texto plano solo si se actualizó (para el administrador)
-  return {
-    ...usuario,
-    password: passwordPlain // Agregar contraseña en texto plano solo si se actualizó
-  };
+  // La contraseña ya está incluida en el usuario desde el repositorio
+  return usuario;
 };
 
 export const eliminarUsuarioExistente = async (id: number) => {

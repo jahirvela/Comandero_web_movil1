@@ -1264,9 +1264,8 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       );
     }
 
-    // Calcular tiempo estimado basado en items (aproximación: 5-8 min por item)
-    final itemsCount = orderItems.length;
-    final estimatedTime = (itemsCount * 6).clamp(5, 30);
+    // Tiempo estimado por defecto: 6 minutos
+    const defaultEstimatedTime = 6;
 
     // Obtener datos del cliente si están disponibles
     final customerPhone = data['clienteTelefono'] as String?;
@@ -1284,11 +1283,14 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       items: orderItems,
       status: status,
       orderTime: finalOrderTime,
-      estimatedTime: data['estimatedTime'] as int? ?? estimatedTime,
+      estimatedTime: data['tiempoEstimadoPreparacion'] as int? ??
+          data['estimatedTime'] as int? ??
+          defaultEstimatedTime,
       waiter:
           data['creadoPorNombre'] as String? ??
           data['creadoPorUsuarioNombre'] as String? ??
-          'Desconocido',
+          data['creadoPor'] as String? ??
+          'Sin asignar',
       priority: _mapPriorityFromBackend(data['prioridad'] as String?),
       isTakeaway: data['mesaId'] == null,
       customerName: data['clienteNombre'] as String?,
@@ -1484,8 +1486,20 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     }
   }
 
-  // Actualizar tiempo estimado
-  void updateEstimatedTime(String orderId, int newTime) {
+  // Actualizar tiempo estimado (ahora guarda en BD)
+  Future<void> updateEstimatedTime(String orderId, int newTime) async {
+    try {
+      // Convertir orderId de string a int (puede venir como "ORD-123" o "123")
+      final ordenIdStr = orderId.replaceAll('ORD-', '');
+      final ordenIdInt = int.tryParse(ordenIdStr) ?? int.tryParse(orderId);
+      if (ordenIdInt == null) {
+        throw Exception('ID de orden inválido: $orderId');
+      }
+
+      // Actualizar en el backend
+      await _ordenesService.updateTiempoEstimado(ordenIdInt, newTime);
+
+      // Actualizar localmente
     _orders = _orders.map((order) {
       if (order.id == orderId) {
         return order.copyWith(estimatedTime: newTime);
@@ -1493,6 +1507,10 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       return order;
     }).toList();
     notifyListeners();
+    } catch (e) {
+      print('Error al actualizar tiempo estimado: $e');
+      rethrow;
+    }
   }
 
   // Agregar nuevo pedido

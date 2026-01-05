@@ -176,3 +176,31 @@ export const emitCashClosureUpdated = (cierre: any) => {
   io.to(getSocketRooms.role('capitan')).emit('cierre.actualizado', cierre);
 };
 
+// Eventos para inventario
+export const emitInventoryUpdated = (item: any) => {
+  const io = getIO();
+  logger.info({ itemId: item.id, itemName: item.nombre }, 'Emitiendo evento inventario.actualizado');
+  io.emit('inventario.actualizado', item);
+  io.to(getSocketRooms.role('administrador')).emit('inventario.actualizado', item);
+  io.to(getSocketRooms.role('capitan')).emit('inventario.actualizado', item);
+  io.to(getSocketRooms.role('cocinero')).emit('inventario.actualizado', item);
+};
+
+export const emitInventoryCreated = (item: any) => {
+  const io = getIO();
+  logger.info({ itemId: item.id, itemName: item.nombre }, 'Emitiendo evento inventario.creado');
+  io.emit('inventario.creado', item);
+  io.to(getSocketRooms.role('administrador')).emit('inventario.creado', item);
+  io.to(getSocketRooms.role('capitan')).emit('inventario.creado', item);
+  io.to(getSocketRooms.role('cocinero')).emit('inventario.creado', item);
+};
+
+export const emitInventoryDeleted = (itemId: number) => {
+  const io = getIO();
+  logger.info({ itemId }, 'Emitiendo evento inventario.eliminado');
+  io.emit('inventario.eliminado', { id: itemId });
+  io.to(getSocketRooms.role('administrador')).emit('inventario.eliminado', { id: itemId });
+  io.to(getSocketRooms.role('capitan')).emit('inventario.eliminado', { id: itemId });
+  io.to(getSocketRooms.role('cocinero')).emit('inventario.eliminado', { id: itemId });
+};
+

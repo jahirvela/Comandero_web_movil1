@@ -273,6 +273,10 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
         o.descuento_total AS orden_descuento,
         o.impuesto_total AS orden_impuesto,
         o.propina_sugerida AS orden_propina,
+        -- Propina real del pago (de la tabla propina)
+        (SELECT COALESCE(SUM(pr.monto), 0)
+         FROM propina pr
+         WHERE pr.orden_id = o.id) AS propina_pago,
         o.total AS orden_total,
         eo.nombre AS estado_orden,
         -- Cajero (del último pago)
@@ -368,6 +372,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
             AND p.estado = 'aplicado'
         )
       ORDER BY o.creado_en DESC
+      LIMIT 500
     `;
 
     const [rows] = await pool.query<TicketListRow[]>(query);
@@ -421,7 +426,10 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
         const [ordenesAgrupadasData] = await pool.query<RowDataPacket[]>(
           `SELECT 
             o.id, o.subtotal, o.descuento_total, o.impuesto_total, 
-            o.propina_sugerida, o.total, o.creado_en
+            o.total, o.creado_en,
+            (SELECT COALESCE(SUM(pr.monto), 0)
+             FROM propina pr
+             WHERE pr.orden_id = o.id) AS propina_pago
            FROM orden o
            WHERE o.id IN (${ordenIdsAgrupados.map(() => '?').join(',')})`,
           ordenIdsAgrupados
@@ -431,7 +439,8 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
         let subtotalTotal = Number(row.orden_subtotal);
         let descuentoTotal = Number(row.orden_descuento);
         let impuestoTotal = Number(row.orden_impuesto);
-        let propinaTotal = row.orden_propina ? Number(row.orden_propina) : 0;
+        // Usar propina real del pago (de la tabla propina) en lugar de propina sugerida
+        let propinaTotal = row.propina_pago ? Number(row.propina_pago) : 0;
         let totalTotal = Number(row.orden_total);
         let fechaMasAntigua = new Date(row.orden_fecha);
 
@@ -440,7 +449,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
             subtotalTotal += Number(ordenData.subtotal);
             descuentoTotal += Number(ordenData.descuento_total);
             impuestoTotal += Number(ordenData.impuesto_total);
-            propinaTotal += ordenData.propina_sugerida ? Number(ordenData.propina_sugerida) : 0;
+            propinaTotal += ordenData.propina_pago ? Number(ordenData.propina_pago) : 0;
             totalTotal += Number(ordenData.total);
             const fechaOrden = new Date(ordenData.creado_en);
             if (fechaOrden < fechaMasAntigua) {
@@ -534,7 +543,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           subtotal: Number(row.orden_subtotal),
           discount: Number(row.orden_descuento),
           tax: Number(row.orden_impuesto),
-          tip: row.orden_propina ? Number(row.orden_propina) : null,
+          tip: row.propina_pago && Number(row.propina_pago) > 0 ? Number(row.propina_pago) : null,
           total: Number(row.orden_total),
           status,
           createdAt: utcToMxISO(row.orden_fecha) ?? new Date().toISOString(),

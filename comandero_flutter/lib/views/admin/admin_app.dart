@@ -30,7 +30,9 @@ class AdminApp extends StatelessWidget {
       return 'Uno de los roles seleccionados no existe en el sistema.';
     } else if (errorStr.contains('Categoría no encontrada')) {
       return 'La categoría seleccionada no existe en el sistema.';
-    } else if (errorStr.contains('categoria') && (errorStr.contains('no existe') || errorStr.contains('Unknown column'))) {
+    } else if (errorStr.contains('categoria') &&
+        (errorStr.contains('no existe') ||
+            errorStr.contains('Unknown column'))) {
       return 'La columna categoria no existe en la base de datos. El sistema intentará crearla automáticamente. Si el error persiste, ejecuta: npm run migrate:inventory-category en el backend';
     } else if (errorStr.contains('Error de conexión') || 
                errorStr.contains('No se pudo conectar') ||
@@ -39,18 +41,23 @@ class AdminApp extends StatelessWidget {
       return 'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
     } else if (errorStr.contains('401') || errorStr.contains('403')) {
       return 'No tienes permisos para realizar esta acción.';
-    } else if (errorStr.contains('username') && errorStr.contains('ya existe')) {
+    } else if (errorStr.contains('username') &&
+        errorStr.contains('ya existe')) {
       return 'El nombre de usuario ya existe.';
     } else if (errorStr.contains('El backend no retornó')) {
       // Extraer el mensaje específico
-      final match = RegExp(r'El backend no retornó (.+?)\.').firstMatch(errorStr);
+      final match = RegExp(
+        r'El backend no retornó (.+?)\.',
+      ).firstMatch(errorStr);
       if (match != null) {
         return 'Error del servidor: ${match.group(1)}';
       }
     }
     
     // Intentar extraer el mensaje más relevante
-    final match = RegExp(r'Exception:\s*(.+?)(?:Exception:|$)').firstMatch(errorStr);
+    final match = RegExp(
+      r'Exception:\s*(.+?)(?:Exception:|$)',
+    ).firstMatch(errorStr);
     if (match != null) {
       return match.group(1)?.trim() ?? 'Error desconocido';
     }
@@ -507,7 +514,9 @@ class AdminApp extends StatelessWidget {
                     vertical: isTablet ? 8.0 : 6.0,
                   ),
                   decoration: BoxDecoration(
-                    color: isOpen ? AppColors.success.withValues(alpha: 0.1) : AppColors.warning.withValues(alpha: 0.1),
+                    color: isOpen
+                        ? AppColors.success.withValues(alpha: 0.1)
+                        : AppColors.warning.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -587,7 +596,9 @@ class AdminApp extends StatelessWidget {
                         ),
                         SizedBox(height: 4),
                         Text(
-                          date_utils.AppDateUtils.formatDateTime(apertura.fecha),
+                          date_utils.AppDateUtils.formatDateTime(
+                            apertura.fecha,
+                          ),
                           style: TextStyle(
                             fontSize: isTablet ? 14.0 : 12.0,
                             fontWeight: FontWeight.w500,
@@ -599,7 +610,8 @@ class AdminApp extends StatelessWidget {
                   ),
                 ],
               ),
-              if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
+              if (apertura.notaCajero != null &&
+                  apertura.notaCajero!.isNotEmpty) ...[
                 SizedBox(height: AppTheme.spacingMD),
                 Container(
                   padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
@@ -768,9 +780,7 @@ class AdminApp extends StatelessWidget {
               SizedBox(height: AppTheme.spacingMD),
               Text(
                 'No hay datos de consumo para mostrar',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: AppColors.textSecondary,
                   fontWeight: AppTheme.fontWeightSemibold,
                 ),
@@ -778,9 +788,7 @@ class AdminApp extends StatelessWidget {
               SizedBox(height: AppTheme.spacingXS),
               Text(
                 'Los datos aparecerán aquí cuando se registren pagos',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary.withValues(alpha: 0.7),
                 ),
                 textAlign: TextAlign.center,
@@ -1167,7 +1175,9 @@ class AdminApp extends StatelessWidget {
               ),
               decoration: BoxDecoration(
                 color: table.status == TableStatus.enLimpieza
-                    ? Colors.grey.shade200  // Gris claro para "En limpieza"
+                    ? Colors
+                          .grey
+                          .shade200 // Gris claro para "En limpieza"
                     : statusColor.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(AppTheme.radiusSM),
               ),
@@ -1175,7 +1185,9 @@ class AdminApp extends StatelessWidget {
                 statusText,
                 style: TextStyle(
                   color: table.status == TableStatus.enLimpieza
-                      ? Colors.grey.shade800  // Texto oscuro para contraste con gris claro
+                      ? Colors
+                            .grey
+                            .shade800 // Texto oscuro para contraste con gris claro
                       : statusColor,
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
@@ -1370,7 +1382,7 @@ class AdminApp extends StatelessWidget {
                       ),
                       SizedBox(height: AppTheme.spacingXS),
                       Text(
-                        'Stock: ${item.currentStock.toStringAsFixed(1)} ${item.unit}',
+                        'Stock: ${_formatStockNumber(item.currentStock)} ${item.unit}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -1523,10 +1535,11 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    final filterOptions = controller.tableAreas.map((area) => {
-      'value': area,
-      'label': area == 'todos' ? 'Todos' : area,
-    }).toList();
+    final filterOptions = controller.tableAreas
+        .map(
+          (area) => {'value': area, 'label': area == 'todos' ? 'Todos' : area},
+        )
+        .toList();
 
     return Wrap(
       spacing: AppTheme.spacingSM,
@@ -1544,7 +1557,11 @@ class AdminApp extends StatelessWidget {
               }
             },
             onDelete: filter['value'] != 'todos'
-                ? () => _showDeleteAreaDialog(context, controller, filter['value']!)
+                ? () => _showDeleteAreaDialog(
+                    context,
+                    controller,
+                    filter['value']!,
+                  )
                 : null,
             isTablet: isTablet,
           ),
@@ -1559,10 +1576,7 @@ class AdminApp extends StatelessWidget {
   }
 
   // Diálogo para agregar área
-  void _showAddAreaDialog(
-    BuildContext context,
-    AdminController controller,
-  ) {
+  void _showAddAreaDialog(BuildContext context, AdminController controller) {
     final areaNameController = TextEditingController();
     final isTablet = MediaQuery.of(context).size.width > 600;
     
@@ -1640,7 +1654,9 @@ class AdminApp extends StatelessWidget {
     final isTablet = MediaQuery.of(context).size.width > 600;
     
     // Contar cuántas mesas usan esta área
-    final mesasConArea = controller.tables.where((t) => t.section == areaName).length;
+    final mesasConArea = controller.tables
+        .where((t) => t.section == areaName)
+        .length;
     
     showDialog(
       context: context,
@@ -1674,7 +1690,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Área "$areaName" eliminada exitosamente. Las mesas se están actualizando en segundo plano.'),
+                      content: Text(
+                        'Área "$areaName" eliminada exitosamente. Las mesas se están actualizando en segundo plano.',
+                      ),
                       backgroundColor: Colors.green,
                       duration: const Duration(seconds: 3),
                     ),
@@ -1684,7 +1702,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error al eliminar área: ${_extractErrorMessage(e)}'),
+                      content: Text(
+                        'Error al eliminar área: ${_extractErrorMessage(e)}',
+                      ),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 5),
                     ),
@@ -1906,7 +1926,9 @@ class AdminApp extends StatelessWidget {
             Container(
               decoration: BoxDecoration(
                 color: table.status == TableStatus.enLimpieza 
-                    ? Colors.grey.shade200  // Gris claro para "En limpieza"
+                    ? Colors
+                          .grey
+                          .shade200 // Gris claro para "En limpieza"
                     : (table.status == TableStatus.reservada
                         ? Colors.yellow.shade100
                         : textColor.withValues(alpha: 0.15)),
@@ -1984,7 +2006,9 @@ class AdminApp extends StatelessWidget {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Error al actualizar estado: ${_extractErrorMessage(e)}'),
+                            content: Text(
+                              'Error al actualizar estado: ${_extractErrorMessage(e)}',
+                            ),
                             backgroundColor: Colors.red,
                             duration: const Duration(seconds: 3),
                           ),
@@ -2043,8 +2067,12 @@ class AdminApp extends StatelessWidget {
     final numberController = TextEditingController();
     final seatsController = TextEditingController();
     // Obtener áreas disponibles (excluyendo 'todos')
-    final availableAreas = controller.tableAreas.where((a) => a != 'todos').toList();
-    String selectedSection = availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal';
+    final availableAreas = controller.tableAreas
+        .where((a) => a != 'todos')
+        .toList();
+    String selectedSection = availableAreas.isNotEmpty
+        ? availableAreas.first
+        : 'Área Principal';
 
     showDialog(
       context: context,
@@ -2111,10 +2139,14 @@ class AdminApp extends StatelessWidget {
                       labelText: 'Sección *',
                       border: OutlineInputBorder(),
                     ),
-                    items: availableAreas.map((area) => DropdownMenuItem(
+                      items: availableAreas
+                          .map(
+                            (area) => DropdownMenuItem(
                       value: area,
                       child: Text(area),
-                    )).toList(),
+                            ),
+                          )
+                          .toList(),
                     onChanged: (value) {
                       if (value != null) {
                         setState(() {
@@ -2148,9 +2180,8 @@ class AdminApp extends StatelessWidget {
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                 );
 
                 try {
@@ -2177,7 +2208,9 @@ class AdminApp extends StatelessWidget {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Error al crear mesa: ${_extractErrorMessage(e)}'),
+                          content: Text(
+                            'Error al crear mesa: ${_extractErrorMessage(e)}',
+                          ),
                         backgroundColor: Colors.red,
                         duration: const Duration(seconds: 5),
                       ),
@@ -2211,11 +2244,17 @@ class AdminApp extends StatelessWidget {
     );
     final seatsController = TextEditingController(text: table.seats.toString());
     // Obtener áreas disponibles (excluyendo 'todos')
-    final availableAreas = controller.tableAreas.where((a) => a != 'todos').toList();
-    String selectedSection = table.section ?? (availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal');
+    final availableAreas = controller.tableAreas
+        .where((a) => a != 'todos')
+        .toList();
+    String selectedSection =
+        table.section ??
+        (availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal');
     // Si el área de la mesa no está en la lista, usar la primera disponible
     if (!availableAreas.contains(selectedSection)) {
-      selectedSection = availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal';
+      selectedSection = availableAreas.isNotEmpty
+          ? availableAreas.first
+          : 'Área Principal';
     }
     final isTablet = MediaQuery.of(context).size.width > 600;
 
@@ -2296,10 +2335,14 @@ class AdminApp extends StatelessWidget {
                       labelText: 'Sección *',
                       border: OutlineInputBorder(),
                     ),
-                    items: availableAreas.map((area) => DropdownMenuItem(
+                      items: availableAreas
+                          .map(
+                            (area) => DropdownMenuItem(
                       value: area,
                       child: Text(area),
-                    )).toList(),
+                            ),
+                          )
+                          .toList(),
                     onChanged: (value) {
                       if (value != null) {
                         setState(() {
@@ -2325,9 +2368,8 @@ class AdminApp extends StatelessWidget {
                   showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (context) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
 
                   try {
@@ -2359,7 +2401,9 @@ class AdminApp extends StatelessWidget {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Error al actualizar mesa: ${_extractErrorMessage(e)}'),
+                          content: Text(
+                            'Error al actualizar mesa: ${_extractErrorMessage(e)}',
+                          ),
                           backgroundColor: Colors.red,
                           duration: const Duration(seconds: 5),
                         ),
@@ -2402,9 +2446,8 @@ class AdminApp extends StatelessWidget {
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
               );
 
               try {
@@ -2431,7 +2474,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error al eliminar mesa: ${_extractErrorMessage(e)}'),
+                      content: Text(
+                        'Error al eliminar mesa: ${_extractErrorMessage(e)}',
+                      ),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 5),
                     ),
@@ -2700,9 +2745,12 @@ class AdminApp extends StatelessWidget {
     final Map<String, List<MenuItem>> productsByCategory = {};
     for (final product in products) {
       // Normalizar categoría: primera letra mayúscula, resto minúsculas
-      String category = product.category.isNotEmpty ? product.category : 'Otros';
+      String category = product.category.isNotEmpty
+          ? product.category
+          : 'Otros';
       if (category.isNotEmpty) {
-        category = category[0].toUpperCase() + category.substring(1).toLowerCase();
+        category =
+            category[0].toUpperCase() + category.substring(1).toLowerCase();
       }
       if (!productsByCategory.containsKey(category)) {
         productsByCategory[category] = [];
@@ -2724,7 +2772,9 @@ class AdminApp extends StatelessWidget {
             // Encabezado de categoría
             Padding(
               padding: EdgeInsets.only(
-                top: category == sortedCategories.first ? 0 : AppTheme.spacingXL,
+                top: category == sortedCategories.first
+                    ? 0
+                    : AppTheme.spacingXL,
                 bottom: AppTheme.spacingMD,
               ),
               child: Row(
@@ -2775,7 +2825,12 @@ class AdminApp extends StatelessWidget {
                 itemCount: categoryProducts.length,
                 itemBuilder: (context, index) {
                   final product = categoryProducts[index];
-                  return _buildMenuProductCard(context, product, controller, isTablet);
+                  return _buildMenuProductCard(
+                    context,
+                    product,
+                    controller,
+                    isTablet,
+                  );
                 },
               )
             else
@@ -2808,7 +2863,9 @@ class AdminApp extends StatelessWidget {
     final hasSizes = product.hasSizes && (product.sizes?.isNotEmpty ?? false);
     final priceLabel = hasSizes
         ? 'Varios precios'
-        : (product.price != null ? '\$${product.price!.toStringAsFixed(0)}' : 'Sin precio');
+        : (product.price != null
+              ? '\$${product.price!.toStringAsFixed(0)}'
+              : 'Sin precio');
 
     return Card(
       elevation: 2,
@@ -2867,6 +2924,23 @@ class AdminApp extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
+                      icon: Icon(
+                        Icons.restaurant_menu,
+                        size: isTablet ? 20 : 18,
+                      ),
+                      color: Colors.orange,
+                      tooltip: 'Configurar receta',
+                      onPressed: () => _showRecipeModal(
+                        context,
+                        product,
+                        controller,
+                        isTablet,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    SizedBox(width: AppTheme.spacingXS),
+                    IconButton(
                       icon: Icon(Icons.edit, size: isTablet ? 20 : 18),
                       color: AppColors.primary,
                       onPressed: () => _showEditProductModal(
@@ -2911,7 +2985,9 @@ class AdminApp extends StatelessWidget {
                       color: Colors.white,
                     ),
                   ),
-                  backgroundColor: MenuCategory.getCategoryColor(product.category),
+                  backgroundColor: MenuCategory.getCategoryColor(
+                    product.category,
+                  ),
                   padding: EdgeInsets.symmetric(
                     horizontal: AppTheme.spacingSM,
                     vertical: AppTheme.spacingXS,
@@ -2924,10 +3000,15 @@ class AdminApp extends StatelessWidget {
                       fontSize: isTablet
                           ? AppTheme.fontSizeSM
                           : AppTheme.fontSizeXS,
-                      color: product.isAvailable ? AppColors.success : AppColors.error,
+                      color: product.isAvailable
+                          ? AppColors.success
+                          : AppColors.error,
                     ),
                   ),
-                  backgroundColor: (product.isAvailable ? AppColors.success : AppColors.error)
+                  backgroundColor:
+                      (product.isAvailable
+                              ? AppColors.success
+                              : AppColors.error)
                       .withValues(alpha: 0.15),
                   padding: EdgeInsets.symmetric(
                     horizontal: AppTheme.spacingSM,
@@ -2936,7 +3017,11 @@ class AdminApp extends StatelessWidget {
                 ),
                 if (product.serveHot)
                   Chip(
-                    avatar: const Icon(Icons.local_fire_department, size: 16, color: Colors.white),
+                    avatar: const Icon(
+                      Icons.local_fire_department,
+                      size: 16,
+                      color: Colors.white,
+                    ),
                     label: Text(
                       'Caliente',
                       style: TextStyle(
@@ -2954,7 +3039,11 @@ class AdminApp extends StatelessWidget {
                   ),
                 if (product.isSpicy)
                   Chip(
-                    avatar: const Icon(Icons.local_fire_department_outlined, size: 16, color: Colors.white),
+                    avatar: const Icon(
+                      Icons.local_fire_department_outlined,
+                      size: 16,
+                      color: Colors.white,
+                    ),
                     label: Text(
                       'Picante',
                       style: TextStyle(
@@ -3034,7 +3123,9 @@ class AdminApp extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               color: AppColors.warning.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMD,
+                              ),
                               border: Border.all(
                                 color: AppColors.warning.withValues(alpha: 0.3),
                               ),
@@ -3109,7 +3200,9 @@ class AdminApp extends StatelessWidget {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Error: ${_extractErrorMessage(e)}'),
+                              content: Text(
+                                'Error: ${_extractErrorMessage(e)}',
+                              ),
                               backgroundColor: Colors.red,
                               duration: const Duration(seconds: 3),
                             ),
@@ -3185,9 +3278,8 @@ class AdminApp extends StatelessWidget {
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
                 );
 
                 try {
@@ -3216,9 +3308,7 @@ class AdminApp extends StatelessWidget {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(
-                          _extractErrorMessage(e),
-                        ),
+                        content: Text(_extractErrorMessage(e)),
                         backgroundColor: Colors.red,
                         duration: const Duration(seconds: 5),
                       ),
@@ -3262,17 +3352,16 @@ class AdminApp extends StatelessWidget {
 
     TextEditingController _createPriceController(double price) {
       final controller = TextEditingController(
-        text: price > 0 ? (price % 1 == 0 ? price.toStringAsFixed(0) : price.toString()) : '',
+        text: price > 0
+            ? (price % 1 == 0 ? price.toStringAsFixed(0) : price.toString())
+            : '',
       );
       sizePriceControllers.add(controller);
       return controller;
     }
 
     void addSizeEntry({String name = '', double price = 0.0}) {
-      sizes = [
-        ...sizes,
-        MenuSize(name: name, price: price),
-      ];
+      sizes = [...sizes, MenuSize(name: name, price: price)];
       _createNameController(name);
       _createPriceController(price);
     }
@@ -3288,7 +3377,10 @@ class AdminApp extends StatelessWidget {
 
     void clearSizeEntries() {
       sizes = [];
-      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+      for (final controller in [
+        ...sizeNameControllers,
+        ...sizePriceControllers,
+      ]) {
         controller.dispose();
       }
       sizeNameControllers.clear();
@@ -3302,10 +3394,14 @@ class AdminApp extends StatelessWidget {
     }
 
     void disposeSizeControllers() {
-      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+      for (final controller in [
+        ...sizeNameControllers,
+        ...sizePriceControllers,
+      ]) {
         controller.dispose();
       }
     }
+
     bool serveHot = false;
     bool isSpicy = false;
     bool allowSauces = false;
@@ -3422,7 +3518,9 @@ class AdminApp extends StatelessWidget {
                         labelText: 'Precio (\$) *',
                         border: OutlineInputBorder(),
                       ),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                       enabled: !hasSizes,
                       validator: hasSizes
                           ? null
@@ -3431,7 +3529,10 @@ class AdminApp extends StatelessWidget {
                                 return 'Campo obligatorio';
                               }
                               // Limpiar el valor antes de parsear
-                              final cleanValue = value.trim().replaceAll(',', '.');
+                              final cleanValue = value.trim().replaceAll(
+                                ',',
+                                '.',
+                              );
                               final price = double.tryParse(cleanValue);
                               if (price == null || price <= 0) {
                                 return 'Debe ser un número válido mayor a 0';
@@ -3524,12 +3625,17 @@ class AdminApp extends StatelessWidget {
                   // Limpiar y validar el precio antes de parsear
                   double? precio;
                   if (!hasSizes) {
-                    final precioTexto = priceController.text.trim().replaceAll(',', '.');
+                    final precioTexto = priceController.text.trim().replaceAll(
+                      ',',
+                      '.',
+                    );
                     precio = double.tryParse(precioTexto);
                     if (precio == null || precio <= 0) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('El precio debe ser un número válido mayor a 0'),
+                          content: Text(
+                            'El precio debe ser un número válido mayor a 0',
+                          ),
                           backgroundColor: Colors.orange,
                         ),
                       );
@@ -3559,9 +3665,8 @@ class AdminApp extends StatelessWidget {
                   showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (context) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
 
                   try {
@@ -3591,7 +3696,9 @@ class AdminApp extends StatelessWidget {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Error al crear producto: ${_extractErrorMessage(e)}'),
+                          content: Text(
+                            'Error al crear producto: ${_extractErrorMessage(e)}',
+                          ),
                           backgroundColor: Colors.red,
                           duration: const Duration(seconds: 5),
                         ),
@@ -3666,7 +3773,9 @@ class AdminApp extends StatelessWidget {
                       isDense: true,
                       prefixText: '\$',
                     ),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     controller: sizePriceControllers[index],
                     onChanged: (value) {
                       final cleanValue = value.trim().replaceAll(',', '.');
@@ -3730,14 +3839,19 @@ class AdminApp extends StatelessWidget {
 
     TextEditingController _createPriceController(double price) {
       final controller = TextEditingController(
-        text: price > 0 ? (price % 1 == 0 ? price.toStringAsFixed(0) : price.toString()) : '',
+        text: price > 0
+            ? (price % 1 == 0 ? price.toStringAsFixed(0) : price.toString())
+            : '',
       );
       sizePriceControllers.add(controller);
       return controller;
     }
 
     void syncControllersWithSizes() {
-      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+      for (final controller in [
+        ...sizeNameControllers,
+        ...sizePriceControllers,
+      ]) {
         controller.dispose();
       }
       sizeNameControllers.clear();
@@ -3749,10 +3863,7 @@ class AdminApp extends StatelessWidget {
     }
 
     void addSizeEntry({String name = '', double price = 0.0}) {
-      sizes = [
-        ...sizes,
-        MenuSize(name: name, price: price),
-      ];
+      sizes = [...sizes, MenuSize(name: name, price: price)];
       _createNameController(name);
       _createPriceController(price);
     }
@@ -3768,7 +3879,10 @@ class AdminApp extends StatelessWidget {
 
     void clearSizeEntries() {
       sizes = [];
-      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+      for (final controller in [
+        ...sizeNameControllers,
+        ...sizePriceControllers,
+      ]) {
         controller.dispose();
       }
       sizeNameControllers.clear();
@@ -3784,10 +3898,14 @@ class AdminApp extends StatelessWidget {
     syncControllersWithSizes();
 
     void disposeSizeControllers() {
-      for (final controller in [...sizeNameControllers, ...sizePriceControllers]) {
+      for (final controller in [
+        ...sizeNameControllers,
+        ...sizePriceControllers,
+      ]) {
         controller.dispose();
       }
     }
+
     bool serveHot = product.serveHot;
     bool isSpicy = product.isSpicy;
     bool allowSauces = product.allowSauces;
@@ -4022,9 +4140,8 @@ class AdminApp extends StatelessWidget {
                   showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (context) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
 
                   try {
@@ -4054,7 +4171,9 @@ class AdminApp extends StatelessWidget {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Error al actualizar producto: ${_extractErrorMessage(e)}'),
+                          content: Text(
+                            'Error al actualizar producto: ${_extractErrorMessage(e)}',
+                          ),
                           backgroundColor: Colors.red,
                           duration: const Duration(seconds: 5),
                         ),
@@ -4075,204 +4194,217 @@ class AdminApp extends StatelessWidget {
     );
   }
 
-  // Modal para receta/ingredientes
+  // Modal para configurar receta de producto
   void _showRecipeModal(
     BuildContext context,
     MenuItem product,
     AdminController controller,
     bool isTablet,
   ) {
-    List<RecipeIngredient> ingredients =
-        product.recipeIngredients?.toList() ?? [];
-    bool showCustomForm = false;
-
+    // Obtener el producto actualizado del controller para asegurar que tenga los ingredientes más recientes
+    final currentProduct = controller.menuItems.firstWhere(
+      (item) => item.id == product.id,
+      orElse: () => product,
+    );
+    List<RecipeIngredient> recipeIngredients =
+        currentProduct.recipeIngredients?.toList() ?? [];
+    
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Receta / Ingredientes'),
+              Expanded(
+                child: Text(
+                  'Receta: ${product.name}',
+                  style: TextStyle(fontSize: isTablet ? 20 : 18),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ],
           ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (ingredients.isEmpty && !showCustomForm)
-                  Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(AppTheme.spacingXL),
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.restaurant_menu,
-                            size: 64,
-                            color: AppColors.textSecondary,
-                          ),
-                          SizedBox(height: AppTheme.spacingMD),
-                          Text(
-                            'No hay ingredientes configurados',
-                            style: Theme.of(context).textTheme.bodyLarge
-                                ?.copyWith(color: AppColors.textSecondary),
-                          ),
-                        ],
-                      ),
+          content: SizedBox(
+            width: isTablet ? 600 : double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Configura los ingredientes que se descontarán automáticamente del inventario cuando se prepare este producto.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppColors.textSecondary,
                     ),
                   ),
-                if (!showCustomForm && ingredients.isNotEmpty)
-                  for (final ingredient in ingredients)
-                    Card(
-                      margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-                          child: Icon(
-                            ingredient.inventoryItemId != null
-                                ? Icons.inventory_2
-                                : Icons.food_bank,
-                            color: AppColors.primary,
-                            size: 18,
-                          ),
-                        ),
-                        title: Text(
-                          ingredient.name,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${ingredient.quantityPerPortion} ${ingredient.unit} por porción',
-                            ),
-                            SizedBox(height: AppTheme.spacingXS / 2),
-                            Text(
-                              'Categoría: ${ingredient.category ?? 'Otros'}'
-                              '${ingredient.inventoryItemId != null ? ' • Inventario' : ' • Personalizado'}',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary,
-                                  ),
-                            ),
-                            SizedBox(height: AppTheme.spacingXS),
-                            Wrap(
-                              spacing: AppTheme.spacingXS,
-                              runSpacing: AppTheme.spacingXS / 2,
-                              children: [
-                                Chip(
-                                  label: Text(
-                                    ingredient.inventoryItemId != null
-                                        ? 'Inventario'
-                                        : 'Personalizado',
-                                  ),
-                                  visualDensity: VisualDensity.compact,
-                                  backgroundColor: ingredient.inventoryItemId != null
-                                      ? AppColors.primary.withValues(alpha: 0.15)
-                                      : AppColors.secondary.withValues(alpha: 0.15),
-                                ),
-                                Chip(
-                                  label: Text(
-                                    ingredient.autoDeduct
-                                        ? 'Descuenta stock'
-                                        : 'Sin descuento',
-                                  ),
-                                  visualDensity: VisualDensity.compact,
-                                  backgroundColor: ingredient.autoDeduct
-                                      ? AppColors.success.withValues(alpha: 0.15)
-                                      : Colors.grey.withValues(alpha: 0.15),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () {
-                            ingredients.removeWhere((ing) => ing.id == ingredient.id);
-                            setState(() {});
-                          },
-                        ),
+                  SizedBox(height: AppTheme.spacingMD),
+                  
+                  // Lista de ingredientes actuales
+                  if (recipeIngredients.isNotEmpty) ...[
+                    Text(
+                      'Ingredientes configurados:',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
                       ),
                     ),
-                if (!showCustomForm) ...[
-                  SizedBox(height: AppTheme.spacingMD),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        showCustomForm = true;
-                      });
-                    },
-                    icon: const Icon(Icons.add),
-                    label: const Text('Agregar ingrediente'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    ...recipeIngredients.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final ingredient = entry.value;
+                      return Card(
+                        margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
+                        child: ListTile(
+                          title: Text(ingredient.name),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${ingredient.quantityPerPortion} ${ingredient.unit} por porción',
+                                style: TextStyle(
+                                  color: ingredient.autoDeduct 
+                                    ? Colors.green 
+                                    : AppColors.textSecondary,
+                                ),
+                              ),
+                              if (ingredient.isOptional)
+                                Text(
+                                  'Opcional',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.orange,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (ingredient.autoDeduct)
+                                Icon(
+                                  Icons.auto_awesome,
+                                  size: 16,
+                                  color: Colors.green,
+                                ),
+                              SizedBox(width: AppTheme.spacingXS),
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                onPressed: () => _showEditIngredientDialog(
+                                  context,
+                                  ingredient,
+                                  index,
+                                  recipeIngredients,
+                                  setState,
+                                  isTablet,
+                                ),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                              SizedBox(width: AppTheme.spacingXS),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete,
+                                  size: 18,
+                                  color: Colors.red,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    recipeIngredients.removeAt(index);
+                                  });
+                                },
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                    SizedBox(height: AppTheme.spacingMD),
+                  ],
+                  
+                  // Botones para agregar ingredientes
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            await _showAddIngredientFromInventoryDialog(
+                            context,
+                            controller,
+                            recipeIngredients,
+                            setState,
+                            isTablet,
+                            );
+                          },
+                          icon: const Icon(Icons.inventory_2),
+                          label: const Text('Desde Inventario'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-                if (showCustomForm)
-                  _IngredientFormWidget(
-                    controller: controller,
-                    ingredients: ingredients,
-                    onSave: (newIngredients) {
-                      setState(() {
-                        ingredients = newIngredients;
-                        showCustomForm = false;
-                      });
-                    },
-                  ),
-              ],
+              ),
             ),
           ),
           actions: [
-            if (showCustomForm)
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    showCustomForm = false;
-                  });
-                },
-                child: const Text('Volver a sugeridos'),
-              )
-            else
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancelar'),
-              ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
             ElevatedButton(
               onPressed: () async {
                 // Mostrar indicador de carga
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
                 );
-
+                
                 try {
-                  final updatedProduct = product.copyWith(
-                    recipeIngredients: ingredients,
-                    updatedAt: DateTime.now(),
+                  // Obtener el producto actualizado del controller
+                  final updatedProduct = controller.menuItems.firstWhere(
+                    (item) => item.id == product.id,
+                    orElse: () => product,
                   );
-                  await controller.updateMenuItem(updatedProduct);
+                  
+                  // Actualizar producto con la nueva receta
+                  await controller.updateMenuItem(
+                    updatedProduct.copyWith(
+                      recipeIngredients: recipeIngredients,
+                    ),
+                  );
+                  
+                  // Recargar productos e inventario
+                  await Future.wait([
+                    controller.loadMenuItems(),
+                    controller.loadInventory(),
+                  ]);
                   
                   // Cerrar diálogo de carga
                   if (context.mounted) Navigator.of(context).pop();
                   
-                  // Cerrar diálogo de receta
+                  // Cerrar modal de receta
                   if (context.mounted) Navigator.of(context).pop();
                   
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Receta guardada exitosamente'),
+                      SnackBar(
+                        content: Text(
+                          'Receta de "${product.name}" guardada correctamente.',
+                        ),
                         backgroundColor: Colors.green,
+                        duration: const Duration(seconds: 3),
                       ),
                     );
                   }
@@ -4283,19 +4415,353 @@ class AdminApp extends StatelessWidget {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Error al guardar receta: ${_extractErrorMessage(e)}'),
+                        content: Text('Error al guardar receta: $e'),
                         backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 5),
                       ),
                     );
                   }
                 }
               },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
               child: const Text('Guardar Receta'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Diálogo para agregar ingrediente desde inventario
+  Future<void> _showAddIngredientFromInventoryDialog(
+    BuildContext context,
+    AdminController controller,
+    List<RecipeIngredient> recipeIngredients,
+    StateSetter setState,
+    bool isTablet,
+  ) async {
+    final quantityController = TextEditingController();
+    final unitController = TextEditingController();
+    InventoryItem? selectedItem;
+    final isOptionalNotifier = ValueNotifier<bool>(false);
+
+    // Mostrar indicador de carga mientras se recarga el inventario
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    // Recargar inventario antes de abrir el diálogo
+    await controller.loadInventory();
+
+    // Cerrar el diálogo de carga
+    if (context.mounted) Navigator.of(context).pop();
+
+    if (!context.mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, dialogSetState) => ValueListenableBuilder<bool>(
+          valueListenable: isOptionalNotifier,
+          builder: (context, isOptional, _) => AlertDialog(
+            title: const Text('Agregar Ingrediente desde Inventario'),
+          content: SizedBox(
+            width: isTablet ? 500 : double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                  Builder(
+                    builder: (context) {
+                      final filteredItems = controller.inventory
+                          .where((item) {
+                            // Excluir solo items realmente expirados (no los que tienen stock 0)
+                            if (item.status == InventoryStatus.expired) return false;
+                            // Verificar si el item ya está en la receta por inventarioItemId
+                            final alreadyInRecipe = recipeIngredients.any(
+                              (ing) => ing.inventoryItemId == item.id,
+                            );
+                            return !alreadyInRecipe;
+                          })
+                          .toList();
+                      filteredItems.sort((a, b) => a.name.compareTo(b.name));
+                      
+                      return DropdownButtonFormField<InventoryItem>(
+                  decoration: const InputDecoration(
+                    labelText: 'Seleccionar ingrediente',
+                    border: OutlineInputBorder(),
+                  ),
+                        items: filteredItems
+                            .map(
+                              (item) => DropdownMenuItem(
+                            value: item,
+                            child: Text('${item.name} (${item.unit})'),
+                              ),
+                            )
+                      .toList(),
+                  onChanged: (value) {
+                    dialogSetState(() {
+                      selectedItem = value;
+                            // Sugerir una unidad más pequeña si el inventario está en kg o L
+                            if (value != null) {
+                              final unidadInventario = value.unit.toLowerCase();
+                              if (unidadInventario == 'kg' || unidadInventario == 'kilogramo' || unidadInventario == 'kilogramos') {
+                                unitController.text = 'g';
+                              } else if (unidadInventario == 'l' || unidadInventario == 'litro' || unidadInventario == 'litros') {
+                                unitController.text = 'ml';
+                              } else {
+                                unitController.text = value.unit;
+                              }
+                            }
+                          });
+                        },
+                      );
+                  },
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                  controller: quantityController,
+                  decoration: const InputDecoration(
+                    labelText: 'Cantidad por porción',
+                    hintText: 'Ej: 30',
+                    border: OutlineInputBorder(),
+                  ),
+                          keyboardType: TextInputType.numberWithOptions(
+                            decimal: true,
+                ),
+            ),
+          ),
+                      SizedBox(width: AppTheme.spacingSM),
+                      Expanded(
+                        child: TextFormField(
+                    controller: unitController,
+                    decoration: const InputDecoration(
+                      labelText: 'Unidad',
+                            hintText: 'g, ml, etc.',
+                      border: OutlineInputBorder(),
+                            helperText: 'Unidad para la receta',
+                          ),
+                    ),
+                      ),
+                    ],
+                  ),
+                  if (selectedItem != null)
+                    Padding(
+                      padding: EdgeInsets.only(top: AppTheme.spacingXS),
+                      child: Text(
+                        'En inventario: ${selectedItem!.unit}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.textSecondary,
+                          fontStyle: FontStyle.italic,
+                        ),
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                  CheckboxListTile(
+                    title: const Text('Ingrediente opcional'),
+                    subtitle: const Text(
+                      'Marcar si este ingrediente no es esencial para la receta (ej: cilantro, cebolla). Se usa solo para referencia y también se descuenta del inventario si está activado el descuento automático.',
+                    ),
+                    value: isOptional,
+                    activeColor: AppColors.primary,
+                    onChanged: (value) {
+                      isOptionalNotifier.value = value ?? false;
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  isOptionalNotifier.dispose();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (selectedItem == null || 
+                      quantityController.text.isEmpty || 
+                      unitController.text.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Por favor completa todos los campos'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  
+                  final quantity = double.tryParse(quantityController.text);
+                  if (quantity == null || quantity <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'La cantidad debe ser un número mayor a 0',
+                        ),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+
+                  final unit = unitController.text.trim();
+                  
+                  final newIngredient = RecipeIngredient(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    name: selectedItem!.name,
+                    unit: unit, // Usar la unidad especificada por el usuario, no la del inventario
+                    quantityPerPortion: quantity,
+                    autoDeduct: true,
+                    isCustom: false,
+                    isOptional: isOptionalNotifier.value,
+                    category: selectedItem!.category,
+                    inventoryItemId: selectedItem!.id,
+                  );
+                  
+                  setState(() {
+                    recipeIngredients.add(newIngredient);
+                  });
+                  
+                  isOptionalNotifier.dispose();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Agregar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Diálogo para editar ingrediente
+  void _showEditIngredientDialog(
+    BuildContext context,
+    RecipeIngredient ingredient,
+    int index,
+    List<RecipeIngredient> recipeIngredients,
+    StateSetter setState,
+    bool isTablet,
+  ) {
+    final quantityController = TextEditingController(
+      text: ingredient.quantityPerPortion.toString(),
+    );
+    final unitController = TextEditingController(
+      text: ingredient.unit,
+    );
+    bool autoDeduct = ingredient.autoDeduct;
+    bool isOptional = ingredient.isOptional;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, dialogSetState) => AlertDialog(
+          title: Text('Editar: ${ingredient.name}'),
+          content: SizedBox(
+            width: isTablet ? 400 : double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextFormField(
+                  controller: quantityController,
+                        decoration: const InputDecoration(
+                          labelText: 'Cantidad por porción',
+                          border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      ),
+                    ),
+                    SizedBox(width: AppTheme.spacingSM),
+                    Expanded(
+                      child: TextFormField(
+                        controller: unitController,
+                        decoration: const InputDecoration(
+                          labelText: 'Unidad',
+                          hintText: 'g, ml, etc.',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                CheckboxListTile(
+                  title: const Text('Descontar automáticamente del inventario'),
+                  subtitle: const Text(
+                    'Se descuenta automáticamente cuando se prepara el producto (inventario estimado)',
+                  ),
+                  value: autoDeduct,
+                  onChanged: (value) {
+                    dialogSetState(() {
+                      autoDeduct = value ?? true;
+                    });
+                  },
+                ),
+                CheckboxListTile(
+                  title: const Text('Ingrediente opcional'),
+                  subtitle: const Text(
+                    'Marcar si este ingrediente no es esencial para la receta (ej: cilantro, cebolla). Se usa solo para referencia y también se descuenta del inventario si está activado el descuento automático.',
+                  ),
+                  value: isOptional,
+                  activeColor: AppColors.primary,
+                  onChanged: (value) {
+                    dialogSetState(() {
+                      isOptional = value ?? false;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (unitController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Por favor ingresa la unidad'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final quantity = double.tryParse(quantityController.text);
+                if (quantity == null || quantity <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('La cantidad debe ser un número mayor a 0'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                
+                setState(() {
+                  recipeIngredients[index] = ingredient.copyWith(
+                    quantityPerPortion: quantity,
+                    unit: unitController.text.trim(),
+                    autoDeduct: autoDeduct,
+                    isOptional: isOptional,
+                  );
+                });
+                
+                Navigator.of(context).pop();
+              },
+              child: const Text('Guardar'),
             ),
           ],
         ),
@@ -4325,9 +4791,8 @@ class AdminApp extends StatelessWidget {
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
               );
 
               try {
@@ -4354,7 +4819,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error al eliminar producto: ${_extractErrorMessage(e)}'),
+                      content: Text(
+                        'Error al eliminar producto: ${_extractErrorMessage(e)}',
+                      ),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 5),
                     ),
@@ -4783,7 +5250,9 @@ class AdminApp extends StatelessWidget {
               if (categoryName.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Por favor ingresa un nombre para la categoría'),
+                    content: Text(
+                      'Por favor ingresa un nombre para la categoría',
+                    ),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -4859,11 +5328,17 @@ class AdminApp extends StatelessWidget {
 
   // Tarjeta de producto de inventario
   // Helper para formatear números de stock sin decimales innecesarios
+  // Asegura que nunca se muestren valores negativos (muestra 0 en su lugar)
   String _formatStockNumber(double value) {
-    if (value == value.toInt()) {
-      return value.toInt().toString();
+    // Si el valor es negativo, mostrar 0
+    final stockValue = value < 0 ? 0.0 : value;
+    if (stockValue == stockValue.toInt()) {
+      return stockValue.toInt().toString();
     }
-    return value.toStringAsFixed(1).replaceAll(RegExp(r'0*$'), '').replaceAll(RegExp(r'\.$'), '');
+    return stockValue
+        .toStringAsFixed(1)
+        .replaceAll(RegExp(r'0*$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
   }
 
   Widget _buildInventoryItemCard(
@@ -4873,7 +5348,9 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
   ) {
     final statusColor = InventoryStatus.getStatusColor(item.status);
-    final progress = (item.currentStock / item.maxStock).clamp(0.0, 1.0);
+    // Asegurar que el stock nunca sea negativo para el cálculo de progreso
+    final stockActual = item.currentStock < 0 ? 0.0 : item.currentStock;
+    final progress = (stockActual / item.maxStock).clamp(0.0, 1.0);
 
     return Card(
       elevation: 2,
@@ -4994,7 +5471,8 @@ class AdminApp extends StatelessWidget {
                       'Stock Actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: AppTheme.fontWeightSemibold,
-                        color: statusColor,
+                        // Si el stock es negativo, usar color rojo para indicar problema
+                        color: item.currentStock < 0 ? Colors.red : statusColor,
                       ),
                     ),
                     Text(
@@ -5097,6 +5575,48 @@ class AdminApp extends StatelessWidget {
     return date_utils.AppDateUtils.formatDateTime(localDate);
   }
 
+  // Formatear método de pago en español
+  String _formatPaymentMethod(String? paymentMethod) {
+    if (paymentMethod == null || paymentMethod.isEmpty) {
+      return 'No especificado';
+    }
+    
+    final method = paymentMethod.trim();
+    
+    // Normalizar a español
+    if (method.toLowerCase().contains('efectivo') ||
+        method.toLowerCase() == 'cash') {
+      return 'Efectivo';
+    }
+    if (method.toLowerCase().contains('tarjeta débito') || 
+        method.toLowerCase().contains('debito') ||
+        method.toLowerCase() == 'tarjeta débito') {
+      return 'Tarjeta Débito';
+    }
+    if (method.toLowerCase().contains('tarjeta crédito') || 
+        method.toLowerCase().contains('credito') ||
+        method.toLowerCase() == 'tarjeta crédito') {
+      return 'Tarjeta Crédito';
+    }
+    if (method.toLowerCase().contains('tarjeta') ||
+        method.toLowerCase() == 'card') {
+      return 'Tarjeta';
+    }
+    if (method.toLowerCase().contains('mixto') ||
+        method.toLowerCase() == 'mixed') {
+      return 'Mixto';
+    }
+    
+    // Si ya está en español, capitalizar correctamente
+    return method
+        .split(' ')
+        .map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+        })
+        .join(' ');
+  }
+
   // Modal para agregar producto al inventario
   void _showAddInventoryModal(
     BuildContext context,
@@ -5156,7 +5676,8 @@ class AdminApp extends StatelessWidget {
                           value: category,
                           child: Text(category),
                         );
-                      }).toList(),
+                        })
+                        .toList(),
                   onChanged: (value) {
                     selectedCategory = value;
                   },
@@ -5295,7 +5816,10 @@ class AdminApp extends StatelessWidget {
                 final minStock = double.parse(minStockController.text.trim());
                 final maxStock = double.parse(maxStockController.text.trim());
                 // Limpiar el símbolo $ si está presente
-                final costText = costController.text.trim().replaceAll('\$', '').replaceAll(' ', '');
+                final costText = costController.text
+                    .trim()
+                    .replaceAll('\$', '')
+                    .replaceAll(' ', '');
                 final cost = double.parse(costText);
                 final totalPrice = stock * cost;
 
@@ -5332,9 +5856,8 @@ class AdminApp extends StatelessWidget {
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
                 );
 
                 try {
@@ -5363,7 +5886,9 @@ class AdminApp extends StatelessWidget {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Error al crear item: ${_extractErrorMessage(e)}'),
+                        content: Text(
+                          'Error al crear item: ${_extractErrorMessage(e)}',
+                        ),
                         backgroundColor: Colors.red,
                         duration: const Duration(seconds: 5),
                       ),
@@ -5395,7 +5920,10 @@ class AdminApp extends StatelessWidget {
       if (value == value.toInt()) {
         return value.toInt().toString();
       }
-      return value.toStringAsFixed(maxDecimals).replaceAll(RegExp(r'0*$'), '').replaceAll(RegExp(r'\.$'), '');
+      return value
+          .toStringAsFixed(maxDecimals)
+          .replaceAll(RegExp(r'0*$'), '')
+          .replaceAll(RegExp(r'\.$'), '');
     }
 
     final formKey = GlobalKey<FormState>();
@@ -5410,7 +5938,7 @@ class AdminApp extends StatelessWidget {
       text: formatNumber(item.maxStock),
     );
     final costController = TextEditingController(
-      text: formatNumber(item.cost, maxDecimals: 2),
+      text: item.cost > 0 ? formatNumber(item.cost, maxDecimals: 2) : '',
     );
     final supplierController = TextEditingController(text: item.supplier ?? '');
 
@@ -5519,18 +6047,19 @@ class AdminApp extends StatelessWidget {
                 TextFormField(
                   controller: costController,
                   decoration: const InputDecoration(
-                    labelText: 'Costo (\$) *',
+                      labelText: 'Costo (\$)',
                     border: OutlineInputBorder(),
                     prefixText: '\$',
                   ),
                   keyboardType: TextInputType.number,
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
+                        // Permitir campo vacío (se interpretará como 0)
+                        return null;
                     }
                     final cost = double.tryParse(value);
                     if (cost == null || cost < 0) {
-                      return 'Debe ser un número válido';
+                        return 'Debe ser un número válido mayor o igual a 0';
                     }
                     return null;
                   },
@@ -5560,9 +6089,8 @@ class AdminApp extends StatelessWidget {
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
                 );
 
                 try {
@@ -5570,8 +6098,12 @@ class AdminApp extends StatelessWidget {
                   final minStock = double.parse(minStockController.text.trim());
                   final maxStock = double.parse(maxStockController.text.trim());
                   // Limpiar el símbolo $ si está presente
-                  final costText = costController.text.trim().replaceAll('\$', '').replaceAll(' ', '');
-                  final cost = double.parse(costText);
+                  final costText = costController.text
+                      .trim()
+                      .replaceAll('\$', '')
+                      .replaceAll(' ', '');
+                  // Si está vacío, interpretar como 0
+                  final cost = costText.isEmpty ? 0.0 : double.parse(costText);
                   final totalPrice = stock * cost;
 
                   // Determinar status según stock
@@ -5621,7 +6153,9 @@ class AdminApp extends StatelessWidget {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Error al actualizar inventario: ${_extractErrorMessage(e)}'),
+                        content: Text(
+                          'Error al actualizar inventario: ${_extractErrorMessage(e)}',
+                        ),
                         backgroundColor: Colors.red,
                         duration: const Duration(seconds: 5),
                       ),
@@ -5662,7 +6196,7 @@ class AdminApp extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Stock actual: ${item.currentStock.toStringAsFixed(1)} ${item.unit}',
+                'Stock actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               SizedBox(height: AppTheme.spacingMD),
@@ -5683,7 +6217,11 @@ class AdminApp extends StatelessWidget {
                   if (quantity == null || quantity <= 0) {
                     return 'Debe ser un número válido mayor a 0';
                   }
-                  if (isDecrease && quantity > item.currentStock) {
+                  // Si el stock actual es negativo, permitir cualquier ajuste
+                  final stockActual = item.currentStock < 0
+                      ? 0.0
+                      : item.currentStock;
+                  if (isDecrease && quantity > stockActual) {
                     return 'No puede disminuir más del stock actual';
                   }
                   return null;
@@ -5704,16 +6242,19 @@ class AdminApp extends StatelessWidget {
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
                 );
 
                 try {
                   final quantity = double.parse(quantityController.text);
+                  // Asegurar que el stock base nunca sea negativo para el cálculo
+                  final stockBase = item.currentStock < 0
+                      ? 0.0
+                      : item.currentStock;
                   final newStock = isDecrease
-                      ? item.currentStock - quantity
-                      : item.currentStock + quantity;
+                      ? (stockBase - quantity).clamp(0.0, double.infinity)
+                      : stockBase + quantity;
 
                   // Determinar status según nuevo stock
                   String status;
@@ -5764,7 +6305,9 @@ class AdminApp extends StatelessWidget {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Error al ajustar stock: ${_extractErrorMessage(e)}'),
+                        content: Text(
+                          'Error al ajustar stock: ${_extractErrorMessage(e)}',
+                        ),
                         backgroundColor: Colors.red,
                         duration: const Duration(seconds: 5),
                       ),
@@ -5808,9 +6351,8 @@ class AdminApp extends StatelessWidget {
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
               );
 
               try {
@@ -5837,7 +6379,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error al eliminar item: ${_extractErrorMessage(e)}'),
+                      content: Text(
+                        'Error al eliminar item: ${_extractErrorMessage(e)}',
+                      ),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 5),
                     ),
@@ -6119,7 +6663,10 @@ class AdminApp extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 120),
                 child: Text(
                   user.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -6164,7 +6711,10 @@ class AdminApp extends StatelessWidget {
                       UserRole.getRoleText(role),
                       style: const TextStyle(fontSize: 9),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     backgroundColor: UserRole.getRoleColor(
                       role,
                     ).withValues(alpha: 0.2),
@@ -6362,6 +6912,31 @@ class AdminApp extends StatelessWidget {
             ),
             SizedBox(height: AppTheme.spacingSM),
 
+            // Contraseña
+            Row(
+              children: [
+                Icon(
+                  Icons.lock_outline,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Contraseña: ',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                Text(
+                  user.password.isNotEmpty ? user.password : '—',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textPrimary,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: AppTheme.spacingXS),
             // Estado y teléfono
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6709,9 +7284,8 @@ class AdminApp extends StatelessWidget {
                   showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (context) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
 
                   try {
@@ -6754,20 +7328,27 @@ class AdminApp extends StatelessWidget {
                       String errorMessage = 'Error al crear usuario';
                       final errorStr = e.toString();
                       if (errorStr.contains('Error al obtener roles')) {
-                        errorMessage = 'Error al obtener roles del sistema. Verifica que el backend esté funcionando correctamente.';
+                        errorMessage =
+                            'Error al obtener roles del sistema. Verifica que el backend esté funcionando correctamente.';
                       } else if (errorStr.contains('Rol no encontrado')) {
-                        errorMessage = 'Uno de los roles seleccionados no existe en el sistema.';
+                        errorMessage =
+                            'Uno de los roles seleccionados no existe en el sistema.';
                       } else if (errorStr.contains('Error de conexión') || 
                                  errorStr.contains('No se pudo conectar') ||
                                  errorStr.contains('backend esté corriendo')) {
-                        errorMessage = 'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
-                      } else if (errorStr.contains('401') || errorStr.contains('403')) {
-                        errorMessage = 'No tienes permisos para crear usuarios.';
+                        errorMessage =
+                            'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+                      } else if (errorStr.contains('401') ||
+                          errorStr.contains('403')) {
+                        errorMessage =
+                            'No tienes permisos para crear usuarios.';
                       } else if (errorStr.contains('username')) {
                         errorMessage = 'El nombre de usuario ya existe.';
                       } else {
                         // Extraer el mensaje más relevante
-                        final match = RegExp(r'Exception:\s*(.+?)(?:Exception:|$)').firstMatch(errorStr);
+                        final match = RegExp(
+                          r'Exception:\s*(.+?)(?:Exception:|$)',
+                        ).firstMatch(errorStr);
                         if (match != null) {
                           errorMessage = match.group(1)?.trim() ?? errorMessage;
                         } else {
@@ -7012,9 +7593,8 @@ class AdminApp extends StatelessWidget {
                   showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (context) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
 
                   try {
@@ -7050,7 +7630,9 @@ class AdminApp extends StatelessWidget {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Error al actualizar usuario: ${_extractErrorMessage(e)}'),
+                          content: Text(
+                            'Error al actualizar usuario: ${_extractErrorMessage(e)}',
+                          ),
                           backgroundColor: Colors.red,
                           duration: const Duration(seconds: 5),
                         ),
@@ -7263,9 +7845,8 @@ class AdminApp extends StatelessWidget {
                   showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (context) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
 
                   try {
@@ -7295,7 +7876,9 @@ class AdminApp extends StatelessWidget {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Error al actualizar contraseña: ${_extractErrorMessage(e)}'),
+                          content: Text(
+                            'Error al actualizar contraseña: ${_extractErrorMessage(e)}',
+                          ),
                           backgroundColor: Colors.red,
                           duration: const Duration(seconds: 5),
                         ),
@@ -7362,9 +7945,8 @@ class AdminApp extends StatelessWidget {
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
               );
 
               try {
@@ -7391,7 +7973,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error al eliminar usuario: ${_extractErrorMessage(e)}'),
+                      content: Text(
+                        'Error al eliminar usuario: ${_extractErrorMessage(e)}',
+                      ),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 5),
                     ),
@@ -7464,17 +8048,10 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(width: AppTheme.spacingSM),
                   ElevatedButton.icon(
-                    onPressed: () {
-                      controller.exportTicketsToCSV();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Exportando tickets a CSV...'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.file_download),
-                    label: const Text('Exportar CSV'),
+                    onPressed: () =>
+                        _showDownloadCSVDialog(context, controller, isTablet),
+                    icon: const Icon(Icons.download),
+                    label: const Text('Descargar CSV'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
@@ -7651,8 +8228,7 @@ class AdminApp extends StatelessWidget {
                   onTap: () async {
                     final date = await showDatePicker(
                       context: context,
-                      initialDate:
-                          controller.ticketStartDate ?? DateTime.now(),
+                      initialDate: controller.ticketStartDate ?? DateTime.now(),
                       firstDate: DateTime(2020),
                       lastDate: DateTime.now(),
                       locale: const Locale('es', 'MX'),
@@ -7693,10 +8269,8 @@ class AdminApp extends StatelessWidget {
                   onTap: () async {
                     final date = await showDatePicker(
                       context: context,
-                      initialDate:
-                          controller.ticketEndDate ?? DateTime.now(),
-                      firstDate:
-                          controller.ticketStartDate ?? DateTime(2020),
+                      initialDate: controller.ticketEndDate ?? DateTime.now(),
+                      firstDate: controller.ticketStartDate ?? DateTime(2020),
                       lastDate: DateTime.now(),
                       locale: const Locale('es', 'MX'),
                       helpText: 'Seleccionar fecha',
@@ -7734,6 +8308,240 @@ class AdminApp extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  // Diálogo para descargar CSV de tickets
+  void _showDownloadCSVDialog(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final periodoTexto = _getPeriodoTexto(controller.selectedTicketPeriod);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Descargar CSV'),
+        content: Text(
+          '¿Deseas descargar el reporte de tickets en formato CSV?\n\n'
+          'Período seleccionado: $periodoTexto\n'
+          'Tickets a exportar: ${controller.filteredTickets.length}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              try {
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+                
+                await controller.exportTicketsToCSV();
+                
+                // Cerrar indicador de carga
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de éxito
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ CSV descargado correctamente'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar indicador de carga si está abierto
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de error
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Error al descargar CSV: $e'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Descargar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Obtener texto del período seleccionado
+  String _getPeriodoTexto(String periodo) {
+    switch (periodo) {
+      case 'hoy':
+        return 'Hoy';
+      case 'ayer':
+        return 'Ayer';
+      case 'semana':
+        return 'Última semana';
+      case 'mes':
+        return 'Mes actual';
+      case 'personalizado':
+        return 'Rango personalizado';
+      default:
+        return 'Todos';
+    }
+  }
+
+  // Diálogo para descargar CSV de cierres de caja
+  void _showDownloadCashClosuresCSVDialog(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final periodoTexto = _getPeriodoTexto(controller.selectedCashClosePeriod);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Descargar CSV'),
+        content: Text(
+          '¿Deseas descargar el reporte de cierres de caja en formato CSV?\n\n'
+          'Período seleccionado: $periodoTexto\n'
+          'Cierres a exportar: ${controller.filteredCashClosures.length}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              try {
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+                
+                await controller.exportCashClosuresToCSV();
+                
+                // Cerrar indicador de carga
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de éxito
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ CSV descargado correctamente'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar indicador de carga si está abierto
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de error
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Error al descargar CSV: $e'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Descargar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Diálogo para descargar PDF de cierres de caja
+  void _showDownloadCashClosuresPDFDialog(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final periodoTexto = _getPeriodoTexto(controller.selectedCashClosePeriod);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Descargar PDF'),
+        content: Text(
+          '¿Deseas descargar el reporte de cierres de caja en formato PDF?\n\n'
+          'Período seleccionado: $periodoTexto\n'
+          'Cierres a exportar: ${controller.filteredCashClosures.length}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              try {
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+                
+                await controller.generateCashClosuresPDF();
+                
+                // Cerrar indicador de carga
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de éxito
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ PDF generado correctamente'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Cerrar indicador de carga si está abierto
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  
+                  // Mostrar mensaje de error
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Error al generar PDF: $e'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Descargar'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -7867,6 +8675,12 @@ class AdminApp extends StatelessWidget {
               ),
               DataColumn(
                 label: Text(
+                  'Propina',
+                  style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
                   'Método de pago',
                   style: TextStyle(fontWeight: AppTheme.fontWeightSemibold),
                 ),
@@ -7898,22 +8712,27 @@ class AdminApp extends StatelessWidget {
             ],
             rows: tickets.map((ticket) {
               // Determinar si es para llevar o en mesa
-              final esParaLlevar = ticket.isTakeaway || 
+              final esParaLlevar =
+                  ticket.isTakeaway ||
                   (ticket.tableNumber == null && ticket.customerName != null);
               
               // Formatear ID del ticket para mostrar
               String ticketDisplayId = ticket.id;
               if (ticket.id.startsWith('CUENTA-AGRUPADA-')) {
                 // Para cuentas agrupadas, mostrar un formato más legible
-                final parts = ticket.id.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+                final parts = ticket.id
+                    .replaceFirst('CUENTA-AGRUPADA-', '')
+                    .split('-');
                 final ordenIds = parts
                     .map((part) => int.tryParse(part))
                     .whereType<int>()
                     .toList();
                 if (ordenIds.length > 1) {
-                  ticketDisplayId = 'Cuenta agrupada (${ordenIds.length} órdenes)';
+                  ticketDisplayId =
+                      'Cuenta agrupada (${ordenIds.length} órdenes)';
                 } else {
-                  ticketDisplayId = 'ORD-${ordenIds.first.toString().padLeft(6, '0')}';
+                  ticketDisplayId =
+                      'ORD-${ordenIds.first.toString().padLeft(6, '0')}';
                 }
               } else if (ticket.id.startsWith('ORD-')) {
                 // Ya está bien formateado
@@ -7936,16 +8755,23 @@ class AdminApp extends StatelessWidget {
                   // Columna Tipo
                   DataCell(
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
-                        color: esParaLlevar ? Colors.blue.shade700 : Colors.green.shade700,
+                        color: esParaLlevar
+                            ? Colors.blue.shade700
+                            : Colors.green.shade700,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            esParaLlevar ? Icons.shopping_bag : Icons.restaurant,
+                            esParaLlevar
+                                ? Icons.shopping_bag
+                                : Icons.restaurant,
                             size: 12,
                             color: Colors.white,
                           ),
@@ -7970,14 +8796,22 @@ class AdminApp extends StatelessWidget {
                       children: [
                         if (ticket.tableNumber != null)
                           Text('Mesa ${ticket.tableNumber}')
-                        else if (ticket.customerName != null && ticket.customerName!.isNotEmpty)
-                          Text(ticket.customerName!, style: const TextStyle(fontWeight: FontWeight.bold))
+                        else if (ticket.customerName != null &&
+                            ticket.customerName!.isNotEmpty)
+                          Text(
+                            ticket.customerName!,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          )
                         else
                           const Text('N/A'),
-                        if (ticket.customerPhone != null && ticket.customerPhone!.isNotEmpty)
+                        if (ticket.customerPhone != null &&
+                            ticket.customerPhone!.isNotEmpty)
                           Text(
                             ticket.customerPhone!,
-                            style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
                       ],
                     ),
@@ -7985,10 +8819,29 @@ class AdminApp extends StatelessWidget {
                   DataCell(Text('\$${ticket.total.toStringAsFixed(2)}')),
                   DataCell(
                     Text(
-                      ticket.paymentMethod ?? 'N/A',
+                      ticket.tipAmount != null && ticket.tipAmount! > 0
+                          ? '\$${ticket.tipAmount!.toStringAsFixed(2)}'
+                          : '\$0.00',
                       style: TextStyle(
                         fontSize: isTablet ? 12 : 11,
-                        fontWeight: ticket.paymentMethod != null ? FontWeight.w500 : FontWeight.normal,
+                        color: ticket.tipAmount != null && ticket.tipAmount! > 0
+                            ? Colors.green.shade700
+                            : AppColors.textSecondary,
+                        fontWeight:
+                            ticket.tipAmount != null && ticket.tipAmount! > 0
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      _formatPaymentMethod(ticket.paymentMethod),
+                      style: TextStyle(
+                        fontSize: isTablet ? 12 : 11,
+                        fontWeight: ticket.paymentMethod != null
+                            ? FontWeight.w500
+                            : FontWeight.normal,
                       ),
                     ),
                   ),
@@ -8006,7 +8859,20 @@ class AdminApp extends StatelessWidget {
                       ),
                     ),
                   ),
-                  DataCell(Text(ticket.printedBy ?? 'N/A')),
+                  DataCell(
+                    Text(
+                      ticket.printedBy ?? 'No impreso',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12 : 11,
+                        color: ticket.printedBy != null
+                            ? AppColors.textPrimary
+                            : AppColors.textSecondary,
+                        fontStyle: ticket.printedBy != null
+                            ? FontStyle.normal
+                            : FontStyle.italic,
+                      ),
+                    ),
+                  ),
                   DataCell(Text(_formatDate(ticket.createdAt))),
                   DataCell(
                     Row(
@@ -8170,7 +9036,7 @@ class AdminApp extends StatelessWidget {
             if (ticket.paymentMethod != null) ...[
               SizedBox(height: AppTheme.spacingXS),
               Text(
-                'Método de pago: ${ticket.paymentMethod}',
+                'Método de pago: ${_formatPaymentMethod(ticket.paymentMethod)}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: AppColors.textSecondary,
                   fontSize: AppTheme.fontSizeXS,
@@ -8231,10 +9097,8 @@ class AdminApp extends StatelessWidget {
   ) {
     showDialog(
       context: context,
-      builder: (context) => _TicketDetailsModal(
-        ticket: ticket,
-        isTablet: isTablet,
-      ),
+      builder: (context) =>
+          _TicketDetailsModal(ticket: ticket, isTablet: isTablet),
     );
   }
 
@@ -8334,7 +9198,9 @@ class AdminApp extends StatelessWidget {
                   // Botón de refrescar
                   ElevatedButton.icon(
                     onPressed: () {
-                      print('🔄 AdminView: Refrescando cierres de caja manualmente...');
+                      print(
+                        '🔄 AdminView: Refrescando cierres de caja manualmente...',
+                      );
                       controller.loadCashClosures();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -8353,17 +9219,13 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(width: AppTheme.spacingMD),
                   ElevatedButton.icon(
-                    onPressed: () {
-                      controller.exportCashClosuresToCSV();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Exportando reporte en formato CSV...'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.file_download),
-                    label: const Text('Exportar CSV'),
+                    onPressed: () => _showDownloadCashClosuresCSVDialog(
+                      context,
+                      controller,
+                      isTablet,
+                    ),
+                    icon: const Icon(Icons.download),
+                    label: const Text('Descargar CSV'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
@@ -8371,17 +9233,13 @@ class AdminApp extends StatelessWidget {
                   ),
                   SizedBox(width: AppTheme.spacingMD),
                   ElevatedButton.icon(
-                    onPressed: () {
-                      controller.generateCashClosuresPDF();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Generando reporte en formato PDF...'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    },
+                    onPressed: () => _showDownloadCashClosuresPDFDialog(
+                      context,
+                      controller,
+                      isTablet,
+                    ),
                     icon: const Icon(Icons.picture_as_pdf),
-                    label: const Text('Generar PDF'),
+                    label: const Text('Descargar PDF'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
@@ -8404,7 +9262,12 @@ class AdminApp extends StatelessWidget {
           // Tabla/Lista de cierres (usar Consumer para asegurar reconstrucción)
           Consumer<AdminController>(
             builder: (context, adminController, child) {
-              return _buildCashClosuresList(context, adminController, isTablet, isDesktop);
+              return _buildCashClosuresList(
+                context,
+                adminController,
+                isTablet,
+                isDesktop,
+              );
             },
           ),
         ],
@@ -8635,7 +9498,9 @@ class AdminApp extends StatelessWidget {
                     vertical: isTablet ? 8.0 : 6.0,
                   ),
                   decoration: BoxDecoration(
-                    color: isOpen ? AppColors.success.withValues(alpha: 0.1) : AppColors.warning.withValues(alpha: 0.1),
+                    color: isOpen
+                        ? AppColors.success.withValues(alpha: 0.1)
+                        : AppColors.warning.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -8715,7 +9580,9 @@ class AdminApp extends StatelessWidget {
                         ),
                         SizedBox(height: 4),
                         Text(
-                          date_utils.AppDateUtils.formatDateTime(apertura.fecha),
+                          date_utils.AppDateUtils.formatDateTime(
+                            apertura.fecha,
+                          ),
                           style: TextStyle(
                             fontSize: isTablet ? 14.0 : 12.0,
                             fontWeight: FontWeight.w500,
@@ -8727,7 +9594,8 @@ class AdminApp extends StatelessWidget {
                   ),
                 ],
               ),
-              if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
+              if (apertura.notaCajero != null &&
+                  apertura.notaCajero!.isNotEmpty) ...[
                 SizedBox(height: AppTheme.spacingMD),
                 Container(
                   padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
@@ -8805,9 +9673,13 @@ class AdminApp extends StatelessWidget {
     }
     
     final closures = controller.filteredCashClosures;
-    print('🎨 AdminView: _buildCashClosuresList - ${closures.length} cierres para mostrar');
+    print(
+      '🎨 AdminView: _buildCashClosuresList - ${closures.length} cierres para mostrar',
+    );
     if (closures.isNotEmpty) {
-      print('🎨 AdminView: Primer cierre - ID: ${closures.first.id}, Usuario: ${closures.first.usuario}, Total: ${closures.first.totalNeto}');
+      print(
+        '🎨 AdminView: Primer cierre - ID: ${closures.first.id}, Usuario: ${closures.first.usuario}, Total: ${closures.first.totalNeto}',
+      );
     }
 
     if (closures.isEmpty) {
@@ -8871,7 +9743,9 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    print('🎨 AdminView: _buildCashClosuresTable - ${closures.length} cierres para mostrar en tabla');
+    print(
+      '🎨 AdminView: _buildCashClosuresTable - ${closures.length} cierres para mostrar en tabla',
+    );
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -8907,7 +9781,8 @@ class AdminApp extends StatelessWidget {
             ),
             DataColumn(
               label: Tooltip(
-                message: 'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
+                message:
+                    'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -8919,7 +9794,11 @@ class AdminApp extends StatelessWidget {
                       ),
                     ),
                     SizedBox(width: 4),
-                    Icon(Icons.help_outline, size: 14, color: AppColors.textSecondary),
+                    Icon(
+                      Icons.help_outline,
+                      size: 14,
+                      color: AppColors.textSecondary,
+                    ),
                   ],
                 ),
               ),
@@ -8950,7 +9829,8 @@ class AdminApp extends StatelessWidget {
             ),
             DataColumn(
               label: Tooltip(
-                message: 'Estados: Pendiente (revisión pendiente), Aprobado (verificado), Rechazado (con problemas), Aclaración (requiere más información)',
+                message:
+                    'Estados: Pendiente (revisión pendiente), Aprobado (verificado), Rechazado (con problemas), Aclaración (requiere más información)',
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -8962,7 +9842,11 @@ class AdminApp extends StatelessWidget {
                       ),
                     ),
                     SizedBox(width: 4),
-                    Icon(Icons.info_outline, size: 14, color: AppColors.textSecondary),
+                    Icon(
+                      Icons.info_outline,
+                      size: 14,
+                      color: AppColors.textSecondary,
+                    ),
                   ],
                 ),
               ),
@@ -8978,7 +9862,8 @@ class AdminApp extends StatelessWidget {
             ),
           ],
           rows: closures.map((closure) {
-            final hasNotes = closure.notaCajero != null && closure.notaCajero!.isNotEmpty;
+            final hasNotes =
+                closure.notaCajero != null && closure.notaCajero!.isNotEmpty;
             return DataRow(
               cells: [
                 DataCell(
@@ -9054,14 +9939,20 @@ class AdminApp extends StatelessWidget {
                           SizedBox(width: 4),
                           Text(
                             CashCloseStatus.getStatusText(closure.estado),
-                            style: const TextStyle(fontSize: 10, color: Colors.white),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.white,
+                            ),
                           ),
                         ],
                       ),
                       backgroundColor: CashCloseStatus.getStatusColor(
                         closure.estado,
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                     ),
                   ),
                 ),
@@ -9071,12 +9962,17 @@ class AdminApp extends StatelessWidget {
                     children: [
                       // Botón ver detalles
                       Tooltip(
-                        message: 'Ver detalles${hasNotes ? ' (tiene notas)' : ''}',
+                        message:
+                            'Ver detalles${hasNotes ? ' (tiene notas)' : ''}',
                         child: IconButton(
                           icon: Icon(
-                            hasNotes ? Icons.visibility : Icons.visibility_outlined,
+                            hasNotes
+                                ? Icons.visibility
+                                : Icons.visibility_outlined,
                             size: 18,
-                            color: hasNotes ? Colors.amber.shade700 : AppColors.primary,
+                            color: hasNotes
+                                ? Colors.amber.shade700
+                                : AppColors.primary,
                           ),
                           onPressed: () => _showCashCloseDetailsModal(
                             context,
@@ -9091,7 +9987,8 @@ class AdminApp extends StatelessWidget {
                       // Botones de acción (mostrar para estados pending y clarification)
                       if (closure.cierreId != null && 
                           (closure.estado == CashCloseStatus.pending || 
-                           closure.estado == CashCloseStatus.clarification)) ...[
+                              closure.estado ==
+                                  CashCloseStatus.clarification)) ...[
                         SizedBox(width: 4),
                         // Botón aprobar (solo si está pendiente)
                         if (closure.estado == CashCloseStatus.pending)
@@ -9100,7 +9997,11 @@ class AdminApp extends StatelessWidget {
                             child: IconButton(
                               icon: const Icon(Icons.check_circle, size: 18),
                               color: Colors.green,
-                              onPressed: () => _handleApproveClosure(context, closure, controller),
+                              onPressed: () => _handleApproveClosure(
+                                context,
+                                closure,
+                                controller,
+                              ),
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(),
                             ),
@@ -9112,14 +10013,19 @@ class AdminApp extends StatelessWidget {
                             child: IconButton(
                               icon: const Icon(Icons.cancel, size: 18),
                               color: Colors.red,
-                              onPressed: () => _handleRejectClosure(context, closure, controller),
+                              onPressed: () => _handleRejectClosure(
+                                context,
+                                closure,
+                                controller,
+                              ),
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(),
                             ),
                           ),
                         // Botón pedir aclaración (si está pendiente o ya en aclaración)
                         Tooltip(
-                          message: closure.estado == CashCloseStatus.clarification 
+                          message:
+                              closure.estado == CashCloseStatus.clarification
                               ? 'Ver aclaración solicitada' 
                               : 'Pedir aclaración',
                           child: IconButton(
@@ -9130,7 +10036,11 @@ class AdminApp extends StatelessWidget {
                               size: 18,
                             ),
                             color: Colors.blue,
-                            onPressed: () => _handleRequestClarification(context, closure, controller),
+                            onPressed: () => _handleRequestClarification(
+                              context,
+                              closure,
+                              controller,
+                            ),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                           ),
@@ -9277,12 +10187,16 @@ class AdminApp extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.account_balance_wallet, color: Colors.white),
+                      const Icon(
+                        Icons.account_balance_wallet,
+                        color: Colors.white,
+                      ),
                       const SizedBox(width: AppTheme.spacingSM),
                       Expanded(
                         child: Text(
                           'Detalle del cierre',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                           ),
@@ -9307,27 +10221,37 @@ class AdminApp extends StatelessWidget {
                   padding: EdgeInsets.all(AppTheme.spacingMD),
                   decoration: BoxDecoration(
                     color: AppColors.inputBackground,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusMD,
+                            ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   'Cierre de caja',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
                                     color: AppColors.textSecondary,
                                   ),
                                 ),
                                 Text(
                                   closure.id,
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -9335,7 +10259,9 @@ class AdminApp extends StatelessWidget {
                             ),
                           ),
                           Tooltip(
-                            message: _getStatusDescription(closure.estado),
+                                    message: _getStatusDescription(
+                                      closure.estado,
+                                    ),
                             child: Chip(
                               label: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -9347,7 +10273,9 @@ class AdminApp extends StatelessWidget {
                                   ),
                                   SizedBox(width: 6),
                                   Text(
-                                    CashCloseStatus.getStatusText(closure.estado),
+                                            CashCloseStatus.getStatusText(
+                                              closure.estado,
+                                            ),
                                     style: const TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
@@ -9356,10 +10284,14 @@ class AdminApp extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                              backgroundColor: CashCloseStatus.getStatusColor(
+                                      backgroundColor:
+                                          CashCloseStatus.getStatusColor(
                                 closure.estado,
                               ),
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
                             ),
                           ),
                         ],
@@ -9403,17 +10335,26 @@ class AdminApp extends StatelessWidget {
                   padding: EdgeInsets.all(AppTheme.spacingSM),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusMD,
+                            ),
+                            border: Border.all(
+                              color: AppColors.primary.withValues(alpha: 0.3),
+                            ),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: 18, color: AppColors.primary),
+                              Icon(
+                                Icons.info_outline,
+                                size: 18,
+                                color: AppColors.primary,
+                              ),
                       SizedBox(width: AppTheme.spacingSM),
                       Expanded(
                         child: Text(
                           'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
                             color: AppColors.textSecondary,
                             fontSize: 11,
                           ),
@@ -9441,7 +10382,8 @@ class AdminApp extends StatelessWidget {
                       '\$${closure.efectivoContado.toStringAsFixed(2)}',
                       Colors.green,
                       isTablet,
-                      tooltip: 'Dinero en efectivo que el cajero contó físicamente',
+                              tooltip:
+                                  'Dinero en efectivo que el cajero contó físicamente',
                     ),
                     _buildSummaryCard(
                       'Tarjeta Total',
@@ -9455,7 +10397,8 @@ class AdminApp extends StatelessWidget {
                       '\$${closure.propinasTarjeta.toStringAsFixed(2)}',
                       Colors.purple,
                       isTablet,
-                      tooltip: 'Propinas recibidas por pagos con tarjeta',
+                              tooltip:
+                                  'Propinas recibidas por pagos con tarjeta',
                     ),
                     _buildSummaryCard(
                       'Propinas Efectivo',
@@ -9470,19 +10413,24 @@ class AdminApp extends StatelessWidget {
                         '\$${closure.otrosIngresos.toStringAsFixed(2)}',
                         Colors.teal,
                         isTablet,
-                        tooltip: closure.otrosIngresosTexto ?? 'Otros ingresos adicionales',
+                                tooltip:
+                                    closure.otrosIngresosTexto ??
+                                    'Otros ingresos adicionales',
                       ),
                   ],
                 ),
                 SizedBox(height: AppTheme.spacingMD),
 
                 // Notas del cajero
-                if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+                        if (closure.notaCajero != null &&
+                            closure.notaCajero!.isNotEmpty) ...[
                   Container(
                     padding: EdgeInsets.all(AppTheme.spacingMD),
                     decoration: BoxDecoration(
                       color: Colors.amber.shade50,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMD,
+                              ),
                       border: Border.all(color: Colors.amber.shade200),
                     ),
                     child: Column(
@@ -9498,7 +10446,10 @@ class AdminApp extends StatelessWidget {
                             SizedBox(width: AppTheme.spacingSM),
                             Text(
                               'Notas del Cajero',
-                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
                                 fontWeight: FontWeight.w600,
                                 color: Colors.amber.shade900,
                               ),
@@ -9508,9 +10459,8 @@ class AdminApp extends StatelessWidget {
                         SizedBox(height: AppTheme.spacingSM),
                         Text(
                           closure.notaCajero!,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.amber.shade800,
-                          ),
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(color: Colors.amber.shade800),
                         ),
                       ],
                     ),
@@ -9519,12 +10469,15 @@ class AdminApp extends StatelessWidget {
                 ],
 
                 // Otros ingresos texto si existe
-                if (closure.otrosIngresosTexto != null && closure.otrosIngresosTexto!.isNotEmpty) ...[
+                        if (closure.otrosIngresosTexto != null &&
+                            closure.otrosIngresosTexto!.isNotEmpty) ...[
                   Container(
                     padding: EdgeInsets.all(AppTheme.spacingSM),
                     decoration: BoxDecoration(
                       color: Colors.teal.shade50,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMD,
+                              ),
                       border: Border.all(color: Colors.teal.shade200),
                     ),
                     child: Row(
@@ -9538,11 +10491,15 @@ class AdminApp extends StatelessWidget {
                         SizedBox(width: AppTheme.spacingSM),
                         Expanded(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                             children: [
                               Text(
                                 'Otros Ingresos',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
                                   fontWeight: FontWeight.w600,
                                   color: Colors.teal.shade900,
                                 ),
@@ -9550,7 +10507,10 @@ class AdminApp extends StatelessWidget {
                               SizedBox(height: AppTheme.spacingXS),
                               Text(
                                 closure.otrosIngresosTexto!,
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
                                   color: Colors.teal.shade800,
                                 ),
                               ),
@@ -9573,13 +10533,14 @@ class AdminApp extends StatelessWidget {
                   padding: EdgeInsets.all(AppTheme.spacingSM),
                   decoration: BoxDecoration(
                     color: AppColors.inputBackground,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusMD,
+                            ),
                   ),
                   child: Text(
                     'Los movimientos individuales se mostrarán aquí cuando estén disponibles.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppColors.textSecondary),
                   ),
                 ),
 
@@ -9593,23 +10554,34 @@ class AdminApp extends StatelessWidget {
                   SizedBox(height: AppTheme.spacingSM),
                   for (final log in closure.auditLog)
                     Padding(
-                      padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
+                              padding: EdgeInsets.only(
+                                bottom: AppTheme.spacingXS,
+                              ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.circle, size: 8, color: AppColors.primary),
+                                  Icon(
+                                    Icons.circle,
+                                    size: 8,
+                                    color: AppColors.primary,
+                                  ),
                           SizedBox(width: AppTheme.spacingSM),
                           Expanded(
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   '${log.usuario}: ${log.mensaje}',
-                                  style: Theme.of(context).textTheme.bodySmall,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
                                 ),
                                 Text(
                                   _formatDate(log.timestamp),
-                                  style: Theme.of(context).textTheme.bodySmall
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
                                       ?.copyWith(
                                         color: AppColors.textSecondary,
                                         fontSize: AppTheme.fontSizeXS,
@@ -9629,7 +10601,8 @@ class AdminApp extends StatelessWidget {
                   if (isClarification)
                     ElevatedButton.icon(
                       onPressed: () {
-                        final reasonController = TextEditingController();
+                                final reasonController =
+                                    TextEditingController();
                         showDialog(
                           context: context,
                           builder: (context) => AlertDialog(
@@ -9644,21 +10617,29 @@ class AdminApp extends StatelessWidget {
                             ),
                             actions: [
                               TextButton(
-                                onPressed: () => Navigator.of(context).pop(),
+                                        onPressed: () =>
+                                            Navigator.of(context).pop(),
                                 child: const Text('Cancelar'),
                               ),
                               ElevatedButton(
                                 onPressed: () {
-                                  if (reasonController.text.isNotEmpty) {
-                                    controller.requestCashCloseClarification(
+                                          if (reasonController
+                                              .text
+                                              .isNotEmpty) {
+                                            controller
+                                                .requestCashCloseClarification(
                                       closure.id,
                                       reasonController.text,
                                     );
                                     Navigator.of(context).pop();
                                     Navigator.of(context).pop();
-                                    ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
                                       const SnackBar(
-                                        content: Text('Aclaración solicitada'),
+                                                content: Text(
+                                                  'Aclaración solicitada',
+                                                ),
                                         backgroundColor: Colors.orange,
                                       ),
                                     );
@@ -9684,7 +10665,9 @@ class AdminApp extends StatelessWidget {
                       Navigator.of(context).pop();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Cierre marcado como verificado'),
+                                  content: Text(
+                                    'Cierre marcado como verificado',
+                                  ),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -9782,7 +10765,11 @@ class AdminApp extends StatelessWidget {
               if (tooltip != null)
                 Tooltip(
                   message: tooltip,
-                  child: Icon(Icons.info_outline, size: 12, color: AppColors.textSecondary),
+                  child: Icon(
+                    Icons.info_outline,
+                    size: 12,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
             ],
           ),
@@ -9799,7 +10786,9 @@ class AdminApp extends StatelessWidget {
       ),
     );
 
-    return tooltip != null ? Tooltip(message: tooltip, child: cardContent) : cardContent;
+    return tooltip != null
+        ? Tooltip(message: tooltip, child: cardContent)
+        : cardContent;
   }
 
   // Helper para obtener icono según estado
@@ -9835,7 +10824,12 @@ class AdminApp extends StatelessWidget {
   }
 
   // Widget helper para mostrar información con icono
-  Widget _buildInfoItem(BuildContext context, String label, String value, IconData icon) {
+  Widget _buildInfoItem(
+    BuildContext context,
+    String label,
+    String value,
+    IconData icon,
+  ) {
     return Row(
       children: [
         Icon(icon, size: 16, color: AppColors.textSecondary),
@@ -9853,9 +10847,9 @@ class AdminApp extends StatelessWidget {
               ),
               Text(
                 value,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -9874,7 +10868,9 @@ class AdminApp extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Aprobar cierre de caja'),
-        content: const Text('¿Estás seguro de que deseas aprobar este cierre de caja?'),
+        content: const Text(
+          '¿Estás seguro de que deseas aprobar este cierre de caja?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -10595,7 +11591,8 @@ class AdminApp extends StatelessWidget {
               ),
               
               // Notas del cajero
-              if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+              if (closure.notaCajero != null &&
+                  closure.notaCajero!.isNotEmpty) ...[
                 SizedBox(height: AppTheme.spacingMD),
                 Container(
                   padding: EdgeInsets.all(AppTheme.spacingMD),
@@ -10617,7 +11614,8 @@ class AdminApp extends StatelessWidget {
                           SizedBox(width: AppTheme.spacingSM),
                           Text(
                             'Notas del Cajero',
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(
                               fontWeight: FontWeight.w600,
                               color: Colors.amber.shade900,
                             ),
@@ -10637,7 +11635,8 @@ class AdminApp extends StatelessWidget {
               ],
 
               // Otros ingresos texto si existe
-              if (closure.otrosIngresosTexto != null && closure.otrosIngresosTexto!.isNotEmpty) ...[
+              if (closure.otrosIngresosTexto != null &&
+                  closure.otrosIngresosTexto!.isNotEmpty) ...[
                 SizedBox(height: AppTheme.spacingMD),
                 Container(
                   padding: EdgeInsets.all(AppTheme.spacingSM),
@@ -10661,7 +11660,8 @@ class AdminApp extends StatelessWidget {
                           children: [
                             Text(
                               'Otros Ingresos',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
                                 fontWeight: FontWeight.w600,
                                 color: Colors.teal.shade900,
                               ),
@@ -10669,9 +11669,8 @@ class AdminApp extends StatelessWidget {
                             SizedBox(height: AppTheme.spacingXS),
                             Text(
                               closure.otrosIngresosTexto!,
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.teal.shade800,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: Colors.teal.shade800),
                             ),
                           ],
                         ),
@@ -11502,7 +12501,9 @@ class AdminApp extends StatelessWidget {
       _SummaryCardData(
         title: 'Ventas Efectivo',
         value: controller.formatCurrency(cashSales),
-        subtitle: cashSales > 0 ? 'Incluye pagos mixtos' : 'Sin ventas en efectivo',
+        subtitle: cashSales > 0
+            ? 'Incluye pagos mixtos'
+            : 'Sin ventas en efectivo',
         color: AppColors.primary,
         icon: Icons.payments,
       ),
@@ -11518,7 +12519,9 @@ class AdminApp extends StatelessWidget {
       _SummaryCardData(
         title: 'Total Neto',
         value: controller.formatCurrency(totalNet),
-        subtitle: totalNet > 0 ? 'Incluye efectivo y tarjeta' : 'Sin ventas registradas',
+        subtitle: totalNet > 0
+            ? 'Incluye efectivo y tarjeta'
+            : 'Sin ventas registradas',
         color: AppColors.info,
         icon: Icons.analytics,
       ),
@@ -11915,7 +12918,9 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
       if (items.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No hay ingredientes en esta categoría. Agrega uno personalizado.'),
+            content: Text(
+              'No hay ingredientes en esta categoría. Agrega uno personalizado.',
+            ),
             backgroundColor: Colors.orange,
           ),
         );
@@ -11958,7 +12963,9 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
       if (items.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No hay ingredientes en esta categoría. Agrega uno personalizado.'),
+            content: Text(
+              'No hay ingredientes en esta categoría. Agrega uno personalizado.',
+            ),
             backgroundColor: Colors.orange,
           ),
         );
@@ -11981,8 +12988,12 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
       return;
     }
 
-    final ingredientName = (isCustom ? nameController.text : selectedInventory?.name)?.trim() ?? '';
-    final ingredientUnit = (isCustom ? unitController.text : selectedInventory?.unit)?.trim() ?? '';
+    final ingredientName =
+        (isCustom ? nameController.text : selectedInventory?.name)?.trim() ??
+        '';
+    final ingredientUnit =
+        (isCustom ? unitController.text : selectedInventory?.unit)?.trim() ??
+        '';
 
     final newIngredient = RecipeIngredient(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -11995,10 +13006,7 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
       inventoryItemId: selectedInventory?.id,
     );
 
-    final updatedIngredients = [
-      ...widget.ingredients,
-      newIngredient,
-    ];
+    final updatedIngredients = [...widget.ingredients, newIngredient];
     widget.onSave(updatedIngredients);
     _resetForm();
   }
@@ -12028,10 +13036,8 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
             ),
             items: categories
                 .map(
-                  (category) => DropdownMenuItem(
-                    value: category,
-                    child: Text(category),
-                  ),
+                  (category) =>
+                      DropdownMenuItem(value: category, child: Text(category)),
                 )
                 .toList(),
             onChanged: (value) {
@@ -12047,7 +13053,8 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
           ),
           SizedBox(height: AppTheme.spacingMD),
           if (!isCustom)
-            Builder(builder: (context) {
+            Builder(
+              builder: (context) {
               final items = _itemsForSelectedCategory();
               if (items.isEmpty) {
                 return Column(
@@ -12058,13 +13065,14 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
                       padding: EdgeInsets.all(AppTheme.spacingMD),
                       decoration: BoxDecoration(
                         color: Colors.orange.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
                       ),
                       child: Text(
                         'No hay ingredientes en esta categoría. Puedes agregar uno personalizado.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.orange.shade900,
-                            ),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: Colors.orange.shade900),
                       ),
                     ),
                     SizedBox(height: AppTheme.spacingMD),
@@ -12112,7 +13120,8 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
                   SizedBox(height: AppTheme.spacingMD),
                 ],
               );
-            }),
+              },
+            ),
           if (isCustom) ...[
             TextFormField(
               controller: nameController,
@@ -12212,10 +13221,7 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton(
-                onPressed: _resetForm,
-                child: const Text('Limpiar'),
-              ),
+              TextButton(onPressed: _resetForm, child: const Text('Limpiar')),
               SizedBox(width: AppTheme.spacingSM),
               ElevatedButton(
                 onPressed: _handleAddIngredient,
@@ -12238,10 +13244,7 @@ class _TicketDetailsModal extends StatefulWidget {
   final payment_models.BillModel ticket;
   final bool isTablet;
 
-  const _TicketDetailsModal({
-    required this.ticket,
-    required this.isTablet,
-  });
+  const _TicketDetailsModal({required this.ticket, required this.isTablet});
 
   @override
   State<_TicketDetailsModal> createState() => _TicketDetailsModalState();
@@ -12263,17 +13266,22 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
       final ordenesService = OrdenesService();
       
       // Detectar si es cuenta agrupada
-      final isGrouped = (widget.ticket.isGrouped == true) || 
+      final isGrouped =
+          (widget.ticket.isGrouped == true) ||
                        widget.ticket.id.startsWith('CUENTA-AGRUPADA-');
       
       // Obtener lista de ordenIds
       List<int> ordenIdsToLoad;
-      if (isGrouped && widget.ticket.ordenIds != null && widget.ticket.ordenIds!.isNotEmpty) {
+      if (isGrouped &&
+          widget.ticket.ordenIds != null &&
+          widget.ticket.ordenIds!.isNotEmpty) {
         // Usar ordenIds del ticket si están disponibles
         ordenIdsToLoad = widget.ticket.ordenIds!;
       } else if (isGrouped) {
         // Extraer ordenIds del ID del ticket (formato CUENTA-AGRUPADA-000084-000085-000086)
-        final parts = widget.ticket.id.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+        final parts = widget.ticket.id
+            .replaceFirst('CUENTA-AGRUPADA-', '')
+            .split('-');
         ordenIdsToLoad = parts
             .map((part) => int.tryParse(part))
             .whereType<int>()
@@ -12318,9 +13326,12 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           
           // Acumular totales
           subtotalTotal += (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
-          descuentoTotal += (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
-          impuestoTotal += (ordenData['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
-          propinaTotal += (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
+          descuentoTotal +=
+              (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+          impuestoTotal +=
+              (ordenData['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
+          propinaTotal +=
+              (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
           totalTotal += (ordenData['total'] as num?)?.toDouble() ?? 0.0;
           
           // Combinar items, asegurando que los precios estén correctos
@@ -12328,8 +13339,10 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           for (final item in items) {
             // Asegurar que los precios estén correctamente calculados
             final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
-            final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-            final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+            final precioUnitario =
+                (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+            final totalLineaBackend =
+                (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
             
             // Si totalLinea es 0 o incorrecto, recalcular
             double totalLineaCalculado = precioUnitario * cantidad;
@@ -12338,22 +13351,27 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             final modificadores = item['modificadores'] as List<dynamic>? ?? [];
             double totalModificadores = 0.0;
             for (final mod in modificadores) {
-              final modPrecio = (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+              final modPrecio =
+                  (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
               totalModificadores += modPrecio * cantidad;
             }
             
             totalLineaCalculado += totalModificadores;
             
             // Usar el totalLinea del backend si es razonable, de lo contrario usar el calculado
-            final totalLineaFinal = (totalLineaBackend <= 0.01 || 
+            final totalLineaFinal =
+                (totalLineaBackend <= 0.01 ||
                                    (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
                 ? totalLineaCalculado
                 : totalLineaBackend;
             
             // Si precioUnitario es 0 pero totalLinea tiene valor, calcular precio unitario
             double precioUnitarioFinal = precioUnitario;
-            if (precioUnitarioFinal <= 0.01 && totalLineaFinal > 0.01 && cantidad > 0) {
-              precioUnitarioFinal = (totalLineaFinal - totalModificadores) / cantidad;
+            if (precioUnitarioFinal <= 0.01 &&
+                totalLineaFinal > 0.01 &&
+                cantidad > 0) {
+              precioUnitarioFinal =
+                  (totalLineaFinal - totalModificadores) / cantidad;
             }
             
             // Crear una copia del item con los valores corregidos
@@ -12365,10 +13383,14 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           }
           
           // Tomar datos de la primera orden (o la que tenga mesa si es para mesa)
-          if (mesaCodigo == null) mesaCodigo = ordenData['mesaCodigo'] as String?;
-          if (clienteNombre == null) clienteNombre = ordenData['clienteNombre'] as String?;
-          if (clienteTelefono == null) clienteTelefono = ordenData['clienteTelefono'] as String?;
-          if (waiterName == null) waiterName = ordenData['creadoPorNombre'] as String?;
+          if (mesaCodigo == null)
+            mesaCodigo = ordenData['mesaCodigo'] as String?;
+          if (clienteNombre == null)
+            clienteNombre = ordenData['clienteNombre'] as String?;
+          if (clienteTelefono == null)
+            clienteTelefono = ordenData['clienteTelefono'] as String?;
+          if (waiterName == null)
+            waiterName = ordenData['creadoPorNombre'] as String?;
           
           // Fecha más antigua
           final fechaOrdenStr = ordenData['creadoEn'] as String?;
@@ -12406,7 +13428,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         'clienteNombre': clienteNombre,
         'clienteTelefono': clienteTelefono,
         'creadoPorNombre': waiterName,
-        'creadoEn': fechaMasAntigua?.toIso8601String() ?? widget.ticket.createdAt.toIso8601String(),
+        'creadoEn':
+            fechaMasAntigua?.toIso8601String() ??
+            widget.ticket.createdAt.toIso8601String(),
         'folio': isGrouped 
             ? 'CUENTA AGRUPADA (${ordenIdsToLoad.map((id) => 'ORD-${id.toString().padLeft(6, '0')}').join(', ')})'
             : 'ORD-${ordenIdsToLoad.first.toString().padLeft(6, '0')}',
@@ -12429,7 +13453,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
     return Dialog(
       child: Container(
         width: widget.isTablet ? 600 : double.infinity,
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
         padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -12463,15 +13489,17 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.error_outline, size: 48, color: Colors.red),
+                          Icon(
+                            Icons.error_outline,
+                            size: 48,
+                            color: Colors.red,
+                          ),
                               const SizedBox(height: 16),
                               Text(_error!, textAlign: TextAlign.center),
                             ],
                           ),
                         )
-                      : SingleChildScrollView(
-                          child: _buildTicketContent(),
-                        ),
+                  : SingleChildScrollView(child: _buildTicketContent()),
             ),
             
             // Botón cerrar
@@ -12500,9 +13528,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
 
     final items = _ordenData!['items'] as List<dynamic>? ?? [];
     final subtotal = (_ordenData!['subtotal'] as num?)?.toDouble() ?? 0.0;
-    final descuento = (_ordenData!['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
+    final descuento =
+        (_ordenData!['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
     final impuesto = (_ordenData!['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
-    final propina = (_ordenData!['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
     final total = (_ordenData!['total'] as num?)?.toDouble() ?? 0.0;
     final mesaCodigo = _ordenData!['mesaCodigo'] as String?;
     final clienteNombre = _ordenData!['clienteNombre'] as String?;
@@ -12600,7 +13628,11 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
                 children: [
-                  const Icon(Icons.table_restaurant, size: 16, color: AppColors.textSecondary),
+                  const Icon(
+                    Icons.table_restaurant,
+                    size: 16,
+                    color: AppColors.textSecondary,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     'Mesa: $mesaCodigo',
@@ -12620,7 +13652,11 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.person, size: 16, color: AppColors.textSecondary),
+                      const Icon(
+                        Icons.person,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         'Cliente: $clienteNombre',
@@ -12630,11 +13666,16 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                       ),
                     ],
                   ),
-                  if (clienteTelefono != null && clienteTelefono.isNotEmpty) ...[
+                  if (clienteTelefono != null &&
+                      clienteTelefono.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.phone, size: 16, color: AppColors.textSecondary),
+                        const Icon(
+                          Icons.phone,
+                          size: 16,
+                          color: AppColors.textSecondary,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           'Teléfono: $clienteTelefono',
@@ -12674,30 +13715,40 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
               const SizedBox(height: 12),
               ...items.map((item) {
                 final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
-                final productoNombre = item['productoNombre'] as String? ?? 'Producto';
-                final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-                final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
-                final modificadores = item['modificadores'] as List<dynamic>? ?? [];
+                final productoNombre =
+                    item['productoNombre'] as String? ?? 'Producto';
+                final precioUnitario =
+                    (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                final totalLineaBackend =
+                    (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+                final modificadores =
+                    item['modificadores'] as List<dynamic>? ?? [];
                 final nota = item['nota'] as String?;
                 
                 // Calcular total de modificadores
                 double totalModificadores = 0.0;
                 for (final mod in modificadores) {
-                  final modPrecio = (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                  final modPrecio =
+                      (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
                   totalModificadores += modPrecio * cantidad;
                 }
                 
                 // Calcular totalLinea correctamente
-                double totalLineaCalculado = (precioUnitario * cantidad) + totalModificadores;
-                final totalLinea = (totalLineaBackend <= 0.01 || 
+                double totalLineaCalculado =
+                    (precioUnitario * cantidad) + totalModificadores;
+                final totalLinea =
+                    (totalLineaBackend <= 0.01 ||
                                    (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
                     ? totalLineaCalculado
                     : totalLineaBackend;
                 
                 // Si precioUnitario es 0 pero tenemos totalLinea, calcular precio unitario
                 double precioUnitarioFinal = precioUnitario;
-                if (precioUnitarioFinal <= 0.01 && totalLinea > 0.01 && cantidad > 0) {
-                  precioUnitarioFinal = (totalLinea - totalModificadores) / cantidad;
+                if (precioUnitarioFinal <= 0.01 &&
+                    totalLinea > 0.01 &&
+                    cantidad > 0) {
+                  precioUnitarioFinal =
+                      (totalLinea - totalModificadores) / cantidad;
                 }
 
                 return Padding(
@@ -12727,42 +13778,44 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                                       child: Text(
                                         productoNombre,
                                         style: TextStyle(
-                                          fontSize: widget.isTablet ? 14.0 : 12.0,
+                                          fontSize: widget.isTablet
+                                              ? 14.0
+                                              : 12.0,
                                           fontWeight: FontWeight.w600,
                                           color: AppColors.textPrimary,
                                         ),
                                       ),
                                     ),
-                                    if (precioUnitarioFinal > 0.01 && cantidad > 1)
-                                      Padding(
-                                        padding: const EdgeInsets.only(left: 8),
-                                        child: Text(
-                                          '\$${precioUnitarioFinal.toStringAsFixed(2)} c/u',
-                                          style: TextStyle(
-                                            fontSize: widget.isTablet ? 11.0 : 10.0,
-                                            color: AppColors.textSecondary,
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                        ),
-                                      ),
                                   ],
                                 ),
                                 // Modificadores
                                 if (modificadores.isNotEmpty) ...[
                                   const SizedBox(height: 4),
                                   ...modificadores.map((mod) {
-                                    final modNombre = mod['nombre'] as String? ?? '';
-                                    final modPrecio = (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+                                    final modNombre =
+                                        mod['nombre'] as String? ?? '';
+                                    final modPrecio =
+                                        (mod['precioUnitario'] as num?)
+                                            ?.toDouble() ??
+                                        0.0;
                                     return Padding(
-                                      padding: const EdgeInsets.only(left: 8, bottom: 2),
+                                      padding: const EdgeInsets.only(
+                                        left: 8,
+                                        bottom: 2,
+                                      ),
                                       child: Row(
                                         children: [
-                                          const Text('  + ', style: TextStyle(fontSize: 10)),
+                                          const Text(
+                                            '  + ',
+                                            style: TextStyle(fontSize: 10),
+                                          ),
                                           Expanded(
                                             child: Text(
                                               modNombre,
                                               style: TextStyle(
-                                                fontSize: widget.isTablet ? 11.0 : 10.0,
+                                                fontSize: widget.isTablet
+                                                    ? 11.0
+                                                    : 10.0,
                                                 color: AppColors.textSecondary,
                                                 fontStyle: FontStyle.italic,
                                               ),
@@ -12772,7 +13825,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                                             Text(
                                               '\$${modPrecio.toStringAsFixed(2)}',
                                               style: TextStyle(
-                                                fontSize: widget.isTablet ? 11.0 : 10.0,
+                                                fontSize: widget.isTablet
+                                                    ? 11.0
+                                                    : 10.0,
                                                 color: AppColors.textSecondary,
                                               ),
                                             ),
@@ -12916,29 +13971,6 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                   ],
                 ),
               ],
-              if (propina > 0) ...[
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Propina sugerida:',
-                      style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    Text(
-                      '\$${propina.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.green.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -13009,24 +14041,108 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         ),
 
         // Información de impresión
-        if (widget.ticket.printedBy != null) ...[
-          const SizedBox(height: 16),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: widget.ticket.printedBy != null
+                ? AppColors.success.withValues(alpha: 0.1)
+                : AppColors.textSecondary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.print,
+                size: 16,
+                color: widget.ticket.printedBy != null
+                    ? AppColors.success
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Impreso por: ${widget.ticket.printedBy ?? 'No impreso'}',
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 11.0 : 10.0,
+                  color: widget.ticket.printedBy != null
+                      ? AppColors.success
+                      : AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                  fontStyle: widget.ticket.printedBy != null
+                      ? FontStyle.normal
+                      : FontStyle.italic,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Propina
+        if (widget.ticket.tipAmount != null &&
+            widget.ticket.tipAmount! > 0) ...[
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.1),
+              color: Colors.green.shade50,
               borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.green.shade200),
             ),
             child: Row(
               children: [
-                Icon(Icons.print, size: 16, color: AppColors.success),
+                Icon(
+                  Icons.tips_and_updates,
+                  size: 16,
+                  color: Colors.green.shade700,
+                ),
                 const SizedBox(width: 8),
                 Text(
-                  'Impreso por: ${widget.ticket.printedBy}',
+                  'Propina: \$${widget.ticket.tipAmount!.toStringAsFixed(2)}',
                   style: TextStyle(
                     fontSize: widget.isTablet ? 11.0 : 10.0,
-                    color: AppColors.success,
+                    color: Colors.green.shade700,
                     fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
+        // Notas del pago
+        if (widget.ticket.paymentNotes != null &&
+            widget.ticket.paymentNotes!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.info.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.note, size: 16, color: AppColors.info),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Notas del pago:',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 11.0 : 10.0,
+                        color: AppColors.info,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.ticket.paymentNotes!,
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 10.0 : 9.0,
+                    color: AppColors.textPrimary,
                   ),
                 ),
               ],
@@ -13051,11 +14167,7 @@ class _DashedLinePainter extends CustomPainter {
     double startX = 0;
 
     while (startX < size.width) {
-      canvas.drawLine(
-        Offset(startX, 0),
-        Offset(startX + dashWidth, 0),
-        paint,
-      );
+      canvas.drawLine(Offset(startX, 0), Offset(startX + dashWidth, 0), paint);
       startX += dashWidth + dashSpace;
     }
   }

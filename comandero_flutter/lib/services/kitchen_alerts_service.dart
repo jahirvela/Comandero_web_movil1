@@ -188,9 +188,20 @@ class KitchenAlertsService {
         }
 
         final message = errorData['message'] as String? ?? 'Error al procesar alerta';
-        final details = errorData['details'] as Map<String, dynamic>?;
         
-        print('❌ KitchenAlertsService: Error procesado - Message: $message');
+        // Manejar details que puede ser String o Map
+        Map<String, dynamic>? details;
+        final detailsRaw = errorData['details'];
+        if (detailsRaw is Map<String, dynamic>) {
+          details = detailsRaw;
+        } else if (detailsRaw is Map) {
+          details = Map<String, dynamic>.from(detailsRaw);
+        } else if (detailsRaw is String) {
+          // Si details es un String, crear un Map con el mensaje
+          details = {'error': detailsRaw};
+        }
+        
+        print('❌ KitchenAlertsService: Error procesado - Message: $message, Details: $details');
         
         // Llamar al callback
         onError(message, details);

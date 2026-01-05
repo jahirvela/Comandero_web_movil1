@@ -125,11 +125,15 @@ class InventoryItem {
   });
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
+    // Asegurar que el stock nunca sea negativo
+    final stockValue = json['currentStock']?.toDouble() ?? 0.0;
+    final currentStock = stockValue < 0 ? 0.0 : stockValue;
+    
     return InventoryItem(
       id: json['id'],
       name: json['name'],
       category: (json['category'] ?? json['categoria'] ?? 'Otros').toString(),
-      currentStock: json['currentStock'].toDouble(),
+      currentStock: currentStock,
       minStock: json['minStock'].toDouble(),
       maxStock: json['maxStock'].toDouble(),
       minimumStock:
@@ -560,6 +564,7 @@ class RecipeIngredient {
   final double quantityPerPortion;
   final bool autoDeduct; // Descontar automáticamente del inventario
   final bool isCustom; // Si es ingrediente personalizado o sugerido
+  final bool isOptional; // Si el ingrediente es opcional (ej: cilantro, cebolla)
   final String? category;
   final String? inventoryItemId;
 
@@ -570,6 +575,7 @@ class RecipeIngredient {
     required this.quantityPerPortion,
     this.autoDeduct = true,
     this.isCustom = false,
+    this.isOptional = false, // Por defecto, todos los ingredientes son obligatorios
     this.category,
     this.inventoryItemId,
   });
@@ -609,6 +615,9 @@ class RecipeIngredient {
       isCustom: _parseBool(
         json['isCustom'] ?? json['esPersonalizado'] ?? json['es_personalizado'],
       ),
+      isOptional: _parseBool(
+        json['isOptional'] ?? json['esOpcional'] ?? json['es_opcional'],
+      ),
       category: (json['category'] ?? json['categoria'])?.toString(),
       inventoryItemId: (json['inventoryItemId'] ??
               json['inventarioItemId'] ??
@@ -625,9 +634,34 @@ class RecipeIngredient {
       'quantityPerPortion': quantityPerPortion,
       'autoDeduct': autoDeduct,
       'isCustom': isCustom,
+      'isOptional': isOptional,
       'category': category,
       'inventoryItemId': inventoryItemId,
     };
+  }
+
+  RecipeIngredient copyWith({
+    String? id,
+    String? name,
+    String? unit,
+    double? quantityPerPortion,
+    bool? autoDeduct,
+    bool? isCustom,
+    bool? isOptional,
+    String? category,
+    String? inventoryItemId,
+  }) {
+    return RecipeIngredient(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      unit: unit ?? this.unit,
+      quantityPerPortion: quantityPerPortion ?? this.quantityPerPortion,
+      autoDeduct: autoDeduct ?? this.autoDeduct,
+      isCustom: isCustom ?? this.isCustom,
+      isOptional: isOptional ?? this.isOptional,
+      category: category ?? this.category,
+      inventoryItemId: inventoryItemId ?? this.inventoryItemId,
+    );
   }
 }
 

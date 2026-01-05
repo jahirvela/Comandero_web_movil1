@@ -6,6 +6,7 @@ import {
   crearOrden,
   actualizarOrden,
   actualizarEstadoOrden,
+  actualizarTiempoEstimadoPreparacion,
   agregarItemsAOrden,
   listarEstadosOrden,
   obtenerEstadoOrdenPorNombre,
@@ -71,8 +72,12 @@ export const obtenerOrdenDetalle = async (id: number): Promise<OrdenDetalle> => 
     modificadoresPorItem.set(mod.ordenItemId, list);
   }
 
-  // Calcular tiempo estimado basado en items (aproximación: 5-8 min por item)
-  const estimatedTime = Math.max(5, Math.min(30, items.length * 6));
+  // Usar tiempo estimado del cocinero si existe, sino usar 6 minutos por defecto
+  const tiempoEstimadoPreparacion = (base as any).tiempoEstimadoPreparacion;
+  const defaultEstimatedTime = 6; // 6 minutos por defecto
+  const estimatedTime = tiempoEstimadoPreparacion 
+    ? Number(tiempoEstimadoPreparacion)
+    : defaultEstimatedTime;
 
   // Serializar fechas a ISO string para JSON (ya convertidas a zona CDMX en el repository)
   return {
@@ -81,6 +86,7 @@ export const obtenerOrdenDetalle = async (id: number): Promise<OrdenDetalle> => 
     creadoEn: utcToMxISO(base.creadoEn) ?? base.creadoEn,
     actualizadoEn: utcToMxISO(base.actualizadoEn) ?? base.actualizadoEn,
     estimatedTime,
+    tiempoEstimadoPreparacion: tiempoEstimadoPreparacion ? Number(tiempoEstimadoPreparacion) : defaultEstimatedTime,
     pickupTime: null, // Se puede agregar después si se necesita
     items: items.map((item) => ({
       ...item,
@@ -149,6 +155,15 @@ export const actualizarOrdenExistente = async (
   return orden;
 };
 
+// Helper para formatear nombre de estado (quitar guiones bajos y capitalizar)
+const formatearNombreEstado = (nombreEstado: string): string => {
+  return nombreEstado
+    .replace(/_/g, ' ') // Reemplazar guiones bajos con espacios
+    .split(' ')
+    .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase())
+    .join(' ');
+};
+
 export const actualizarEstadoDeOrden = async (
   id: number,
   input: ActualizarEstadoOrdenInput,
@@ -167,7 +182,38 @@ export const actualizarEstadoDeOrden = async (
   }
   await actualizarEstadoOrden(id, input.estadoOrdenId, usuarioId ?? null);
   const orden = await obtenerOrdenDetalle(id);
-  await emitOrderUpdated(orden, usuarioId, username, rol, `Estado cambiado a: ${estadoValido.nombre}`);
+  
+  // Formatear nombre del estado y verificar si es estado de preparación
+  const estadoNombreFormateado = formatearNombreEstado(estadoValido.nombre);
+  const estadoNombreLower = estadoValido.nombre.toLowerCase();
+  const esEstadoPreparacion = estadoNombreLower.includes('preparacion') || 
+                               estadoNombreLower.includes('preparación') || 
+                               estadoNombreLower.includes('cooking') || 
+                               estadoNombreLower.includes('iniciar');
+  
+  // Construir mensaje de cambio con tiempo estimado si corresponde
+  let mensajeCambio = `Estado cambiado a: ${estadoNombreFormateado}`;
+  
+  // Si es estado de preparación, agregar tiempo estimado (6 min por defecto si no está definido)
+  if (esEstadoPreparacion) {
+    const tiempoEstimado = orden.tiempoEstimadoPreparacion ?? 6; // 6 minutos por defecto
+    const tiempoNum = Number(tiempoEstimado);
+    if (tiempoNum > 0) {
+      let tiempoTexto = '';
+      if (tiempoNum >= 60) {
+        const horas = Math.floor(tiempoNum / 60);
+        const minutos = tiempoNum % 60;
+        tiempoTexto = minutos > 0 
+          ? `${horas}h ${minutos}min`
+          : `${horas}h`;
+      } else {
+        tiempoTexto = `${tiempoNum}min`;
+      }
+      mensajeCambio = `Estado cambiado a: ${estadoNombreFormateado} (estimado: ${tiempoTexto})`;
+    }
+  }
+  
+  await emitOrderUpdated(orden, usuarioId, username, rol, mensajeCambio);
   
   // Logging para debugging
   logger.info({
@@ -179,13 +225,6 @@ export const actualizarEstadoDeOrden = async (
     rol,
     tieneDatosUsuario: !!(usuarioId && username && rol)
   }, '🔄 Estado de orden actualizado - verificando si se debe emitir alerta');
-  
-  // Verificar si el estado es "preparación" o "en preparación" y emitir alerta al mesero
-  const estadoNombreLower = estadoValido.nombre.toLowerCase();
-  const esEstadoPreparacion = estadoNombreLower.includes('preparacion') || 
-                               estadoNombreLower.includes('preparación') || 
-                               estadoNombreLower.includes('cooking') || 
-                               estadoNombreLower.includes('iniciar');
   
   logger.info({
     estadoNombre: estadoValido.nombre,
@@ -235,6 +274,19 @@ export const actualizarEstadoDeOrden = async (
   const esEstadoListo = estadoNombreLower.includes('listo') || 
                         estadoNombreLower.includes('ready') ||
                         estadoNombreLower === 'listo_para_recoger';
+  
+  // Descontar inventario automáticamente cuando se marca como "listo"
+  if (esEstadoListo) {
+    try {
+      const { descontarInventarioPorReceta } = await import('../inventario/inventario.service.js');
+      // Ejecutar descuento automático en segundo plano (no bloquear la actualización del estado)
+      descontarInventarioPorReceta(orden.id, usuarioId ?? undefined).catch((error) => {
+        logger.error({ err: error, ordenId: orden.id }, '❌ Error en descuento automático de inventario');
+      });
+    } catch (error) {
+      logger.error({ err: error, ordenId: orden.id }, '❌ Error al importar servicio de descuento automático');
+    }
+  }
   
   if (esEstadoListo && usuarioId && username && rol) {
     const isTakeaway = orden.mesaId == null;
@@ -317,4 +369,38 @@ export const agregarItemsOrden = async (
 };
 
 export const obtenerEstadosOrdenServicio = () => listarEstadosOrden();
+
+export const actualizarTiempoEstimado = async (
+  ordenId: number,
+  tiempoEstimado: number,
+  usuarioId?: number,
+  username?: string,
+  rol?: string
+) => {
+  const existe = await obtenerOrdenBasePorId(ordenId);
+  if (!existe) {
+    throw notFound('Orden no encontrada');
+  }
+
+  // Validar que el tiempo esté en un rango razonable (1-120 minutos)
+  if (tiempoEstimado < 1 || tiempoEstimado > 120) {
+    throw badRequest('El tiempo estimado debe estar entre 1 y 120 minutos');
+  }
+
+  await actualizarTiempoEstimadoPreparacion(ordenId, tiempoEstimado);
+  const orden = await obtenerOrdenDetalle(ordenId);
+  
+  // Emitir actualización en tiempo real
+  await emitOrderUpdated(orden, usuarioId, username, rol, `Tiempo estimado actualizado a ${tiempoEstimado} minutos`);
+  
+  logger.info({
+    ordenId,
+    tiempoEstimado,
+    usuarioId,
+    username,
+    rol
+  }, '⏱️ Tiempo estimado de preparación actualizado');
+  
+  return orden;
+};
 

@@ -104,10 +104,14 @@ export const listarOrdenes = async ({
     SELECT
       o.*,
       m.codigo AS mesa_codigo,
-      eo.nombre AS estado_nombre
+      eo.nombre AS estado_nombre,
+      u.nombre AS creado_por_nombre,
+      u.username AS creado_por_username,
+      o.tiempo_estimado_preparacion
     FROM orden o
     LEFT JOIN mesa m ON m.id = o.mesa_id
     JOIN estado_orden eo ON eo.id = o.estado_orden_id
+    LEFT JOIN usuario u ON u.id = o.creado_por_usuario_id
     ${whereClause}
     ORDER BY o.creado_en DESC
     LIMIT 200
@@ -129,6 +133,9 @@ export const listarOrdenes = async ({
     estadoOrdenId: row.estado_orden_id,
     estadoNombre: row.estado_nombre,
     creadoPorUsuarioId: row.creado_por_usuario_id,
+    creadoPorNombre: (row as any).creado_por_nombre,
+    creadoPorUsuarioNombre: (row as any).creado_por_nombre ?? (row as any).creado_por_username,
+    tiempoEstimadoPreparacion: (row as any).tiempo_estimado_preparacion ? Number((row as any).tiempo_estimado_preparacion) : null,
     cerradoPorUsuarioId: row.cerrado_por_usuario_id,
     creadoEn: utcToMxISO(row.creado_en) ?? '',
     actualizadoEn: utcToMxISO(row.actualizado_en) ?? ''
@@ -142,11 +149,15 @@ export const obtenerOrdenBasePorId = async (id: number) => {
       o.*,
       m.codigo AS mesa_codigo,
       eo.nombre AS estado_nombre,
-      c.telefono AS cliente_telefono
+      c.telefono AS cliente_telefono,
+      u.nombre AS creado_por_nombre,
+      u.username AS creado_por_username,
+      o.tiempo_estimado_preparacion
     FROM orden o
     LEFT JOIN mesa m ON m.id = o.mesa_id
     JOIN estado_orden eo ON eo.id = o.estado_orden_id
     LEFT JOIN cliente c ON c.id = o.cliente_id
+    LEFT JOIN usuario u ON u.id = o.creado_por_usuario_id
     WHERE o.id = :id
     `,
     { id }
@@ -170,7 +181,10 @@ export const obtenerOrdenBasePorId = async (id: number) => {
     estadoOrdenId: row.estado_orden_id,
     estadoNombre: row.estado_nombre,
     creadoPorUsuarioId: row.creado_por_usuario_id,
+    creadoPorNombre: row.creado_por_nombre,
+    creadoPorUsuarioNombre: row.creado_por_nombre ?? row.creado_por_username,
     cerradoPorUsuarioId: row.cerrado_por_usuario_id,
+    tiempoEstimadoPreparacion: row.tiempo_estimado_preparacion ? Number(row.tiempo_estimado_preparacion) : null,
     creadoEn: utcToMxISO(row.creado_en) ?? '',
     actualizadoEn: utcToMxISO(row.actualizado_en) ?? ''
   };
@@ -436,6 +450,21 @@ export const actualizarEstadoOrden = async (
       estadoOrdenId,
       cerradoPorUsuarioId: cerradoPorUsuarioId ?? null
     }
+  );
+};
+
+export const actualizarTiempoEstimadoPreparacion = async (
+  id: number,
+  tiempoEstimado: number
+) => {
+  await pool.execute(
+    `
+    UPDATE orden
+    SET tiempo_estimado_preparacion = :tiempoEstimado,
+        actualizado_en = NOW()
+    WHERE id = :id
+    `,
+    { id, tiempoEstimado }
   );
 };
 

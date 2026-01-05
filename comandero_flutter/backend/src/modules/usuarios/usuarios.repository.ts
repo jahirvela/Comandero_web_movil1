@@ -33,7 +33,7 @@ const mapRoles = (roles: string | null) => {
 };
 
 export const listarUsuarios = async () => {
-  const [rows] = await pool.query<UsuarioRow[]>(
+  const [rows] = await pool.query<any[]>(
     `
     SELECT
       u.id,
@@ -44,6 +44,7 @@ export const listarUsuarios = async () => {
       u.ultimo_acceso,
       u.creado_en,
       u.actualizado_en,
+      u.password,
       GROUP_CONCAT(DISTINCT r.nombre ORDER BY r.nombre SEPARATOR ',') AS roles
     FROM usuario u
     LEFT JOIN usuario_rol ur ON ur.usuario_id = u.id
@@ -62,12 +63,13 @@ export const listarUsuarios = async () => {
     ultimoAcceso: row.ultimo_acceso,
     creadoEn: row.creado_en,
     actualizadoEn: row.actualizado_en,
+    password: row.password || '', // Contraseña en texto plano (solo para administrador)
     roles: mapRoles(row.roles)
   }));
 };
 
 export const obtenerUsuarioPorId = async (id: number) => {
-  const [rows] = await pool.query<UsuarioDetalleRow[]>(
+  const [rows] = await pool.query<any[]>(
     `
     SELECT
       u.*,
@@ -91,6 +93,7 @@ export const obtenerUsuarioPorId = async (id: number) => {
     username: row.username,
     telefono: row.telefono,
     passwordHash: row.password_hash,
+    password: row.password || '', // Contraseña en texto plano (solo para administrador)
     activo: Boolean(row.activo),
     ultimoAcceso: row.ultimo_acceso,
     creadoEn: row.creado_en,
@@ -105,6 +108,7 @@ export const crearUsuario = async ({
   username,
   telefono,
   passwordHash,
+  passwordPlain,
   activo,
   roles,
   actualizadoPor
@@ -113,6 +117,7 @@ export const crearUsuario = async ({
   username: string;
   telefono?: string | null;
   passwordHash: string;
+  passwordPlain?: string;
   activo: boolean;
   roles: number[];
   actualizadoPor?: number | null;
@@ -125,17 +130,19 @@ export const crearUsuario = async ({
         username,
         telefono,
         password_hash,
+        password,
         activo,
         password_actualizada_en,
         password_actualizada_por_usuario_id
       )
-      VALUES (:nombre, :username, :telefono, :passwordHash, :activo, NOW(), :actualizadoPor)
+      VALUES (:nombre, :username, :telefono, :passwordHash, :passwordPlain, :activo, NOW(), :actualizadoPor)
       `,
       {
         nombre,
         username,
         telefono: telefono ?? null,
         passwordHash,
+        passwordPlain: passwordPlain ?? null,
         activo: activo ? 1 : 0,
         actualizadoPor: actualizadoPor ?? null
       }
@@ -165,6 +172,7 @@ export const actualizarUsuario = async (
     telefono,
     activo,
     passwordHash,
+    passwordPlain,
     roles,
     actualizadoPor
   }: {
@@ -172,6 +180,7 @@ export const actualizarUsuario = async (
     telefono?: string | null;
     activo?: boolean;
     passwordHash?: string;
+    passwordPlain?: string;
     roles?: number[];
     actualizadoPor?: number | null;
   }
@@ -202,6 +211,12 @@ export const actualizarUsuario = async (
         fields.push('password_actualizada_por_usuario_id = :actualizadoPor');
         params.passwordHash = passwordHash;
         params.actualizadoPor = actualizadoPor ?? null;
+        
+        // Si se proporciona passwordPlain, también guardarlo en texto plano
+        if (passwordPlain !== undefined) {
+          fields.push('password = :passwordPlain');
+          params.passwordPlain = passwordPlain;
+        }
       }
 
       if (fields.length > 0) {

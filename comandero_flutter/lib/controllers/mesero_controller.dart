@@ -46,6 +46,9 @@ class MeseroController extends ChangeNotifier {
   // Órdenes para llevar ya enviadas al cajero (para filtrar del historial)
   // Se persiste en storage para mantener después de logout/login
   final Set<int> _sentToCashierOrders = {};
+  
+  // Flag para prevenir ejecuciones simultáneas de sendTakeawayToCashier
+  bool _processingTakeawayOrder = false;
 
   // Estado de la vista actual
   String _currentView = 'floor';
@@ -538,35 +541,54 @@ class MeseroController extends ChangeNotifier {
           }
 
           // Actualizar o remover orden del historial
-          bool ordenActualizada = false;
           _tableOrderHistory.forEach((tableId, orders) {
             // Actualizar el estado de la orden
             for (var order in orders) {
               if (order['ordenId'] == ordenId) {
                 order['status'] = estadoNombre;
-                ordenActualizada = true;
                 break;
               }
             }
 
-            // Si es estado finalizado, remover del historial
-            if (esEstadoFinalizado) {
-              final antes = orders.length;
-              orders.removeWhere((o) => o['ordenId'] == ordenId);
-              if (orders.length < antes) {
-                print(
-                  '🗑️ Orden $ordenId removida del historial (estado: $estadoLower)',
-                );
+            // IMPORTANTE: Para órdenes "para llevar", NO remover por estado finalizado
+            // Solo se deben remover cuando se cierra la cuenta y se envía al cajero (tienen bill pendiente)
+            // Las órdenes deben permanecer visibles durante todo el proceso: pendiente -> en preparación -> listo -> listo para recoger
+            final isTakeawayTable = tableId.startsWith('takeaway') || tableId == 'takeaway-all';
+            if (isTakeawayTable) {
+              // Para takeaway, NO remover por estado, solo actualizar el estado
+              // La orden se removerá cuando tenga un bill pendiente (en loadTakeawayOrderHistory)
+              print('📝 Orden $ordenId (takeaway) actualizada a estado: $estadoNombre (permanece visible)');
+            } else {
+              // Para órdenes de mesa, sí remover si es estado finalizado
+              if (esEstadoFinalizado) {
+                final antes = orders.length;
+                orders.removeWhere((o) => o['ordenId'] == ordenId);
+                if (orders.length < antes) {
+                  print(
+                    '🗑️ Orden $ordenId removida del historial de mesa (estado: $estadoLower)',
+                  );
+                }
               }
             }
           });
 
-          // Si es para llevar y estado finalizado, recargar historial de takeaway
-          if (mesaId == null && esEstadoFinalizado) {
-            await loadTakeawayOrderHistory();
-          } else if (!ordenActualizada &&
-              mesaId == null &&
-              !esEstadoFinalizado) {
+          // Si es para llevar, SIEMPRE recargar historial para actualizar estados en tiempo real
+          // PERO NO remover órdenes por estado, solo por bills pendientes
+          if (mesaId == null) {
+            // Actualizar el estado en el historial local primero
+            _tableOrderHistory.forEach((tableId, orders) {
+              if (tableId.startsWith('takeaway') || tableId == 'takeaway-all') {
+                for (var order in orders) {
+                  if (order['ordenId'] == ordenId) {
+                    order['status'] = estadoNombre;
+                    break;
+                  }
+                }
+              }
+            });
+            
+            // Recargar desde backend para asegurar sincronización y actualizar items si es necesario
+            // Este método solo filtrará órdenes con bills pendientes, NO por estado
             await loadTakeawayOrderHistory();
           }
 
@@ -1753,22 +1775,101 @@ class MeseroController extends ChangeNotifier {
       // Obtener todas las órdenes del backend
       final ordenes = await _ordenesService.getOrdenes();
 
+      // Asegurarse de que los bills estén cargados desde el backend
+      // Esto es crítico porque los bills persisten después del logout
+      await _billRepository.loadBills();
+      final billsPendientes = _billRepository.pendingBills;
+      
+      // IMPORTANTE: Solo considerar bills que fueron creados EXPLÍCITAMENTE por el mesero
+      // (cuando cierra la cuenta), NO bills creados automáticamente por BillRepository.loadBills()
+      // Los bills creados por el mesero tienen:
+      // 1. requestedByWaiter: true (pero esto también lo tienen los automáticos, así que no es suficiente)
+      // 2. Formato agrupado: BILL-TAKEAWAY-* o BILL-MESA-* (estos SÍ fueron creados por el mesero)
+      // 3. O bills individuales que están en bills agrupados (también fueron creados por el mesero)
+      final ordenIdsConBill = <int>{};
+      for (final bill in billsPendientes) {
+        // Solo considerar bills que fueron creados explícitamente por el mesero:
+        // - Bills agrupados (BILL-TAKEAWAY-* o BILL-MESA-*) siempre fueron creados por el mesero
+        // - Bills individuales (BILL-ORD-*) solo si están en un bill agrupado o fueron creados vía cuenta.enviada
+        final esBillAgrupado = bill.id.startsWith('BILL-TAKEAWAY-') || 
+                                bill.id.startsWith('BILL-MESA-') ||
+                                bill.id.startsWith('CUENTA-AGRUPADA-');
+        
+        if (esBillAgrupado) {
+          // Bill agrupado: extraer todos los ordenIds del billId
+          if (bill.id.startsWith('BILL-TAKEAWAY-')) {
+            final parts = bill.id.split('-');
+            // Los números al final son los ordenIds
+            for (var i = parts.length - 1; i >= 2; i--) {
+              final posibleOrdenId = int.tryParse(parts[i]);
+              if (posibleOrdenId != null) {
+                ordenIdsConBill.add(posibleOrdenId);
+              } else {
+                break; // Ya no hay más números
+              }
+            }
+          } else if (bill.id.startsWith('BILL-MESA-')) {
+            final parts = bill.id.split('-');
+            // Los números después de "BILL-MESA-X" son los ordenIds
+            for (var i = 3; i < parts.length; i++) {
+              final posibleOrdenId = int.tryParse(parts[i]);
+              if (posibleOrdenId != null) {
+                ordenIdsConBill.add(posibleOrdenId);
+              }
+            }
+          } else if (bill.id.startsWith('CUENTA-AGRUPADA-')) {
+            final parts = bill.id.replaceFirst('CUENTA-AGRUPADA-', '').split('-');
+            for (var part in parts) {
+              final posibleOrdenId = int.tryParse(part);
+              if (posibleOrdenId != null) {
+                ordenIdsConBill.add(posibleOrdenId);
+              }
+            }
+          }
+          
+          // También agregar ordenIds directos si existen
+          if (bill.ordenIds != null) {
+            ordenIdsConBill.addAll(bill.ordenIds!);
+          }
+        }
+        // NO considerar bills individuales (BILL-ORD-*) porque estos son creados automáticamente
+        // por BillRepository.loadBills() y NO indican que el mesero cerró la cuenta
+      }
+
       // Filtrar solo órdenes "para llevar" (mesaId == null) y con estados activos
       final takeawayOrdenesActivas = ordenes.where((o) {
         final ordenData = o as Map<String, dynamic>;
         final mesaId = ordenData['mesaId'];
         if (mesaId != null) return false;
 
-        // Filtrar por ID (registro local de órdenes ya enviadas)
         final ordenId = ordenData['id'] as int?;
+        
+        // PRIORIDAD 1: Filtrar por ID (registro local de órdenes ya enviadas)
+        // Esto es la fuente de verdad más confiable
         if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
           print(
             '🚫 Orden $ordenId filtrada (registro local de enviada al cajero)',
           );
           return false;
         }
+        
+        // PRIORIDAD 1.5: Filtrar por bills agrupados creados EXPLÍCITAMENTE por el mesero
+        // NO filtrar por bills individuales (BILL-ORD-*) porque estos son creados automáticamente
+        // Solo los bills agrupados (BILL-TAKEAWAY-*, BILL-MESA-*) indican que el mesero cerró la cuenta
+        if (ordenId != null && ordenIdsConBill.contains(ordenId)) {
+          print(
+            '🚫 Orden $ordenId filtrada (ya tiene bill agrupado creado por mesero)',
+          );
+          // IMPORTANTE: Agregar al registro local para persistencia
+          if (!_sentToCashierOrders.contains(ordenId)) {
+            _sentToCashierOrders.add(ordenId);
+            _saveSentToCashierOrders();
+            print('💾 Orden $ordenId agregada a _sentToCashierOrders (bill agrupado encontrado)');
+          }
+          return false;
+        }
 
-        // Filtrar por estado del backend
+        // PRIORIDAD 2: Filtrar por estado del backend
         final estadoNombre =
             (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
         for (final estadoFinal in estadosFinalizados) {
@@ -1803,10 +1904,26 @@ class MeseroController extends ChangeNotifier {
           fecha = DateTime.now();
         }
 
+        // Cargar items de la orden desde el backend
+        List<String> itemsNombres = [];
+        try {
+          final ordenDetalle = await _ordenesService.getOrden(ordenId);
+          if (ordenDetalle != null) {
+            final items = ordenDetalle['items'] as List<dynamic>? ?? [];
+            itemsNombres = items.map((item) {
+              final nombre = item['productoNombre'] as String? ?? 'Producto';
+              final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+              return cantidad > 1 ? '$nombre (x$cantidad)' : nombre;
+            }).toList();
+          }
+        } catch (e) {
+          print('⚠️ Error al cargar items de orden $ordenId: $e');
+        }
+
         history.add({
           'id': 'ORD-${ordenId.toString().padLeft(6, '0')}',
           'ordenId': ordenId,
-          'items': <String>[], // Items se cargarán al ver el detalle
+          'items': itemsNombres, // Items cargados desde el backend
           'status': ordenData['estadoNombre'] as String? ?? 'Pendiente',
           'time': date_utils.AppDateUtils.formatTime(fecha),
           'date': fecha.toIso8601String(),
@@ -1830,15 +1947,42 @@ class MeseroController extends ChangeNotifier {
         }
       });
 
+      // Asegurarse de que _sentToCashierOrders esté cargado antes de filtrar
+      if (_sentToCashierOrders.isEmpty) {
+        await _loadSentToCashierOrders();
+        print('🔄 Mesero: _sentToCashierOrders recargado antes de filtrar: $_sentToCashierOrders');
+      }
+      
       // Filtrar órdenes que ya fueron enviadas al cajero ANTES de guardar
+      // Nota: ordenIdsConBill ya fue calculado arriba en el primer filtro
+      print('🔍 Filtrando historial: ${_sentToCashierOrders.length} órdenes en _sentToCashierOrders: $_sentToCashierOrders');
       final historyFiltrado = history.where((order) {
         final ordenId = order['ordenId'] as int?;
-        if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
-          print('🚫 Orden $ordenId filtrada (ya enviada al cajero)');
+        if (ordenId == null) return true;
+        
+        // PRIORIDAD 1: Filtrar por registro local (_sentToCashierOrders)
+        if (_sentToCashierOrders.contains(ordenId)) {
+          print('🚫 Orden $ordenId filtrada (ya enviada al cajero - registro local)');
           return false;
         }
+        
+        // PRIORIDAD 2: Filtrar por bills pendientes creados EXPLÍCITAMENTE por el mesero
+        // (ordenIdsConBill ya fue calculado arriba, solo incluye bills agrupados)
+        // NO filtrar por bills individuales (BILL-ORD-*) porque estos son creados automáticamente
+        if (ordenIdsConBill.contains(ordenId)) {
+          print('🚫 Orden $ordenId filtrada (ya tiene bill agrupado creado por mesero)');
+          // IMPORTANTE: Agregar al registro local para persistencia
+          if (!_sentToCashierOrders.contains(ordenId)) {
+            _sentToCashierOrders.add(ordenId);
+            _saveSentToCashierOrders();
+            print('💾 Orden $ordenId agregada a _sentToCashierOrders (bill agrupado encontrado)');
+          }
+          return false;
+        }
+        
         return true;
       }).toList();
+      print('📊 Resultado del filtro: ${history.length} órdenes originales -> ${historyFiltrado.length} órdenes filtradas');
 
       // Guardar en historial de takeaway (ya filtrado)
       _tableOrderHistory['takeaway-all'] = historyFiltrado;
@@ -2205,6 +2349,20 @@ class MeseroController extends ChangeNotifier {
 
   // Enviar orden "para llevar" al cajero (ahora agrupa todas las órdenes del mismo cliente)
   Future<void> sendTakeawayToCashier(int ordenId) async {
+    // PROTECCIÓN: Prevenir ejecuciones simultáneas
+    if (_processingTakeawayOrder) {
+      print('⚠️ Mesero: Ya se está procesando una orden para llevar, ignorando solicitud duplicada');
+      return;
+    }
+    
+    // PROTECCIÓN: Verificar que la orden no esté ya enviada al cajero
+    if (_sentToCashierOrders.contains(ordenId)) {
+      print('⚠️ Mesero: Orden $ordenId ya fue enviada al cajero anteriormente, ignorando');
+      return;
+    }
+    
+    _processingTakeawayOrder = true;
+    
     try {
       // Cargar historial de órdenes "para llevar" si no está cargado
       final takeawayHistory = getTakeawayOrderHistory();
@@ -2293,14 +2451,36 @@ class MeseroController extends ChangeNotifier {
         }
       });
 
-      // Tomar TODAS las órdenes activas del cliente
-      final allOrders = ordenesDelCliente;
+      // PROTECCIÓN: Eliminar duplicados y filtrar órdenes ya enviadas
+      final ordenIdsVistos = <int>{};
+      final allOrders = ordenesDelCliente.where((order) {
+        final ordenId = order['ordenId'] as int?;
+        if (ordenId == null) return false;
+        
+        // Excluir si ya está en _sentToCashierOrders
+        if (_sentToCashierOrders.contains(ordenId)) {
+          print('🚫 Mesero: Orden $ordenId ya fue enviada al cajero, excluyendo');
+          return false;
+        }
+        
+        // Excluir duplicados
+        if (ordenIdsVistos.contains(ordenId)) {
+          print('🚫 Mesero: Orden $ordenId duplicada, excluyendo');
+          return false;
+        }
+        
+        ordenIdsVistos.add(ordenId);
+        return true;
+      }).toList();
+      
       print(
-        '📋 Mesero: ${allOrders.length} órdenes activas del cliente $clienteNombre para cerrar cuenta: ${allOrders.map((o) => o['ordenId']).toList()}',
+        '📋 Mesero: ${allOrders.length} órdenes activas del cliente $clienteNombre para cerrar cuenta (sin duplicados): ${allOrders.map((o) => o['ordenId']).toList()}',
       );
 
       if (allOrders.isEmpty) {
-        throw Exception('No se encontraron órdenes activas para este cliente');
+        print('⚠️ Mesero: No hay órdenes activas para procesar (todas ya fueron enviadas o están duplicadas)');
+        _processingTakeawayOrder = false;
+        return;
       }
 
       // Obtener todos los items de todas las órdenes
@@ -2416,7 +2596,53 @@ class MeseroController extends ChangeNotifier {
           print(
             '⚠️ Mesero: Ya existe un bill pendiente con ID $billId, no se crea duplicado',
           );
+
+          // IMPORTANTE: Aunque ya exista el bill, las órdenes deben desaparecer del historial
+          // porque ya fueron enviadas al cajero anteriormente
+          final ordenIdsACerrar = allOrders
+              .map((o) => o['ordenId'] as int?)
+              .whereType<int>()
+              .toSet();
+
+          // Registrar órdenes como enviadas al cajero si no están registradas
+          for (var ordenId in ordenIdsACerrar) {
+            if (!_sentToCashierOrders.contains(ordenId)) {
+              _sentToCashierOrders.add(ordenId);
+              print('📝 Mesero: Orden $ordenId agregada a _sentToCashierOrders (bill ya existía)');
+            }
+          }
+          await _saveSentToCashierOrders();
+          
+          // Verificar que se guardó correctamente
+          final savedData = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+          print('✅ Mesero: Storage guardado correctamente: $savedData');
+
+          // Remover órdenes del historial local INMEDIATAMENTE
+          _tableOrderHistory.forEach((key, orders) {
+            if (key.startsWith('takeaway') || key == 'takeaway-all') {
+              final antes = orders.length;
+              _tableOrderHistory[key] = orders.where((order) {
+                final ordenId = order['ordenId'] as int?;
+                return ordenId == null || !ordenIdsACerrar.contains(ordenId);
+              }).toList();
+              final despues = _tableOrderHistory[key]!.length;
+              if (antes != despues) {
+                print('🗑️ Mesero: ${antes - despues} órdenes removidas de $key (bill ya existía)');
+              }
+            }
+          });
+
+          // Notificar cambios INMEDIATAMENTE para actualizar la UI
           notifyListeners();
+
+          // Recargar historial de takeaway desde el backend para asegurar sincronización
+          await Future.delayed(const Duration(milliseconds: 300));
+          await loadTakeawayOrderHistory();
+
+          print(
+            '✅ Mesero: ${ordenIdsACerrar.length} órdenes removidas del historial (bill ya existía): $ordenIdsACerrar',
+          );
+          _processingTakeawayOrder = false;
           return;
         }
 
@@ -2424,6 +2650,17 @@ class MeseroController extends ChangeNotifier {
         final subtotalConDescuento = totalConsumo - descuentoTotal;
         final totalFinal = subtotalConDescuento + propinaSugerida;
 
+        // PROTECCIÓN: Verificar nuevamente que el bill no exista antes de agregarlo
+        final billExiste = _billRepository.bills
+            .where((b) => b.id == billId && b.status == BillStatus.pending)
+            .isNotEmpty;
+        
+        if (billExiste) {
+          print('⚠️ Mesero: Bill $billId ya existe, no se crea duplicado');
+          _processingTakeawayOrder = false;
+          return;
+        }
+        
         final bill = BillModel(
           id: billId,
           tableNumber: null, // null para órdenes "para llevar"
@@ -2446,8 +2683,9 @@ class MeseroController extends ChangeNotifier {
 
         _billRepository.addBill(bill);
 
-        // Emitir evento Socket.IO para notificar al cajero
+        // PROTECCIÓN: Emitir evento Socket.IO solo una vez
         final socketService = SocketService();
+        print('📤 Mesero: Emitiendo evento cuenta.enviada para bill $billId');
         socketService.emit('cuenta.enviada', {
           'id': bill.id,
           'tableNumber': 'Para Llevar',
@@ -2497,22 +2735,20 @@ class MeseroController extends ChangeNotifier {
             .whereType<int>()
             .toSet();
 
-        // Remover órdenes del historial local INMEDIATAMENTE
-        _tableOrderHistory.forEach((key, orders) {
-          if (key.startsWith('takeaway') || key == 'takeaway-all') {
-            _tableOrderHistory[key] = orders.where((order) {
-              final ordenId = order['ordenId'] as int?;
-              return ordenId == null || !ordenIdsACerrar.contains(ordenId);
-            }).toList();
+        // IMPORTANTE: Registrar localmente PRIMERO para que el filtro funcione inmediatamente
+        for (var order in allOrders) {
+          final ordenIdActual = order['ordenId'] as int?;
+          if (ordenIdActual != null && !_sentToCashierOrders.contains(ordenIdActual)) {
+            _sentToCashierOrders.add(ordenIdActual);
+            print('📝 Mesero: Orden $ordenIdActual agregada a _sentToCashierOrders');
           }
-        });
-
-        // Notificar cambios INMEDIATAMENTE para actualizar la UI
-        notifyListeners();
-
-        print(
-          '✅ Mesero: ${ordenIdsACerrar.length} órdenes removidas del historial instantáneamente: $ordenIdsACerrar',
-        );
+        }
+        await _saveSentToCashierOrders();
+        
+        // Verificar que se guardó correctamente
+        final savedData = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+        print('✅ Mesero: ${ordenIdsACerrar.length} órdenes registradas localmente como enviadas al cajero: $_sentToCashierOrders');
+        print('✅ Mesero: Storage guardado correctamente: $savedData');
 
         // IMPORTANTE: Cambiar estado de TODAS las órdenes en el backend a "cerrada"
         // Esto es la FUENTE DE VERDAD - persiste entre reinicios de la app
@@ -2523,21 +2759,44 @@ class MeseroController extends ChangeNotifier {
             print(
               '✅ Mesero: Orden $ordenIdActual marcada como cerrada en backend',
             );
-
-            // Registrar también localmente como respaldo
-            _sentToCashierOrders.add(ordenIdActual);
           }
         }
-        await _saveSentToCashierOrders();
 
-        // Recargar historial de takeaway para que desaparezca la orden
+        // Remover órdenes del historial local INMEDIATAMENTE después de cerrarlas
+        _tableOrderHistory.forEach((key, orders) {
+          if (key.startsWith('takeaway') || key == 'takeaway-all') {
+            final antes = orders.length;
+            _tableOrderHistory[key] = orders.where((order) {
+              final ordenId = order['ordenId'] as int?;
+              return ordenId == null || !ordenIdsACerrar.contains(ordenId);
+            }).toList();
+            final despues = _tableOrderHistory[key]!.length;
+            if (antes != despues) {
+              print('🗑️ Mesero: ${antes - despues} órdenes removidas de $key');
+            }
+          }
+        });
+
+        // Notificar cambios INMEDIATAMENTE para actualizar la UI
+        notifyListeners();
+
+        // Recargar historial de takeaway desde el backend para asegurar sincronización
+        // (con un pequeño delay para asegurar que el backend haya actualizado el estado)
+        await Future.delayed(const Duration(milliseconds: 300));
         await loadTakeawayOrderHistory();
+
+        print(
+          '✅ Mesero: ${ordenIdsACerrar.length} órdenes removidas del historial y recargadas desde backend: $ordenIdsACerrar',
+        );
       } else {
         throw Exception('No se encontraron items en las órdenes del cliente');
       }
     } catch (e) {
-      print('Error al enviar orden para llevar al cajero: $e');
+      print('❌ Error al enviar orden para llevar al cajero: $e');
       rethrow;
+    } finally {
+      // Siempre liberar el flag, incluso si hay error
+      _processingTakeawayOrder = false;
     }
   }
 

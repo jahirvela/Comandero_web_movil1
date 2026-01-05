@@ -35,6 +35,7 @@ interface ProductoIngredienteRow extends RowDataPacket {
   cantidad_por_porcion: number;
   descontar_automaticamente: number;
   es_personalizado: number;
+  es_opcional: number;
   creado_en: Date;
   actualizado_en: Date;
 }
@@ -54,6 +55,7 @@ type ProductoIngrediente = {
   cantidadPorPorcion: number;
   descontarAutomaticamente: boolean;
   esPersonalizado: boolean;
+  esOpcional: boolean;
 };
 
 const mapTamanoRows = (rows: ProductoTamanoRow[]) => {
@@ -73,7 +75,8 @@ const mapIngredienteRows = (rows: ProductoIngredienteRow[]) => {
     unidad: row.unidad,
     cantidadPorPorcion: Number(row.cantidad_por_porcion),
     descontarAutomaticamente: Boolean(row.descontar_automaticamente),
-    esPersonalizado: Boolean(row.es_personalizado)
+    esPersonalizado: Boolean(row.es_personalizado),
+    esOpcional: Boolean(row.es_opcional ?? 0)
   }));
 };
 
@@ -133,7 +136,7 @@ const obtenerTamanosPorProducto = async (productoId: number) => {
   return mapTamanoRows(rows);
 };
 
-const obtenerIngredientesPorProductoIds = async (productoIds: number[]) => {
+export const obtenerIngredientesPorProductoIds = async (productoIds: number[]) => {
   const map = new Map<number, ProductoIngrediente[]>();
   if (productoIds.length === 0) {
     return map;
@@ -172,6 +175,7 @@ const obtenerIngredientesPorProductoIds = async (productoIds: number[]) => {
         pi.cantidad_por_porcion,
         pi.descontar_automaticamente,
         pi.es_personalizado,
+        COALESCE(pi.es_opcional, 0) as es_opcional,
         pi.creado_en,
         pi.actualizado_en
       FROM producto_ingrediente pi
@@ -191,7 +195,8 @@ const obtenerIngredientesPorProductoIds = async (productoIds: number[]) => {
         unidad: row.unidad,
         cantidadPorPorcion: Number(row.cantidad_por_porcion),
         descontarAutomaticamente: Boolean(row.descontar_automaticamente),
-        esPersonalizado: Boolean(row.es_personalizado)
+        esPersonalizado: Boolean(row.es_personalizado),
+        esOpcional: Boolean(row.es_opcional ?? 0)
       });
       map.set(row.producto_id, list);
     }
@@ -236,6 +241,7 @@ const obtenerIngredientesPorProducto = async (productoId: number) => {
         pi.cantidad_por_porcion,
         pi.descontar_automaticamente,
         pi.es_personalizado,
+        COALESCE(pi.es_opcional, 0) as es_opcional,
         pi.creado_en,
         pi.actualizado_en
       FROM producto_ingrediente pi
@@ -304,11 +310,13 @@ const insertarIngredientesProducto = async (
     cantidadPorPorcion: number;
     descontarAutomaticamente: boolean;
     esPersonalizado: boolean;
+    esOpcional?: boolean;
   }>
 ) => {
   if (!ingredientes.length) return;
 
   // Verificar si la tabla existe antes de insertar
+  let tableExists = false;
   try {
     const [tableCheck] = await conn.execute(
       `SELECT COUNT(*) as count 
@@ -317,120 +325,128 @@ const insertarIngredientesProducto = async (
        AND table_name = 'producto_ingrediente'`
     );
     
-    const tableExists = (tableCheck as Array<{ count: number }>)[0].count > 0;
+    tableExists = (tableCheck as Array<{ count: number }>)[0].count > 0;
     
     if (!tableExists) {
-      // Si la tabla no existe, simplemente no insertar ingredientes (no es crítico)
-      console.warn('Tabla producto_ingrediente no existe. Los ingredientes no se guardarán.');
-      return;
+      console.warn('Tabla producto_ingrediente no existe. Los ingredientes no se guardarán en producto_ingrediente, pero los personalizados se crearán en inventario.');
     }
   } catch (checkError) {
     // Si hay error al verificar, intentar insertar de todas formas
     console.warn('Error al verificar tabla producto_ingrediente:', checkError);
+    tableExists = false;
   }
 
   for (const ingrediente of ingredientes) {
     try {
       let inventarioItemId = ingrediente.inventarioItemId;
 
-      // Si no tiene inventarioItemId, crear el item en inventario automáticamente
+      // Si no tiene inventarioItemId, debe existir en el inventario primero
+      // Ya no se crean ingredientes personalizados automáticamente
       if (!inventarioItemId) {
+        // El ingrediente debe existir previamente en el inventario
+        // Si no tiene inventarioItemId, simplemente lo omitimos (será null)
+        console.warn(`⚠️ Ingrediente "${ingrediente.nombre}" no tiene inventarioItemId. Debe agregarse primero al inventario.`);
+        inventarioItemId = null;
+      }
+
+      // Solo intentar insertar en producto_ingrediente si la tabla existe
+      if (tableExists) {
         try {
-          // Buscar si ya existe un item con el mismo nombre y categoría
-          const [existingItems] = await conn.execute<Array<{ id: number }>>(
+          // Intentar insertar con es_opcional primero
+          const [insertResult] = await conn.execute<ResultSetHeader>(
             `
-            SELECT id
-            FROM inventario_item
-            WHERE nombre = :nombre
-              AND categoria = :categoria
-              AND activo = 1
-            LIMIT 1
+            INSERT INTO producto_ingrediente (
+              producto_id,
+              inventario_item_id,
+              categoria,
+              nombre,
+              unidad,
+              cantidad_por_porcion,
+              descontar_automaticamente,
+              es_personalizado,
+              es_opcional
+            )
+            VALUES (
+              :productoId,
+              :inventarioItemId,
+              :categoria,
+              :nombre,
+              :unidad,
+              :cantidadPorPorcion,
+              :descontarAutomaticamente,
+              :esPersonalizado,
+              :esOpcional
+            )
             `,
             {
+              productoId,
+              inventarioItemId: inventarioItemId ?? null,
+              categoria: ingrediente.categoria ?? null,
               nombre: ingrediente.nombre.trim(),
-              categoria: ingrediente.categoria || 'Otros'
+              unidad: ingrediente.unidad.trim(),
+              cantidadPorPorcion: ingrediente.cantidadPorPorcion,
+              descontarAutomaticamente: ingrediente.descontarAutomaticamente ? 1 : 0,
+              esPersonalizado: ingrediente.esPersonalizado ? 1 : 0,
+              esOpcional: (ingrediente.esOpcional ?? false) ? 1 : 0
             }
           );
-
-          if (existingItems.length > 0) {
-            // Usar el item existente
-            inventarioItemId = existingItems[0].id;
-          } else {
-            // Crear nuevo item en inventario
-            const [result] = await conn.execute<ResultSetHeader>(
+          
+          console.log(`✅ Ingrediente guardado en BD: ${ingrediente.nombre} (Producto ID: ${productoId}, Inventario ID: ${inventarioItemId ?? 'N/A'}, Ingrediente ID: ${insertResult.insertId})`);
+        } catch (insertError: any) {
+          // Si falla porque la columna es_opcional no existe, intentar sin ella
+          if (insertError.code === 'ER_BAD_FIELD_ERROR' && insertError.message?.includes('es_opcional')) {
+            console.warn('Columna es_opcional no existe. Intentando insertar sin ella...');
+            const [insertResult] = await conn.execute<ResultSetHeader>(
               `
-              INSERT INTO inventario_item (
-                nombre,
+              INSERT INTO producto_ingrediente (
+                producto_id,
+                inventario_item_id,
                 categoria,
+                nombre,
                 unidad,
-                cantidad_actual,
-                stock_minimo,
-                costo_unitario,
-                activo
+                cantidad_por_porcion,
+                descontar_automaticamente,
+                es_personalizado
               )
               VALUES (
-                :nombre,
+                :productoId,
+                :inventarioItemId,
                 :categoria,
+                :nombre,
                 :unidad,
-                0,
-                0,
-                NULL,
-                1
+                :cantidadPorPorcion,
+                :descontarAutomaticamente,
+                :esPersonalizado
               )
               `,
               {
+                productoId,
+                inventarioItemId: inventarioItemId ?? null,
+                categoria: ingrediente.categoria ?? null,
                 nombre: ingrediente.nombre.trim(),
-                categoria: ingrediente.categoria || 'Otros',
                 unidad: ingrediente.unidad.trim(),
+                cantidadPorPorcion: ingrediente.cantidadPorPorcion,
+                descontarAutomaticamente: ingrediente.descontarAutomaticamente ? 1 : 0,
+                esPersonalizado: ingrediente.esPersonalizado ? 1 : 0
               }
             );
-            inventarioItemId = result.insertId;
-            console.log(`Item de inventario creado automáticamente: ${ingrediente.nombre} (ID: ${inventarioItemId})`);
+            console.log(`✅ Ingrediente guardado en BD (sin es_opcional): ${ingrediente.nombre} (Producto ID: ${productoId}, Inventario ID: ${inventarioItemId ?? 'N/A'}, Ingrediente ID: ${insertResult.insertId})`);
+          } else {
+            throw insertError;
           }
-        } catch (inventoryError: any) {
-          // Si falla la creación en inventario, continuar sin inventarioItemId
-          console.warn(`Error al crear item en inventario para ${ingrediente.nombre}:`, inventoryError.message);
-          inventarioItemId = null;
+        }
+      } else {
+        // Si la tabla no existe pero creamos un item en inventario, loguear que se creó en inventario
+        if (inventarioItemId) {
+          console.log(`✅ Ingrediente personalizado agregado al inventario (tabla producto_ingrediente no existe): ${ingrediente.nombre} (Inventario ID: ${inventarioItemId})`);
         }
       }
-
-      await conn.execute(
-        `
-        INSERT INTO producto_ingrediente (
-          producto_id,
-          inventario_item_id,
-          categoria,
-          nombre,
-          unidad,
-          cantidad_por_porcion,
-          descontar_automaticamente,
-          es_personalizado
-        )
-        VALUES (
-          :productoId,
-          :inventarioItemId,
-          :categoria,
-          :nombre,
-          :unidad,
-          :cantidadPorPorcion,
-          :descontarAutomaticamente,
-          :esPersonalizado
-        )
-        `,
-        {
-          productoId,
-          inventarioItemId: inventarioItemId ?? null,
-          categoria: ingrediente.categoria ?? null,
-          nombre: ingrediente.nombre.trim(),
-          unidad: ingrediente.unidad.trim(),
-          cantidadPorPorcion: ingrediente.cantidadPorPorcion,
-          descontarAutomaticamente: ingrediente.descontarAutomaticamente ? 1 : 0,
-          esPersonalizado: ingrediente.esPersonalizado ? 1 : 0
-        }
-      );
     } catch (insertError: any) {
-      // Si falla la inserción, registrar pero no fallar todo el proceso
-      console.warn(`Error al insertar ingrediente ${ingrediente.nombre}:`, insertError.message);
+      // Si falla la inserción, registrar el error pero no fallar todo el proceso
+      console.error(`❌ Error al insertar ingrediente ${ingrediente.nombre} en producto_ingrediente:`, insertError.message);
+      console.error('Detalles del error:', insertError);
+      // Re-lanzar el error para que la transacción pueda hacer rollback si es necesario
+      throw insertError;
     }
   }
 };
@@ -446,6 +462,7 @@ const reemplazarIngredientesProducto = async (
     cantidadPorPorcion: number;
     descontarAutomaticamente: boolean;
     esPersonalizado: boolean;
+    esOpcional?: boolean;
   }>
 ) => {
   // Verificar si la tabla existe antes de operar
@@ -589,6 +606,7 @@ export const crearProducto = async ({
     cantidadPorPorcion: number;
     descontarAutomaticamente: boolean;
     esPersonalizado: boolean;
+    esOpcional?: boolean;
   }>;
 }) => {
   return withTransaction(async (conn) => {
@@ -659,6 +677,7 @@ export const actualizarProducto = async (
       cantidadPorPorcion: number;
       descontarAutomaticamente: boolean;
       esPersonalizado: boolean;
+      esOpcional?: boolean;
     }>;
   }
 ) => {

@@ -11,6 +11,7 @@ import {
   crearNuevaOrden,
   actualizarOrdenExistente,
   actualizarEstadoDeOrden,
+  actualizarTiempoEstimado,
   agregarItemsOrden,
   obtenerEstadosOrdenServicio
 } from './ordenes.service.js';
@@ -130,6 +131,34 @@ export const listarEstadosOrdenController = async (
   try {
     const estados = await obtenerEstadosOrdenServicio();
     res.json({ data: estados });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const actualizarTiempoEstimadoController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const id = Number(req.params.id);
+    const tiempoEstimado = Number(req.body.tiempoEstimado);
+    
+    if (!tiempoEstimado || tiempoEstimado < 1 || tiempoEstimado > 120) {
+      return res.status(400).json({ 
+        error: 'El tiempo estimado debe estar entre 1 y 120 minutos' 
+      });
+    }
+    
+    const orden = await actualizarTiempoEstimado(
+      id,
+      tiempoEstimado,
+      req.user?.id,
+      req.user?.username,
+      req.user?.roles[0]
+    );
+    res.json({ data: orden });
   } catch (error) {
     next(error);
   }

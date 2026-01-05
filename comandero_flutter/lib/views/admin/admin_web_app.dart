@@ -7,7 +7,7 @@ import 'package:intl/intl.dart';
 import '../../controllers/admin_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/admin_model.dart';
-import '../../models/order_model.dart';
+import '../../models/payment_model.dart' as payment_models;
 import '../../services/payment_repository.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
@@ -718,36 +718,6 @@ class _AdminWebAppState extends State<AdminWebApp> {
     }
   }
 
-  double _calculateOrderTotal(OrderModel order, AdminController controller) {
-    return order.items.fold(0.0, (sum, item) {
-      // Buscar el precio del producto en el menú
-      final menuItem = controller.menuItems.firstWhere(
-        (menuItem) => menuItem.name == item.name,
-        orElse: () => MenuItem(
-          id: '',
-          name: item.name,
-          category: MenuCategory.tacos,
-          description: '',
-          price: 0.0,
-          isAvailable: true,
-          ingredients: [],
-          allergens: [],
-          preparationTime: 0,
-          createdAt: DateTime.now(),
-        ),
-      );
-
-      double price = menuItem.price ?? 0.0;
-      // Si tiene tamaños, usar el precio del primer tamaño o el precio base
-      if (menuItem.hasSizes &&
-          menuItem.sizes != null &&
-          menuItem.sizes!.isNotEmpty) {
-        price = menuItem.sizes!.first.price;
-      }
-
-      return sum + (price * item.quantity);
-    });
-  }
 
   Widget _buildDailyConsumptionSection(
     BuildContext context,
@@ -755,25 +725,12 @@ class _AdminWebAppState extends State<AdminWebApp> {
     bool isTablet,
     bool isDesktop,
   ) {
-    final filteredOrders = controller.filteredDailyConsumption;
-    final localSales = filteredOrders
-        .where((o) => !o.isTakeaway && o.tableNumber != null)
-        .fold(0.0, (sum, o) => sum + _calculateOrderTotal(o, controller));
-    final takeawaySales = filteredOrders
-        .where((o) => o.isTakeaway)
-        .fold(0.0, (sum, o) => sum + _calculateOrderTotal(o, controller));
-    final cashSales = filteredOrders.fold(
-      0.0,
-      (sum, o) => sum + _calculateOrderTotal(o, controller),
-    );
-    final pendingPayment = filteredOrders
-        .where(
-          (o) =>
-              o.status == OrderStatus.pendiente ||
-              o.status == OrderStatus.enPreparacion,
-        )
-        .fold(0.0, (sum, o) => sum + _calculateOrderTotal(o, controller));
-    final totalNet = cashSales;
+    // Usar métricas basadas en tickets en lugar de órdenes
+    final localSales = controller.dailyLocalSales;
+    final takeawaySales = controller.dailyTakeawaySales;
+    final cashSales = controller.dailyCashSales;
+    final pendingPayment = controller.dailyPendingPayment;
+    final totalNet = controller.dailyTotalNet;
 
     return Card(
       elevation: 2,
@@ -813,6 +770,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.green.shade700,
                           isTablet,
                           isDesktop,
+                          subtitle: '${controller.dailyLocalOrdersCount} ${controller.dailyLocalOrdersCount == 1 ? 'orden' : 'órdenes'}',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -833,6 +791,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.yellow.shade700,
                           isTablet,
                           isDesktop,
+                          subtitle: 'Incluye pagos mixtos',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -843,6 +802,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.pink.shade700,
                           isTablet,
                           isDesktop,
+                          subtitle: '${controller.dailyPendingTicketsCount} ${controller.dailyPendingTicketsCount == 1 ? 'ticket pendiente' : 'tickets pendientes'}',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -853,6 +813,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.purple.shade700,
                           isTablet,
                           isDesktop,
+                          subtitle: 'Incluye efectivo y tarjeta',
                         ),
                       ),
                     ],
@@ -869,6 +830,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.green.shade700,
                               isTablet,
                               isDesktop,
+                              subtitle: '${controller.dailyLocalOrdersCount} ${controller.dailyLocalOrdersCount == 1 ? 'orden' : 'órdenes'}',
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -893,6 +855,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.yellow.shade700,
                               isTablet,
                               isDesktop,
+                              subtitle: 'Incluye pagos mixtos',
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -903,6 +866,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.pink.shade700,
                               isTablet,
                               isDesktop,
+                              subtitle: '${controller.dailyPendingTicketsCount} ${controller.dailyPendingTicketsCount == 1 ? 'ticket pendiente' : 'tickets pendientes'}',
                             ),
                           ),
                         ],
@@ -914,6 +878,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                         Colors.purple.shade700,
                         isTablet,
                         isDesktop,
+                        subtitle: 'Incluye efectivo y tarjeta',
                       ),
                     ],
                   );
@@ -977,9 +942,9 @@ class _AdminWebAppState extends State<AdminWebApp> {
               ],
             ),
             const SizedBox(height: 20),
-            // Tabla de consumo
+            // Tabla de consumo (ahora muestra tickets)
             _buildConsumptionTable(
-              filteredOrders,
+              controller.filteredDailyTickets,
               controller,
               isTablet,
               isDesktop,
@@ -995,8 +960,9 @@ class _AdminWebAppState extends State<AdminWebApp> {
     String value,
     Color color,
     bool isTablet,
-    bool isDesktop,
-  ) {
+    bool isDesktop, {
+    String? subtitle,
+  }) {
     return Container(
       padding: EdgeInsets.all(isDesktop ? 20.0 : (isTablet ? 16.0 : 12.0)),
       decoration: BoxDecoration(
@@ -1024,18 +990,28 @@ class _AdminWebAppState extends State<AdminWebApp> {
               color: color,
             ),
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 9.0),
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildConsumptionTable(
-    List<OrderModel> orders,
+    List<payment_models.BillModel> tickets,
     AdminController controller,
     bool isTablet,
     bool isDesktop,
   ) {
-    if (orders.isEmpty) {
+    if (tickets.isEmpty) {
       return Container(
         padding: EdgeInsets.all(isDesktop ? 40.0 : (isTablet ? 30.0 : 20.0)),
         child: Center(
@@ -1122,23 +1098,33 @@ class _AdminWebAppState extends State<AdminWebApp> {
             ),
           ),
         ],
-        rows: orders.map((order) {
-          final statusText = order.status == OrderStatus.listo
-              ? 'Cobrado'
-              : order.status == OrderStatus.enPreparacion
-              ? 'En preparación'
-              : 'Pendiente';
-          final statusColor = order.status == OrderStatus.listo
-              ? Colors.green
-              : order.status == OrderStatus.enPreparacion
-              ? Colors.orange
-              : Colors.grey;
+        rows: tickets.map((ticket) {
+          // Determinar texto y color del estado
+          String statusText;
+          Color statusColor;
+          if (ticket.paymentMethod != null && ticket.paymentMethod!.isNotEmpty) {
+            statusText = payment_models.BillStatus.getStatusText(ticket.status);
+            statusColor = payment_models.BillStatus.getStatusColor(ticket.status);
+          } else {
+            statusText = 'Por cobrar';
+            statusColor = Colors.orange;
+          }
+
+          // Obtener descripción de productos
+          final productsText = ticket.items.isNotEmpty
+              ? ticket.items
+                  .map((item) => '${item.quantity}x ${item.name}')
+                  .join(', ')
+              : 'Pedido para llevar';
+
+          // Obtener ID de visualización
+          final displayId = ticket.displayId;
 
           return DataRow(
             cells: [
               DataCell(
                 Text(
-                  order.id,
+                  displayId,
                   style: TextStyle(
                     fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                   ),
@@ -1147,15 +1133,15 @@ class _AdminWebAppState extends State<AdminWebApp> {
               DataCell(
                 Chip(
                   label: Text(
-                    order.isTakeaway
-                        ? (order.customerName ?? 'Para llevar')
-                        : 'Mesa ${order.tableNumber}',
+                    ticket.isTakeaway
+                        ? (ticket.customerName ?? 'Para llevar')
+                        : 'Mesa ${ticket.tableNumber}',
                     style: TextStyle(
                       fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
                       color: Colors.white,
                     ),
                   ),
-                  backgroundColor: order.isTakeaway
+                  backgroundColor: ticket.isTakeaway
                       ? Colors.blue.shade700
                       : Colors.green.shade700,
                   padding: EdgeInsets.symmetric(
@@ -1168,9 +1154,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                 SizedBox(
                   width: isDesktop ? 200.0 : (isTablet ? 150.0 : 100.0),
                   child: Text(
-                    order.items
-                        .map((item) => '${item.quantity}x ${item.name}')
-                        .join(', '),
+                    productsText,
                     style: TextStyle(
                       fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                       color: AppColors.textSecondary,
@@ -1182,7 +1166,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
               ),
               DataCell(
                 Text(
-                  '\$${_calculateOrderTotal(order, controller).toStringAsFixed(2)}',
+                  '\$${ticket.total.toStringAsFixed(2)}',
                   style: TextStyle(
                     fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                     fontWeight: FontWeight.w600,
@@ -1192,7 +1176,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
               ),
               DataCell(
                 Text(
-                  'Efectivo',
+                  ticket.paymentMethod ?? 'Pendiente',
                   style: TextStyle(
                     fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                     color: AppColors.textSecondary,
@@ -1208,7 +1192,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                       color: Colors.white,
                     ),
                   ),
-                  backgroundColor: statusColor.shade700,
+                  backgroundColor: statusColor,
                   padding: EdgeInsets.symmetric(
                     horizontal: isDesktop ? 12.0 : (isTablet ? 8.0 : 6.0),
                     vertical: isDesktop ? 8.0 : (isTablet ? 6.0 : 4.0),
@@ -1217,7 +1201,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
               ),
               DataCell(
                 Text(
-                  '${order.orderTime.hour.toString().padLeft(2, '0')}:${order.orderTime.minute.toString().padLeft(2, '0')}',
+                  '${ticket.createdAt.hour.toString().padLeft(2, '0')}:${ticket.createdAt.minute.toString().padLeft(2, '0')}',
                   style: TextStyle(
                     fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                     color: AppColors.textSecondary,

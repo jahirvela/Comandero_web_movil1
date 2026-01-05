@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../utils/app_colors.dart';
+import 'alert_to_kitchen_modal.dart';
 
 /// Vista para gestionar órdenes "Para Llevar"
 class TakeawayView extends StatefulWidget {
@@ -78,7 +79,12 @@ class _TakeawayViewState extends State<TakeawayView> {
           ),
         ),
         IconButton(
-          onPressed: () => controller.loadTakeawayOrderHistory(),
+          onPressed: () async {
+            // Forzar recarga completa del historial
+            await controller.loadTakeawayOrderHistory();
+            // Forzar actualización de la UI
+            if (mounted) setState(() {});
+          },
           icon: const Icon(Icons.refresh),
           color: AppColors.info,
           tooltip: 'Actualizar',
@@ -118,47 +124,52 @@ class _TakeawayViewState extends State<TakeawayView> {
     MeseroController controller,
     bool isTablet,
   ) {
-    final takeawayOrders = controller.getTakeawayOrderHistory();
+    // Usar Consumer para que se actualice cuando cambie el historial o los estados
+    return Consumer<MeseroController>(
+      builder: (context, ctrl, child) {
+        final takeawayOrders = ctrl.getTakeawayOrderHistory();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.history, color: AppColors.info, size: isTablet ? 20.0 : 18.0),
-            const SizedBox(width: 8),
-            Text(
-              'Pedidos Pendientes',
-              style: TextStyle(
-                fontSize: isTablet ? 18.0 : 16.0,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const Spacer(),
-            if (takeawayOrders.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.warning,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${takeawayOrders.length}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+            Row(
+              children: [
+                Icon(Icons.history, color: AppColors.info, size: isTablet ? 20.0 : 18.0),
+                const SizedBox(width: 8),
+                Text(
+                  'Pedidos Pendientes',
+                  style: TextStyle(
+                    fontSize: isTablet ? 18.0 : 16.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
                   ),
                 ),
-              ),
+                const Spacer(),
+                if (takeawayOrders.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${takeawayOrders.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (takeawayOrders.isEmpty)
+              _buildEmptyState(isTablet)
+            else
+              ...takeawayOrders.map((order) => _buildOrderCard(context, order, ctrl, isTablet)),
           ],
-        ),
-        const SizedBox(height: 16),
-        if (takeawayOrders.isEmpty)
-          _buildEmptyState(isTablet)
-        else
-          ...takeawayOrders.map((order) => _buildOrderCard(context, order, controller, isTablet)),
-      ],
+        );
+      },
     );
   }
 
@@ -287,18 +298,44 @@ class _TakeawayViewState extends State<TakeawayView> {
             ),
             const SizedBox(height: 8),
             
-            // Items
-            if (items.isNotEmpty)
-              Text(
-                items.join(', '),
-                style: TextStyle(
-                  fontSize: isTablet ? 13.0 : 11.0,
-                  color: AppColors.textPrimary,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+            // Items/Productos
+            if (items.isNotEmpty) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.restaurant_menu, size: isTablet ? 16.0 : 14.0, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: items.take(3).map<Widget>((item) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            item.toString(),
+                            style: TextStyle(
+                              fontSize: isTablet ? 13.0 : 11.0,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        );
+                      }).toList()..addAll([
+                        if (items.length > 3)
+                          Text(
+                            '... y ${items.length - 3} más',
+                            style: TextStyle(
+                              fontSize: isTablet ? 12.0 : 10.0,
+                              color: AppColors.textSecondary,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                      ]),
+                    ),
+                  ),
+                ],
               ),
-            const SizedBox(height: 8),
+              const SizedBox(height: 8),
+            ],
             
             // Hora
             Row(
@@ -321,6 +358,25 @@ class _TakeawayViewState extends State<TakeawayView> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  // Botón de Enviar Alerta
+                  ElevatedButton.icon(
+                    onPressed: () => _showAlertModalForOrder(context, order),
+                    icon: const Icon(Icons.warning_amber_rounded),
+                    label: Text(
+                      'Enviar alerta',
+                      style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.warning,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isTablet ? 16.0 : 12.0,
+                        vertical: isTablet ? 10.0 : 8.0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Botón de Cerrar Cuenta
                   ElevatedButton.icon(
                     onPressed: () => _showCloseAccountDialog(context, order, controller, isTablet),
                     icon: Icon(Icons.attach_money, size: isTablet ? 18.0 : 16.0),
@@ -352,6 +408,22 @@ class _TakeawayViewState extends State<TakeawayView> {
            !statusLower.contains('cancelada') &&
            !statusLower.contains('cerrada') &&
            !statusLower.contains('cobrada');
+  }
+
+  void _showAlertModalForOrder(
+    BuildContext context,
+    Map<String, dynamic> order,
+  ) {
+    final orderId = order['id'] as String? ?? 'ORD-???';
+    // Para órdenes para llevar, usamos "Para Llevar" como tableNumber
+    // El backend manejará tableId como null automáticamente
+    final tableNumber = 'Para Llevar';
+    
+    showAlertToKitchenModal(
+      context,
+      tableNumber: tableNumber,
+      orderId: orderId,
+    );
   }
 
   Color _getStatusColor(String status) {
@@ -924,9 +996,9 @@ class _TakeawayViewState extends State<TakeawayView> {
                             // Cerrar diálogo de confirmación
                             if (dialogContext.mounted) Navigator.of(dialogContext).pop();
                             
-                            // La orden ya fue eliminada del historial por el controller
-                            // Solo forzamos una actualización de la UI
-                            setState(() {});
+                            // Forzar recarga completa del historial y actualización de la UI
+                            await controller.loadTakeawayOrderHistory();
+                            if (mounted) setState(() {});
                             
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(

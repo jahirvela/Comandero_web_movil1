@@ -175,6 +175,9 @@ class BillModel {
   final DateTime? printedAt; // Fecha y hora de impresión
   final bool requestedByWaiter; // Si fue solicitado por mesero
   final int splitCount; // Número de personas para dividir la cuenta
+  final String? paymentMethod; // Método de pago (ej: 'Efectivo', 'Tarjeta', etc.)
+  final double? tipAmount; // Propina del pago
+  final String? paymentNotes; // Notas del pago (referencia del pago)
 
   BillModel({
     required this.id,
@@ -199,6 +202,9 @@ class BillModel {
     this.printedAt,
     this.requestedByWaiter = false,
     this.splitCount = 1,
+    this.paymentMethod,
+    this.tipAmount,
+    this.paymentNotes,
   });
 
   /// Calcula el total real sumando precio * cantidad de cada item
@@ -379,6 +385,9 @@ class BillModel {
           : null,
       requestedByWaiter: json['requestedByWaiter'] ?? false,
       splitCount: (json['splitCount'] as num?)?.toInt() ?? 1,
+      paymentMethod: json['paymentMethod'] as String?,
+      tipAmount: json['tipAmount']?.toDouble(),
+      paymentNotes: json['paymentNotes'] as String?,
     );
   }
 
@@ -406,6 +415,9 @@ class BillModel {
       'printedAt': printedAt?.toIso8601String(),
       'requestedByWaiter': requestedByWaiter,
       'splitCount': splitCount,
+      'paymentMethod': paymentMethod,
+      'tipAmount': tipAmount,
+      'paymentNotes': paymentNotes,
     };
   }
 
@@ -432,6 +444,9 @@ class BillModel {
     DateTime? printedAt,
     bool? requestedByWaiter,
     int? splitCount,
+    String? paymentMethod,
+    double? tipAmount,
+    String? paymentNotes,
   }) {
     return BillModel(
       id: id ?? this.id,
@@ -456,6 +471,9 @@ class BillModel {
       printedAt: printedAt ?? this.printedAt,
       requestedByWaiter: requestedByWaiter ?? this.requestedByWaiter,
       splitCount: splitCount ?? this.splitCount,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      tipAmount: tipAmount ?? this.tipAmount,
+      paymentNotes: paymentNotes ?? this.paymentNotes,
     );
   }
 }

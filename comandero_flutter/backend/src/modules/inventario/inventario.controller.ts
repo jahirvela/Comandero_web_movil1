@@ -14,6 +14,11 @@ import {
   obtenerMovimientos,
   obtenerCategorias
 } from './inventario.service.js';
+import {
+  emitInventoryCreated,
+  emitInventoryUpdated,
+  emitInventoryDeleted
+} from '../../realtime/events.js';
 
 export const listarInsumosController = async (_req: Request, res: Response, next: NextFunction) => {
   try {
@@ -38,6 +43,8 @@ export const crearInsumoController = async (req: Request, res: Response, next: N
   try {
     const input = crearInsumoSchema.parse(req.body);
     const insumo = await crearNuevoInsumo(input);
+    // Emitir evento de socket
+    emitInventoryCreated(insumo);
     res.status(201).json({ data: insumo });
   } catch (error) {
     next(error);
@@ -53,6 +60,8 @@ export const actualizarInsumoController = async (
     const id = Number(req.params.id);
     const input = actualizarInsumoSchema.parse(req.body);
     const insumo = await actualizarInsumoExistente(id, input);
+    // Emitir evento de socket
+    emitInventoryUpdated(insumo);
     res.json({ data: insumo });
   } catch (error) {
     next(error);
@@ -67,6 +76,8 @@ export const eliminarInsumoController = async (
   try {
     const id = Number(req.params.id);
     await desactivarInsumoExistente(id);
+    // Emitir evento de socket
+    emitInventoryDeleted(id);
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -81,6 +92,8 @@ export const registrarMovimientoController = async (
   try {
     const input = crearMovimientoSchema.parse(req.body);
     const insumo = await registrarMovimientoInventario(input, req.user?.id);
+    // Emitir evento de socket para actualizar inventario en tiempo real
+    emitInventoryUpdated(insumo);
     res.status(201).json({ data: insumo });
   } catch (error) {
     next(error);

@@ -28,22 +28,37 @@ import 'views/server_config_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializar en paralelo para mejor rendimiento
-  await Future.wait([
-    // Configurar localización en español de México (puede tardar)
+  // En web, iniciar la app inmediatamente sin esperar nada
+  if (kIsWeb) {
+    // Iniciar la app de inmediato
+    runApp(const ComanderoApp());
+    
+    // Inicializar todo en background después de iniciar la app
     initializeDateFormatting('es_MX', null).then((_) {
       Intl.defaultLocale = 'es_MX';
-    }),
-    // Cargar IP guardada manualmente
-    if (!kIsWeb) ApiConfig.loadSavedManualIp(),
-    // Detectar IP local si no está en web (para Android/iOS)
-    if (!kIsWeb) ApiConfig.detectLocalIp(),
-    // Inicializar el servicio de API (no bloqueante)
-    Future(() => ApiService().initialize()),
-  ]);
-
-  // Iniciar la app inmediatamente (no esperar más)
-  runApp(const ComanderoApp());
+    });
+    // Inicializar API en background sin esperar
+    Future.delayed(const Duration(milliseconds: 100), () {
+      ApiService().initialize();
+    });
+  } else {
+    // En móvil, hacer la inicialización completa antes de iniciar
+    await Future.wait([
+      // Configurar localización en español de México (puede tardar)
+      initializeDateFormatting('es_MX', null).then((_) {
+        Intl.defaultLocale = 'es_MX';
+      }),
+      // Cargar IP guardada manualmente
+      ApiConfig.loadSavedManualIp(),
+      // Detectar IP local (para Android/iOS)
+      ApiConfig.detectLocalIp(),
+      // Inicializar el servicio de API (no bloqueante)
+      Future(() => ApiService().initialize()),
+    ]);
+    
+    // Iniciar la app después de inicializar
+    runApp(const ComanderoApp());
+  }
 }
 
 class ComanderoApp extends StatelessWidget {

@@ -130,6 +130,14 @@ class TicketsService {
           .toList();
     }
 
+    // Obtener propina y notas del pago desde el backend
+    final tipAmount = data['tip']?.toDouble();
+    final paymentReference = data['paymentReference'] as String?;
+    final cashierName = data['cashierName'] as String?;
+    
+    // Para "Impreso por", usar printedBy si existe, sino usar cashierName (cajero que procesó el pago)
+    final printedByFinal = data['printedBy'] as String? ?? cashierName;
+
     return BillModel(
       id: ticketId,
       ordenId: data['ordenId'] as int?,
@@ -147,9 +155,12 @@ class TicketsService {
       waiterName: data['waiterName'] as String?,
       isTakeaway: isTakeaway,
       isPrinted: data['isPrinted'] as bool? ?? false,
-      printedBy: data['printedBy'] as String?,
+      printedBy: printedByFinal, // Usar cashierName si printedBy es null
       printedAt: printedAt,
       isGrouped: data['isGrouped'] as bool? ?? (ordenIds != null && ordenIds.length > 1),
+      paymentMethod: data['paymentMethod'] as String?,
+      tipAmount: tipAmount,
+      paymentNotes: paymentReference, // Notas del pago (referencia)
     );
   }
 

@@ -87,6 +87,7 @@ async function crearTablaProductoIngrediente() {
         cantidad_por_porcion DECIMAL(10,2) NOT NULL,
         descontar_automaticamente TINYINT(1) NOT NULL DEFAULT 1,
         es_personalizado TINYINT(1) NOT NULL DEFAULT 0,
+        es_opcional TINYINT(1) NOT NULL DEFAULT 0,
         creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
@@ -98,6 +99,30 @@ async function crearTablaProductoIngrediente() {
         INDEX idx_inventario_item_id (inventario_item_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
     );
+    
+    // Verificar si la columna es_opcional existe, si no, agregarla
+    logger.info('Verificando si la columna es_opcional existe...');
+    const [opcionalCheck] = await connection.execute(
+      `SELECT COUNT(*) as count 
+       FROM information_schema.COLUMNS 
+       WHERE table_schema = DATABASE() 
+       AND table_name = 'producto_ingrediente' 
+       AND column_name = 'es_opcional'`
+    );
+    
+    const tieneOpcional = (opcionalCheck as Array<{ count: number }>)[0].count > 0;
+    
+    if (!tieneOpcional) {
+      logger.info('La columna es_opcional no existe. Agregándola...');
+      await connection.execute(
+        `ALTER TABLE producto_ingrediente 
+         ADD COLUMN es_opcional TINYINT(1) NOT NULL DEFAULT 0 
+         AFTER es_personalizado`
+      );
+      logger.info('✓ Columna es_opcional agregada exitosamente');
+    } else {
+      logger.info('✓ La columna es_opcional ya existe');
+    }
     
     logger.info('✓ Tabla producto_ingrediente creada exitosamente');
     

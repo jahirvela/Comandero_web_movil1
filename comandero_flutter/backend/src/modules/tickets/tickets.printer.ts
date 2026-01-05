@@ -91,9 +91,9 @@ class NetworkPrinter implements Printer {
       const device = new escposNetwork.Network(this.host, this.port);
       await device.open();
 
-      // El contenido ya viene formateado con comandos ESC/POS como string
-      // Enviar directamente como buffer
-      const buffer = Buffer.from(content, 'utf-8');
+      // El contenido viene con comandos ESC/POS como string, convertir a buffer
+      // Usar latin1 para preservar los bytes de los comandos ESC/POS
+      const buffer = Buffer.from(content, 'latin1');
       await device.write(buffer);
       
       await device.close();
@@ -112,30 +112,84 @@ class NetworkPrinter implements Printer {
 
 class USBPrinter implements Printer {
   private device: string;
+  private platform: string;
 
   constructor(device: string) {
     this.device = device;
+    this.platform = process.platform;
   }
 
   async print(content: string): Promise<void> {
     try {
-      // Usar escpos-usb para impresoras USB
-      const escposUsb = await import('escpos-usb');
-      
-      const usbDevice = new escposUsb.USB();
-      await usbDevice.open(this.device);
-
-      // El contenido ya viene formateado con comandos ESC/POS como string
-      // Enviar directamente como buffer
-      const buffer = Buffer.from(content, 'utf-8');
-      await usbDevice.write(buffer);
-      
-      await usbDevice.close();
-
-      logger.info({ device: this.device }, 'Ticket enviado a impresora USB');
-    } catch (error) {
-      logger.error({ err: error, device: this.device }, 'Error al imprimir en USB');
-      throw new Error(`No se pudo conectar a la impresora USB en ${this.device}`);
+      // En Windows, si el dispositivo es un nombre de impresora, usar la API nativa
+      // En Linux/Mac, usar escpos-usb directamente
+      if (this.platform === 'win32') {
+        // En Windows, intentar usar el nombre de la impresora directamente
+        // Si el dispositivo parece un nombre de impresora (no una ruta), usar node-printer o similar
+        // Por ahora, intentar con escpos-usb y si falla, usar alternativa
+        
+        try {
+          // Intentar con escpos-usb primero
+          const escposUsb = await import('escpos-usb');
+          const usbDevice = new escposUsb.USB();
+          await usbDevice.open(this.device);
+          
+          // El contenido viene con comandos ESC/POS como string, convertir a buffer
+          const buffer = Buffer.from(content, 'latin1'); // Usar latin1 para preservar bytes ESC/POS
+          await usbDevice.write(buffer);
+          await usbDevice.close();
+          
+          logger.info({ device: this.device, platform: this.platform }, 'Ticket enviado a impresora USB (escpos-usb)');
+        } catch (escposError: any) {
+          // Si escpos-usb falla, intentar método alternativo para Windows
+          logger.warn({ err: escposError, device: this.device }, 'escpos-usb falló, intentando método alternativo para Windows');
+          
+          // Para Windows: usar el nombre de la impresora directamente
+          // Esto requiere que la impresora esté instalada en Windows
+          const { exec } = await import('child_process');
+          const { promisify } = await import('util');
+          const execAsync = promisify(exec);
+          
+          // Guardar contenido temporalmente y enviarlo a la impresora por nombre
+          const { tmpdir } = await import('os');
+          const tempFile = path.join(tmpdir(), `ticket-${Date.now()}.txt`);
+          await fs.writeFile(tempFile, content, 'latin1');
+          
+          // Usar comando de Windows para imprimir
+          // Si el dispositivo es un nombre de impresora, usarlo directamente
+          // Si es un path como LPT1, COM1, etc., usarlo también
+          const printCommand = this.device.includes('\\') || this.device.includes(':')
+            ? `copy /b "${tempFile}" "${this.device}"` // Para LPT1, COM1, etc.
+            : `print /d:"${this.device}" "${tempFile}"`; // Para nombre de impresora
+          
+          try {
+            await execAsync(printCommand, { timeout: 5000 });
+            logger.info({ device: this.device, method: 'windows-native' }, 'Ticket enviado a impresora USB (método Windows nativo)');
+          } catch (printError: any) {
+            // Eliminar archivo temporal
+            await fs.unlink(tempFile).catch(() => {});
+            throw new Error(`No se pudo imprimir en Windows. Verifica que la impresora "${this.device}" esté instalada y disponible. Error: ${printError.message}`);
+          }
+          
+          // Eliminar archivo temporal después de un breve delay
+          setTimeout(() => fs.unlink(tempFile).catch(() => {}), 2000);
+        }
+      } else {
+        // Linux/Mac: usar escpos-usb directamente
+        const escposUsb = await import('escpos-usb');
+        const usbDevice = new escposUsb.USB();
+        await usbDevice.open(this.device);
+        
+        // El contenido viene con comandos ESC/POS como string, convertir a buffer
+        const buffer = Buffer.from(content, 'latin1'); // Usar latin1 para preservar bytes ESC/POS
+        await usbDevice.write(buffer);
+        await usbDevice.close();
+        
+        logger.info({ device: this.device, platform: this.platform }, 'Ticket enviado a impresora USB (escpos-usb)');
+      }
+    } catch (error: any) {
+      logger.error({ err: error, device: this.device, platform: this.platform }, 'Error al imprimir en USB');
+      throw new Error(`No se pudo conectar a la impresora USB en ${this.device}: ${error.message}`);
     }
   }
 
@@ -307,8 +361,16 @@ export const generarContenidoTicket = (data: TicketData, incluirCodigoBarras: bo
   // Código de barras (Code128)
   if (incluirCodigoBarras) {
     contenido += centrar;
-    contenido += `\n${ESC}k4${ESC}k${orden.folio.length}${orden.folio}\n`; // Code128
-    contenido += `${orden.folio}\n`;
+    contenido += '\n';
+    // Comando ESC/POS para código de barras Code128
+    // ESC k m n d1...dk donde:
+    // - m = 4 (Code128)
+    // - n = longitud de los datos
+    // - d = datos del código de barras
+    const codigoLength = orden.folio.length;
+    contenido += `${ESC}k${String.fromCharCode(4)}${String.fromCharCode(codigoLength)}${orden.folio}`;
+    contenido += '\n\n'; // Espacio después del código
+    contenido += `${orden.folio}\n`; // Texto debajo del código
     contenido += izquierda;
   }
 

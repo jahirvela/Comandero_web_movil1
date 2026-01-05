@@ -288,11 +288,29 @@ export const emitirAlertaPedidoEnPreparacion = async (
   rol: string,
   isTakeaway: boolean = false
 ): Promise<void> => {
+  // Obtener el tiempo estimado de preparación de la orden (6 minutos por defecto)
+  const { obtenerOrdenBasePorId } = await import('../ordenes/ordenes.repository.js');
+  const orden = await obtenerOrdenBasePorId(ordenId);
+  const tiempoEstimado = (orden as any)?.tiempoEstimadoPreparacion ?? 6; // 6 minutos por defecto
+  
+  // Formatear el tiempo estimado
+  const tiempoNum = Number(tiempoEstimado);
+  let tiempoTexto = '';
+  if (tiempoNum >= 60) {
+    const horas = Math.floor(tiempoNum / 60);
+    const minutos = tiempoNum % 60;
+    tiempoTexto = minutos > 0 
+      ? ` (estimado: ${horas}h ${minutos}min)`
+      : ` (estimado: ${horas}h)`;
+  } else {
+    tiempoTexto = ` (estimado: ${tiempoNum}min)`;
+  }
+
   const mensaje = isTakeaway
-    ? `Pedido #${ordenId} está en preparación`
+    ? `Pedido #${ordenId} está en preparación${tiempoTexto}`
     : mesaCodigo
-    ? `Pedido #${ordenId} de Mesa ${mesaCodigo} está en preparación`
-    : `Pedido #${ordenId} está en preparación`;
+    ? `Pedido #${ordenId} de Mesa ${mesaCodigo} está en preparación${tiempoTexto}`
+    : `Pedido #${ordenId} está en preparación${tiempoTexto}`;
 
   const payload: AlertaPayload = {
     tipo: TipoAlerta.COCINA,
@@ -309,7 +327,8 @@ export const emitirAlertaPedidoEnPreparacion = async (
     metadata: {
       isTakeaway,
       mesaCodigo,
-      estado: 'preparacion'
+      estado: 'preparacion',
+      tiempoEstimado: Number(tiempoEstimado)
     }
   };
 
