@@ -117,9 +117,14 @@ class _LoginScreenState extends State<LoginScreen> {
               data['message'] ??
               'Datos inválidos. Verifica el formato de los datos.';
         } else if (statusCode == 403) {
-          errorMsg =
-              data['message'] ??
-              'Usuario deshabilitado. Contacta al administrador.';
+          final backendMessage = data['message'] as String? ?? '';
+          if (backendMessage.contains('deshabilitado') || backendMessage.contains('deshabilitado')) {
+            errorMsg = 'Usuario deshabilitado.\n\nPara habilitarlo, ejecuta este SQL en tu base de datos:\n\nUPDATE usuario SET activo = 1 WHERE username = \'mesero\';\n\nO contacta al administrador.';
+          } else {
+            errorMsg = backendMessage.isNotEmpty 
+                ? backendMessage 
+                : 'Usuario deshabilitado. Contacta al administrador.';
+          }
         } else if (statusCode == 429) {
           errorMsg =
               data['message'] ??

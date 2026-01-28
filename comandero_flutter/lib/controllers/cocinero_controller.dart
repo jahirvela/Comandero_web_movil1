@@ -149,8 +149,20 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     // Verificar que el rol sea cocinero
     final storedRole = await _storage.read(key: 'userRole');
     final storedUserId = await _storage.read(key: 'userId');
+    String? storedRoleLower = storedRole
+        ?.toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n');
+    if (storedRoleLower == 'admin') {
+      storedRoleLower = 'administrador';
+    }
 
-    if (storedRole != 'cocinero') {
+    if (storedRoleLower != 'cocinero' && storedRoleLower != 'administrador') {
       print(
         '⚠️ Cocinero: Rol no es cocinero ($storedRole), no se conectará socket',
       );
@@ -175,11 +187,23 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
 
       final socketUserId = socketService.getSocketUserId();
       final socketRole = socketService.getSocketUserRole();
+      String? socketRoleNormalized = socketRole
+          ?.toLowerCase()
+          .replaceAll('á', 'a')
+          .replaceAll('é', 'e')
+          .replaceAll('í', 'i')
+          .replaceAll('ó', 'o')
+          .replaceAll('ú', 'u')
+          .replaceAll('ü', 'u')
+          .replaceAll('ñ', 'n');
+      if (socketRoleNormalized == 'admin') {
+        socketRoleNormalized = 'administrador';
+      }
 
       if (socketUserId != null &&
           socketRole != null &&
           storedUserId == socketUserId &&
-          storedRole == socketRole) {
+          storedRoleLower == socketRoleNormalized) {
         print(
           '✅ Cocinero: Socket.IO ya está conectado con el usuario/rol correcto - UserId: $socketUserId, Role: $socketRole',
         );
@@ -370,7 +394,6 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
             if (ordenId == null) continue;
 
             final mensaje = alertaData['mensaje'] as String? ?? '';
-            final mesaId = alertaData['mesaId'] as int?;
             final alertaId = alertaData['id'] as int?;
             final creadoEn = alertaData['creadoEn'] as String?;
 
@@ -433,8 +456,10 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
                 : DateTime.now();
 
             // Convertir al formato viejo para la UI
-            // Si mesaId es null, es un pedido para llevar
-            final tableNumber = mesaId?.toString() ?? 'Para llevar';
+            // NUNCA usar mesaId para "Mesa X": es el ID de BD (ej. 4) y no el número visible (ej. 3).
+            // Usar solo mesaCodigo (desde API o metadata). Si no hay, "Para llevar".
+            final mesaCodigo = alertaData['mesaCodigo']?.toString() ?? metadata['mesaCodigo']?.toString();
+            final tableNumber = (mesaCodigo != null && mesaCodigo.isNotEmpty) ? mesaCodigo : 'Para llevar';
             final orderIdStr = 'ORD-${ordenId.toString().padLeft(6, '0')}';
 
             final oldFormatAlert = OldKitchenAlert(
@@ -492,6 +517,16 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   // Configurar listeners de Socket.IO
   void _setupSocketListeners() {
     final socketService = SocketService();
+    
+    if (!socketService.isConnected) {
+      print('⚠️ Cocinero: Socket.IO no está conectado, registrando listeners pendientes...');
+      socketService.connect().catchError((e) {
+        print('❌ Cocinero: Error al conectar Socket.IO: $e');
+      });
+    } else {
+      print('✅ Cocinero: Socket.IO está conectado, configurando listeners...');
+    }
+    print('📡 Cocinero: URL de Socket.IO: ${ApiConfig.socketUrl}');
 
     // Cargar alertas pendientes desde BD cuando se configuran los listeners
     _loadPendingAlerts();
@@ -510,8 +545,10 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
         );
 
         // Convertir la nueva alerta al formato del KitchenAlert viejo para mantener compatibilidad con la UI
-        // Si tableId es null, es un pedido para llevar
-        final tableNumber = alert.tableId?.toString() ?? 'Para llevar';
+        // NUNCA usar tableId para "Mesa X": puede ser el ID de BD, no el número visible. Solo mesaCodigo.
+        final tableNumber = (alert.mesaCodigo != null && alert.mesaCodigo!.isNotEmpty)
+            ? alert.mesaCodigo!
+            : 'Para llevar';
         final orderId = 'ORD-${alert.orderId.toString().padLeft(6, '0')}';
 
         // Mapear tipo del nuevo sistema al formato viejo
@@ -608,13 +645,9 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
             : <String, dynamic>{};
         final metadata = dataMap['metadata'] as Map<String, dynamic>? ?? {};
 
-        // Preferir mesaCodigo (número visible) sobre mesaId (ID de BD)
-        // Si no hay mesa, es un pedido para llevar
-        final tableNumber =
-            dataMap['mesaCodigo']?.toString() ??
-            metadata['tableNumber']?.toString() ??
-            dataMap['mesaId']?.toString() ??
-            'Para llevar';
+        // NUNCA usar mesaId para "Mesa X": es el ID de BD. Solo mesaCodigo o metadata tableNumber.
+        final _mesa = dataMap['mesaCodigo']?.toString() ?? metadata['tableNumber']?.toString();
+        final tableNumber = (_mesa != null && _mesa.isNotEmpty) ? _mesa : 'Para llevar';
         final orderId =
             dataMap['ordenId']?.toString() ??
             metadata['orderId']?.toString() ??
@@ -918,10 +951,21 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
         if (index != -1) {
           // La orden ya existe - solo actualizarla si es relevante
           if (esRelevanteParaCocina) {
+            // Verificar si el tiempo estimado cambió
+            final tiempoEstimadoNuevo = data['tiempoEstimadoPreparacion'] as int? ??
+                data['estimatedTime'] as int?;
+            final tiempoEstimadoAnterior = _orders[index].estimatedTime;
+            
             // Actualizar la orden existente sin duplicarla
             _orders[index] = _mapBackendToOrderModel(
               data as Map<String, dynamic>,
             );
+            
+            // Si el tiempo estimado cambió, loguear para debugging
+            if (tiempoEstimadoNuevo != null && tiempoEstimadoNuevo != tiempoEstimadoAnterior) {
+              print('⏱️ Cocinero: Tiempo estimado actualizado para orden $ordenIdStr: $tiempoEstimadoAnterior -> $tiempoEstimadoNuevo min');
+            }
+            
             notifyListeners();
             // NO loguear para evitar spam cuando hay múltiples eventos
           } else {
@@ -1173,6 +1217,13 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     return OrderPriority.normal;
   }
 
+  static String _formatProductNameWithSize(String name, String? size) {
+    if (size == null || size.isEmpty || size.trim().isEmpty) return name;
+    final cleanSize = size.trim();
+    if (name.contains('($cleanSize)')) return name;
+    return '$name ($cleanSize)';
+  }
+
   // Helper para mapear datos del backend a OrderModel
   OrderModel _mapBackendToOrderModel(Map<String, dynamic> data) {
     final estadoNombre =
@@ -1196,13 +1247,20 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     // Obtener items de la orden (pueden venir en diferentes formatos del backend)
     final itemsData = data['items'] as List<dynamic>? ?? [];
     final orderItems = itemsData.map((itemJson) {
+      final baseName = (itemJson['productoNombre'] as String?) ??
+          (itemJson['nombre'] as String?) ??
+          'Producto';
+      final tamano = (itemJson['productoTamanoEtiqueta'] ??
+              itemJson['tamanoEtiqueta'] ??
+              itemJson['tamanoNombre'] ??
+              itemJson['sizeName'] ??
+              itemJson['size'])
+          ?.toString();
+      final displayName = _formatProductNameWithSize(baseName, tamano);
+
       // Determinar estación basada en el nombre del producto o categoría
       String station = KitchenStation.tacos;
-      final productName =
-          ((itemJson['productoNombre'] as String?) ??
-                  (itemJson['nombre'] as String?) ??
-                  '')
-              .toLowerCase();
+      final productName = baseName.toLowerCase();
       if (productName.contains('consom') || productName.contains('mix')) {
         station = KitchenStation.consomes;
       } else if (productName.contains('agua') ||
@@ -1217,10 +1275,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
             (itemJson['id'] as num?)?.toInt() ??
             (itemJson['ordenItemId'] as num?)?.toInt() ??
             DateTime.now().millisecondsSinceEpoch,
-        name:
-            (itemJson['productoNombre'] as String?) ??
-            (itemJson['nombre'] as String?) ??
-            'Producto',
+        name: displayName,
         quantity: (itemJson['cantidad'] as num?)?.toInt() ?? 1,
         station: station,
         notes:
@@ -1277,9 +1332,13 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     final orderIdNum = data['id'] as int? ?? 0;
     final formattedOrderId = 'ORD-${orderIdNum.toString().padLeft(6, '0')}';
 
+    final mesaCodigoRaw = data['mesaCodigo']?.toString();
+    final mesaCodigoParsed = mesaCodigoRaw != null
+        ? int.tryParse(mesaCodigoRaw.replaceAll('Mesa ', '').trim())
+        : null;
     return OrderModel(
       id: formattedOrderId,
-      tableNumber: data['mesaId'] as int?,
+      tableNumber: mesaCodigoParsed ?? (data['mesaId'] as int?),
       items: orderItems,
       status: status,
       orderTime: finalOrderTime,

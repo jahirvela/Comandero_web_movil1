@@ -86,6 +86,41 @@ class SocketService {
               .toList();
   }
 
+  String _normalizeRole(String role) {
+    final normalized = role
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n');
+    // Unificar alias comunes
+    if (normalized == 'admin') {
+      return 'administrador';
+    }
+    return normalized;
+  }
+
+  Map<String, dynamic>? _decodeJwtPayload(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length < 2) {
+        return null;
+      }
+      final payload = base64Url.normalize(parts[1]);
+      final decoded = utf8.decode(base64Url.decode(payload));
+      final json = jsonDecode(decoded);
+      if (json is Map<String, dynamic>) {
+        return json;
+      }
+      return Map<String, dynamic>.from(json as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Conectar al servidor Socket.IO
   ///
   /// IMPORTANTE: Este método SIEMPRE crea una nueva conexión usando el token más reciente del storage.
@@ -176,30 +211,20 @@ class SocketService {
 
       // Log de debug para ver qué se está leyendo
       if (token != null && token.isNotEmpty) {
-        try {
-          final parts = token.split('.');
-          if (parts.length >= 2) {
-            final payload = parts[1];
-            final base64Payload = payload
-                .replaceAll('-', '+')
-                .replaceAll('_', '/');
-            final paddedPayload =
-                base64Payload + '=' * (4 - base64Payload.length % 4);
-            final decoded = utf8.decode(base64Decode(paddedPayload));
-            final payloadJson = jsonDecode(decoded) as Map<String, dynamic>;
-            final tokenUserId = payloadJson['sub']?.toString();
-            final tokenRoles = (payloadJson['roles'] as List<dynamic>? ?? [])
-                .map((r) => r.toString())
-                .toList();
-            print(
-              '🔍 Socket: Token leído del storage - userId en token: $tokenUserId, roles: ${tokenRoles.join(", ")}',
-            );
-            print(
-              '🔍 Socket: Datos en storage - userId: $userId, userRole: $userRole',
-            );
-          }
-        } catch (e) {
-          print('⚠️ Socket: No se pudo decodificar el token para debug: $e');
+        final payloadJson = _decodeJwtPayload(token);
+        if (payloadJson != null) {
+          final tokenUserId = payloadJson['sub']?.toString();
+          final tokenRoles = (payloadJson['roles'] as List<dynamic>? ?? [])
+              .map((r) => _normalizeRole(r.toString()))
+              .toList();
+          print(
+            '🔍 Socket: Token leído del storage - userId en token: $tokenUserId, roles: ${tokenRoles.join(", ")}',
+          );
+          print(
+            '🔍 Socket: Datos en storage - userId: $userId, userRole: $userRole',
+          );
+        } else {
+          print('⚠️ Socket: No se pudo decodificar el token para debug');
         }
       }
 
@@ -226,43 +251,29 @@ class SocketService {
       String? tokenUserId;
       List<String> tokenRoles = [];
 
-      try {
-        final parts = token.split('.');
-        if (parts.length >= 2) {
-          final payload = parts[1];
-          final base64Payload = payload
-              .replaceAll('-', '+')
-              .replaceAll('_', '/');
-          final paddedPayload =
-              base64Payload + '=' * (4 - base64Payload.length % 4);
-          final decoded = utf8.decode(base64Decode(paddedPayload));
-          final payloadJson = jsonDecode(decoded) as Map<String, dynamic>;
-          tokenUserId = payloadJson['sub']?.toString();
-          tokenRoles = (payloadJson['roles'] as List<dynamic>? ?? [])
-              .map((r) => r.toString())
-              .toList();
+      final payloadJson = _decodeJwtPayload(token);
+      if (payloadJson == null) {
+        print('❌ Socket: Error al decodificar token');
+        _updateState(SocketConnectionState.error);
+        return;
+      }
+      tokenUserId = payloadJson['sub']?.toString();
+      tokenRoles = (payloadJson['roles'] as List<dynamic>? ?? [])
+          .map((r) => _normalizeRole(r.toString()))
+          .toList();
 
-          // Validar coincidencia
-          if (tokenUserId != userId || !tokenRoles.contains(userRole)) {
-            print('❌ Socket: Token no coincide con storage');
-            print('   Token userId: $tokenUserId, Storage userId: $userId');
-            print(
-              '   Token roles: ${tokenRoles.join(", ")}, Storage role: $userRole',
-            );
-            print(
-              '   ⚠️ Esto puede indicar que el storage tiene datos inconsistentes.',
-            );
-            print('   💡 Solución: Hacer logout y login nuevamente.');
-            _updateState(SocketConnectionState.error);
-            return;
-          }
-        } else {
-          print('❌ Socket: Token inválido (no tiene formato JWT)');
-          _updateState(SocketConnectionState.error);
-          return;
-        }
-      } catch (e) {
-        print('❌ Socket: Error al decodificar token: $e');
+      // Validar coincidencia
+      final normalizedUserRole = _normalizeRole(userRole);
+      if (tokenUserId != userId || !tokenRoles.contains(normalizedUserRole)) {
+        print('❌ Socket: Token no coincide con storage');
+        print('   Token userId: $tokenUserId, Storage userId: $userId');
+        print(
+          '   Token roles: ${tokenRoles.join(", ")}, Storage role: $normalizedUserRole',
+        );
+        print(
+          '   ⚠️ Esto puede indicar que el storage tiene datos inconsistentes.',
+        );
+        print('   💡 Solución: Hacer logout y login nuevamente.');
         _updateState(SocketConnectionState.error);
         return;
       }
@@ -298,24 +309,14 @@ class SocketService {
         // Revalidar el token actualizado si cambió
         if (finalToken != token) {
           print('   🔄 Usando token más reciente del storage');
-          try {
-            final parts = token.split('.');
-            if (parts.length >= 2) {
-              final payload = parts[1];
-              final base64Payload = payload
-                  .replaceAll('-', '+')
-                  .replaceAll('_', '/');
-              final paddedPayload =
-                  base64Payload + '=' * (4 - base64Payload.length % 4);
-              final decoded = utf8.decode(base64Decode(paddedPayload));
-              final payloadJson = jsonDecode(decoded) as Map<String, dynamic>;
-              tokenUserId = payloadJson['sub']?.toString();
-              tokenRoles = (payloadJson['roles'] as List<dynamic>? ?? [])
-                  .map((r) => r.toString())
-                  .toList();
-            }
-          } catch (e) {
-            print('⚠️ Socket: Error al revalidar token actualizado: $e');
+          final refreshedPayload = _decodeJwtPayload(token);
+          if (refreshedPayload != null) {
+            tokenUserId = refreshedPayload['sub']?.toString();
+            tokenRoles = (refreshedPayload['roles'] as List<dynamic>? ?? [])
+                .map((r) => _normalizeRole(r.toString()))
+                .toList();
+          } else {
+            print('⚠️ Socket: Error al revalidar token actualizado');
           }
         }
       } else if (finalToken == null || finalToken.isEmpty) {
@@ -339,14 +340,16 @@ class SocketService {
       final tokenPreview = token.length > 50
           ? '${token.substring(0, 20)}...${token.substring(token.length - 20)}'
           : token.substring(0, token.length > 30 ? 30 : token.length) + '...';
+      final socketUrl = ApiConfig.socketUrl;
       print('📤 Socket: Conectando con token JWT (preview: $tokenPreview)');
+      print('📤 Socket: URL de conexión: $socketUrl');
       print(
         '📤 Socket: Token userId: $tokenUserId, Token roles: ${tokenRoles.join(", ")}',
       );
 
       // Crear socket NUEVO con enableForceNew para NO reutilizar conexiones anteriores
       _socket = IO.io(
-        ApiConfig.socketUrl,
+        socketUrl,
         IO.OptionBuilder()
             .setTransports(['websocket'])
             .setAuth(authData) // SOLO token y station (opcional)
@@ -374,7 +377,9 @@ class SocketService {
 
     _socket!.onConnect((_) {
       final socketId = _socket?.id ?? 'unknown';
+      final socketUrl = ApiConfig.socketUrl;
       print('✅ Socket.IO: Conectado exitosamente (socket id: $socketId)');
+      print('✅ Socket.IO: URL conectada: $socketUrl');
       _updateState(SocketConnectionState.connected);
       Future.delayed(const Duration(milliseconds: 200), () {
         print('🔧 Socket.IO: Registrando listeners pendientes...');
@@ -402,7 +407,7 @@ class SocketService {
       final socketUserId = user['id']?.toString() ?? '';
       final socketUsername = user['username']?.toString() ?? 'N/A';
       final socketRoles = (user['roles'] as List<dynamic>? ?? [])
-          .map((r) => r.toString())
+          .map((r) => _normalizeRole(r.toString()))
           .toList();
 
       // CRÍTICO: Guardar los datos del usuario para uso posterior
@@ -417,7 +422,8 @@ class SocketService {
 
       // Verificar que el usuario del socket coincida con el del storage
       final storedUserId = await _storage.read(key: 'userId') ?? '';
-      final storedRole = await _storage.read(key: 'userRole') ?? '';
+      final storedRoleRaw = await _storage.read(key: 'userRole') ?? '';
+      final storedRole = _normalizeRole(storedRoleRaw);
 
       if (storedUserId.isEmpty || storedRole.isEmpty) {
         print(
@@ -466,14 +472,18 @@ class SocketService {
     _socket!.onDisconnect((reason) {
       // Validar reason antes de imprimir
       final reasonStr = reason?.toString() ?? 'desconocida';
-      print('Socket.IO desconectado: $reasonStr');
+      final socketUrl = ApiConfig.socketUrl;
+      print('❌ Socket.IO desconectado: $reasonStr');
+      print('❌ Socket.IO: URL desconectada: $socketUrl');
       _updateState(SocketConnectionState.disconnected);
     });
 
     _socket!.onConnectError((error) {
       // Validar error antes de imprimir
       final errorStr = error?.toString() ?? 'Error desconocido';
-      print('Error de conexión Socket.IO: $errorStr');
+      final socketUrl = ApiConfig.socketUrl;
+      print('❌ Error de conexión Socket.IO: $errorStr');
+      print('❌ Socket.IO: URL de error: $socketUrl');
       _updateState(SocketConnectionState.error);
     });
 
@@ -852,22 +862,22 @@ class SocketService {
       connect()
           .then((_) {
             if (_socket != null && _socket!.connected) {
-              final eventNameStr = eventName?.toString() ?? 'unknown';
+              final eventNameStr = eventName.toString();
               print('✅ Socket: Conectado, emitiendo $eventNameStr');
               try {
                 _socket!.emit(eventNameStr, data);
               } catch (e) {
-                final errorMsg = e?.toString() ?? 'Error desconocido';
+                final errorMsg = e.toString();
                 print('❌ Socket: Error al emitir $eventNameStr: $errorMsg');
               }
             } else {
-              final eventNameStr = eventName?.toString() ?? 'unknown';
+              final eventNameStr = eventName.toString();
               print('❌ Socket: No se pudo conectar para emitir $eventNameStr');
             }
           })
           .catchError((e) {
-            final errorMsg = e?.toString() ?? 'Error desconocido';
-            final eventNameStr = eventName?.toString() ?? 'unknown';
+            final errorMsg = e.toString();
+            final eventNameStr = eventName.toString();
             print(
               '❌ Socket: Error al conectar para emitir $eventNameStr: $errorMsg',
             );
@@ -929,13 +939,13 @@ class SocketService {
     _socket!.on(eventName, (data) {
       try {
         // Validar eventName antes de imprimir para evitar nulls
-        final eventNameStr = eventName?.toString() ?? 'unknown';
+        final eventNameStr = eventName.toString();
         print('📥 Socket: Evento $eventNameStr recibido');
         callback(data);
       } catch (e) {
         // Validar error antes de imprimir
-        final errorMsg = e?.toString() ?? 'Error desconocido';
-        final eventNameStr = eventName?.toString() ?? 'unknown';
+        final errorMsg = e.toString();
+        final eventNameStr = eventName.toString();
         print('❌ Error en callback para $eventNameStr: $errorMsg');
       }
     });

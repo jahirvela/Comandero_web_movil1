@@ -7,6 +7,7 @@ import {
   crearUsuarioController,
   actualizarUsuarioController,
   eliminarUsuarioController,
+  eliminarUsuarioPermanenteController,
   asignarRolesUsuarioController,
   listarRolesController
 } from './usuarios.controller.js';
@@ -21,6 +22,11 @@ usuariosRouter.get('/:id', requireRoles('administrador'), obtenerUsuarioControll
 usuariosRouter.post('/', requireRoles('administrador'), crearUsuarioController);
 usuariosRouter.put('/:id', requireRoles('administrador'), actualizarUsuarioController);
 usuariosRouter.delete('/:id', requireRoles('administrador'), eliminarUsuarioController);
+usuariosRouter.delete(
+  '/:id/permanente',
+  requireRoles('administrador'),
+  eliminarUsuarioPermanenteController
+);
 usuariosRouter.post('/:id/roles', requireRoles('administrador'), asignarRolesUsuarioController);
 
 export default usuariosRouter;

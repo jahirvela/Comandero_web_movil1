@@ -1,0 +1,28 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: Cuenta agrupada (3 órdenes): ORD-000097, ORD-000098, ORD-000099
+Fecha: 22/01/26, 7:23 p.m.
+Mesa: 2
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  4  Taco de Barbacoa Suave      140.00
+  Nota: Extras: Quesillo (+$10)
+  1  Alitas Mango Habanero ...    20.00
+  1  Consome (Chico)              20.00
+  1  Consome (Grande)             30.00
+  2  Alitas Mango Habanero ...    60.00
+------------------------------------------
+Subtotal:                    $  270.00
+E1TOTAL:                      $  270.00
+E0==========================================
+a1
+k?Cuenta agrupada (3 órdenes): ORD-000097, ORD-000098, ORD-000099
+
+Cuenta agrupada (3 órdenes): ORD-000097, ORD-000098, ORD-000099
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

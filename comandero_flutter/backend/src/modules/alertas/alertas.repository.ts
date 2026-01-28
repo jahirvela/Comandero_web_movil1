@@ -100,65 +100,57 @@ export const crearAlerta = async (
   }
 };
 
+interface AlertaRowWithMesa extends AlertaRow {
+  mesa_codigo?: string | null;
+}
+
 /**
- * Obtiene alertas no leídas para un usuario o rol
+ * Obtiene alertas no leídas para un usuario o rol.
+ * Incluye mesa_codigo (número visible de mesa) vía JOIN para mostrar siempre
+ * la mesa correcta en cocinero/capitán, nunca el mesa_id (ID de BD).
  */
 export const obtenerAlertasNoLeidas = async (
   usuarioId?: number,
   rol?: string,
   tipoFiltro?: string | null
 ): Promise<AlertaDB[]> => {
+  // No usar a.metadata: la columna puede no existir en la BD (Unknown column 'a.metadata').
   let query = `
-    SELECT * FROM alerta
-    WHERE leida = 0
+    SELECT a.id, a.tipo, a.mensaje, a.orden_id, a.mesa_id, a.usuario_origen_id, a.usuario_destino_id, a.leida, a.creado_en,
+           m.codigo AS mesa_codigo
+    FROM alerta a
+    LEFT JOIN mesa m ON m.id = a.mesa_id
+    WHERE a.leida = 0
   `;
   const params: unknown[] = [];
 
   if (usuarioId) {
-    query += ' AND usuario_origen_id != ?';
+    query += ' AND a.usuario_origen_id != ?';
     params.push(usuarioId);
   }
 
   // Filtrar por tipo si se especifica (útil para meseros que solo necesitan alerta.cocina)
   if (tipoFiltro) {
-    query += ' AND tipo = ?';
+    query += ' AND a.tipo = ?';
     params.push(tipoFiltro);
   }
 
-  query += ' ORDER BY creado_en DESC LIMIT 50';
+  query += ' ORDER BY a.creado_en DESC LIMIT 50';
 
-  const [rows] = await pool.query<AlertaRow[]>(query, params);
+  const [rows] = await pool.query<AlertaRowWithMesa[]>(query, params);
 
   return rows.map((row) => {
-    // Parsear metadata JSON si existe (puede no existir si la columna no está en la tabla)
-    let metadata: Record<string, unknown> | null = null;
-    if (row.metadata !== undefined && row.metadata !== null) {
-      try {
-        metadata = typeof row.metadata === 'string' 
-          ? JSON.parse(row.metadata) 
-          : (row.metadata as Record<string, unknown>);
-      } catch (e) {
-        // Si hay error al parsear, dejar como null
-        metadata = null;
-      }
-    }
-    
     const alerta: any = {
       id: row.id,
       tipo: row.tipo,
       mensaje: row.mensaje,
       ordenId: row.orden_id,
       mesaId: row.mesa_id,
+      mesaCodigo: row.mesa_codigo ?? null,
       creadoPorUsuarioId: row.usuario_origen_id,
       leido: Boolean(row.leida),
       creadoEn: row.creado_en
     };
-    
-    // Solo agregar metadata si existe
-    if (metadata !== null) {
-      alerta.metadata = metadata;
-    }
-    
     return alerta;
   });
 };

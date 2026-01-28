@@ -1444,7 +1444,11 @@ class CocineroApp extends StatelessWidget {
     bool withBottomMargin = true,
   }) {
     final statusColor = controller.getStatusColor(order.status);
-    final elapsedTime = controller.formatElapsedTime(order.orderTime);
+    // Usar StreamBuilder para actualizar el tiempo en tiempo real
+    return StreamBuilder<DateTime>(
+      stream: Stream.periodic(const Duration(seconds: 1), (_) => DateTime.now()),
+      builder: (context, snapshot) {
+        final elapsedTime = controller.formatElapsedTime(order.orderTime);
 
     // Obtener texto del estado
     String statusText = OrderStatus.getStatusText(order.status).toUpperCase();
@@ -1578,6 +1582,30 @@ class CocineroApp extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
 
+                // Nombre de persona (si es cuenta dividida)
+                if (!order.isTakeaway && order.customerName != null && order.customerName!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.person,
+                          size: isTablet ? 14.0 : 12.0,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Pedido de ${order.customerName}',
+                          style: TextStyle(
+                            fontSize: isTablet ? 13.0 : 11.0,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 // Tiempo y mesero
                 Row(
                   children: [
@@ -1678,6 +1706,8 @@ class CocineroApp extends StatelessWidget {
           ),
         ),
       ),
+    );
+      },
     );
   }
 

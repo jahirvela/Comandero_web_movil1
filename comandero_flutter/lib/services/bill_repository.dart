@@ -239,13 +239,21 @@ class BillRepository extends ChangeNotifier {
           continue;
         }
 
+        // Solo crear bill si la orden fue enviada al cajero
+        // (cerrada/enviada/cobrada o pagada sin pagos registrados)
+        final esCerradaParaCobro = estadoNombre.contains('cerrada') ||
+            estadoNombre.contains('enviada') ||
+            estadoNombre.contains('cobrada');
+        bool esPagadaSinPagos = false;
+
+        if (!esCerradaParaCobro && !estadoNombre.contains('pagada')) {
+          continue;
+        }
+
         // CRÍTICO: Para órdenes "pagadas", verificar si fueron enviadas al cajero
         // Si la orden está "pagada" pero NO tiene pagos registrados,
         // significa que fue enviada al cajero pero aún no se ha procesado el pago
-        // IMPORTANTE: No importa cuándo fue creada, si está "pagada" sin pagos, fue enviada al cajero
-        if (estadoNombre.contains('pagada') ||
-            estadoNombre.contains('cerrada') ||
-            estadoNombre.contains('cobrada')) {
+        if (estadoNombre.contains('pagada') || esCerradaParaCobro) {
           // Verificar si tiene pagos registrados
           final pagos = ordenData['pagos'] as List<dynamic>? ?? [];
           final tienePagosRegistrados = pagos.isNotEmpty;
@@ -255,10 +263,15 @@ class BillRepository extends ChangeNotifier {
             print('⏭️ BillRepository: Saltando orden $ordenId - Ya tiene pagos registrados (fue cobrada)');
             continue;
           }
-          
-          // No tiene pagos pero está "pagada" - fue enviada al cajero
-          // Incluir siempre, sin importar cuándo fue creada
-          print('✅ BillRepository: Incluyendo orden $ordenId - Pagada sin pagos (enviada al cajero)');
+
+          if (estadoNombre.contains('pagada')) {
+            esPagadaSinPagos = true;
+          }
+
+          // No tiene pagos y está cerrada/enviada/cobrada o pagada sin pagos
+          print(
+            '✅ BillRepository: Incluyendo orden $ordenId - Estado: $estadoNombre${esPagadaSinPagos ? ' (pagada sin pagos)' : ''}',
+          );
           // Continuar para crear el bill
         }
 
@@ -290,8 +303,36 @@ class BillRepository extends ChangeNotifier {
               (itemJson['precioUnitario'] as num?)?.toDouble() ?? 0.0;
           // Calcular el total del item correctamente: precio * cantidad
           final totalItem = precioUnitario * cantidad;
+          final productoNombre =
+              itemJson['productoNombre'] as String? ?? 'Producto';
+
+          // Tomar la etiqueta de tamaño desde cualquiera de los posibles campos
+          final tamanoEtiqueta = (itemJson['productoTamanoEtiqueta'] ??
+                  itemJson['tamanoEtiqueta'] ??
+                  itemJson['tamanoNombre'] ??
+                  itemJson['sizeName'] ??
+                  itemJson['size'] ??
+                  itemJson['tamaño'] ??
+                  itemJson['productoTamano'] ??
+                  itemJson['productoTamanioEtiqueta'])
+              ?.toString();
+          
+          // Debug: imprimir información del item para verificar
+          if (tamanoEtiqueta != null && tamanoEtiqueta.isNotEmpty) {
+            print('📦 BillRepository: Producto "$productoNombre" tiene tamaño: "$tamanoEtiqueta"');
+          } else {
+            print('⚠️ BillRepository: Producto "$productoNombre" NO tiene tamaño. Campos disponibles: ${itemJson.keys.toList()}');
+          }
+
+          final nombreConTamano = _formatProductNameWithSize(
+            productoNombre,
+            tamanoEtiqueta,
+          );
+          
+          print('📦 BillRepository: Nombre final del producto: "$nombreConTamano"');
+
           return BillItem(
-            name: itemJson['productoNombre'] as String? ?? 'Producto',
+            name: nombreConTamano,
             quantity: cantidad,
             price: precioUnitario,
             total: totalItem,
@@ -361,4 +402,17 @@ class BillRepository extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+String _formatProductNameWithSize(String name, String? size) {
+  if (size == null || size.isEmpty || size.trim().isEmpty) {
+    return name;
+  }
+  final cleanSize = size.trim();
+  // Si el nombre ya incluye el tamaño en paréntesis, no agregarlo de nuevo
+  if (name.contains('($cleanSize)')) {
+    return name;
+  }
+  // Agregar el tamaño al nombre
+  return '$name ($cleanSize)';
 }

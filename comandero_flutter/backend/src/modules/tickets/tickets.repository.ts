@@ -235,12 +235,160 @@ export interface TicketListItem {
   createdAt: string; // ISO string en zona CDMX
   waiterName: string | null;
   cashierName: string | null;
-  paymentMethod: string | null; // Método de pago (ej: 'Efectivo', 'Tarjeta', etc.)
-  paymentReference: string | null; // Referencia del pago (incluye info de débito/crédito)
+  paymentMethod: string | null; // Método de pago (ej: 'Efectivo', 'Tarjeta', 'Pago Mixto', etc.)
+  paymentReference: string | null; // Referencia del pago (incluye info de débito/crédito o desglose de pago mixto)
   isPrinted: boolean;
   printedBy: string | null;
   printedAt: string | null; // ISO string en zona CDMX
   isGrouped?: boolean; // Flag para indicar que es una cuenta agrupada
+  items?: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    total: number;
+  }>;
+}
+
+// Función helper para construir información de pago (detecta pagos mixtos y construye desglose)
+function buildPaymentInfo(pagos: RowDataPacket[]): { paymentMethod: string | null; paymentReference: string | null } {
+  if (!pagos || pagos.length === 0) {
+    return { paymentMethod: null, paymentReference: null };
+  }
+
+  // Si hay un solo pago, usar la lógica original
+  if (pagos.length === 1) {
+    const pago = pagos[0];
+    const referencia = pago.referencia;
+    const formaPagoNombre = pago.nombre || null;
+    
+    let paymentMethod: string | null;
+    
+    // Detectar transferencia por referencia (contiene "Banco:")
+    if (referencia && referencia.toLowerCase().includes('banco:')) {
+      paymentMethod = 'Transferencia';
+    } 
+    // Detectar tarjeta por referencia (contiene "Tarjeta Débito" o "Tarjeta Crédito")
+    else if (referencia && (referencia.includes('Tarjeta Débito') || referencia.includes('Tarjeta Crédito'))) {
+      paymentMethod = referencia.split(' - ')[0]; // Extraer solo el tipo de tarjeta
+    } 
+    // Usar el nombre de la forma de pago
+    else {
+      paymentMethod = formaPagoNombre;
+    }
+    
+    return { paymentMethod, paymentReference: referencia || null };
+  }
+
+  // Si hay múltiples pagos, es un pago mixto
+  const desglosePagos: string[] = [];
+  let totalMixto = 0;
+
+  for (let i = 0; i < pagos.length; i++) {
+    const pago = pagos[i];
+    const monto = Number(pago.monto);
+    totalMixto += monto;
+    const formaPagoNombre = pago.nombre || 'Desconocido';
+    const referencia = (pago.referencia || '').trim();
+    const refLower = referencia.toLowerCase();
+
+    // Determinar tipo para mostrar: si referencia tiene "Banco:" es transferencia aunque forma_pago sea efectivo
+    const esTransferencia = formaPagoNombre.toLowerCase().includes('transferencia') ||
+      formaPagoNombre.toLowerCase().includes('transfer') ||
+      (refLower.includes('banco:'));
+    const esTarjeta = formaPagoNombre.toLowerCase().includes('tarjeta') || formaPagoNombre.toLowerCase().includes('card');
+    const esEfectivo = formaPagoNombre.toLowerCase().includes('efectivo') || formaPagoNombre.toLowerCase().includes('cash');
+
+    let tipoDisplay = formaPagoNombre;
+    if (esTransferencia) tipoDisplay = 'Transferencia';
+    else if (esTarjeta) {
+      if (referencia.includes('Tarjeta Crédito')) tipoDisplay = 'Tarjeta Crédito';
+      else if (referencia.includes('Tarjeta Débito')) tipoDisplay = 'Tarjeta Débito';
+      else tipoDisplay = formaPagoNombre;
+    } else if (esEfectivo) tipoDisplay = 'Efectivo';
+
+    let lineaPago = `Pago ${i + 1}: ${tipoDisplay} - $${monto.toFixed(2)}`;
+
+    if (!referencia) {
+      desglosePagos.push(lineaPago);
+      continue;
+    }
+
+    if (esTransferencia) {
+      // Parsear "Banco: X | Referencia: Y | Observaciones: Z" o "Banco: X | 45678"
+      let banco: string | null = null;
+      let referenciaNum: string | null = null;
+      let observaciones: string | null = null;
+      const partes = referencia.split(/\s*\|\s*/);
+      for (const p of partes) {
+        const t = p.trim();
+        if (!t) continue;
+        if (/^banco:\s+/i.test(t)) {
+          banco = t.replace(/^banco:\s+/i, '').trim();
+        } else if (/^(?:referencia|ref):\s+/i.test(t)) {
+          referenciaNum = t.replace(/^(?:referencia|ref):\s+/i, '').trim();
+        } else if (/^observaciones:\s+/i.test(t)) {
+          observaciones = t.replace(/^observaciones:\s+/i, '').trim();
+        } else if (!banco && /^banco:/i.test(t)) {
+          const m = t.match(/banco:\s*(.+)/i);
+          if (m) banco = m[1].trim();
+        } else if (!referenciaNum && !observaciones) {
+          if (/^[a-z0-9\s-]{1,50}$/i.test(t)) referenciaNum = t;
+          else observaciones = t;
+        }
+      }
+      if (banco) lineaPago += ` | Banco: ${banco}`;
+      if (referenciaNum) lineaPago += ` | Referencia: ${referenciaNum}`;
+      if (observaciones && !observaciones.includes('Banco:') && !observaciones.includes('Referencia:')) {
+        lineaPago += ` | Observaciones: ${observaciones}`;
+      }
+    } else if (esTarjeta) {
+      if (referencia.includes('Tarjeta Débito') || referencia.includes('Tarjeta Crédito')) {
+        const partes = referencia.split(' - ');
+        if (partes.length > 1) {
+          const detalles = partes.slice(1).join(' - ');
+          let refExtra: string | null = null;
+          let obsExtra: string | null = null;
+          const sub = detalles.split(/\s*\|\s*/);
+          for (const s of sub) {
+            const x = s.trim();
+            if (/^(?:referencia|ref):\s+/i.test(x)) refExtra = x.replace(/^(?:referencia|ref):\s+/i, '').trim();
+            else if (/^observaciones:\s+/i.test(x)) obsExtra = x.replace(/^observaciones:\s+/i, '').trim();
+          }
+          if (detalles.includes('TX:') || detalles.includes('Auth:') || detalles.includes('****')) {
+            lineaPago += ` | Referencia: ${detalles}`;
+          } else if (refExtra ?? obsExtra) {
+            if (refExtra) lineaPago += ` | Referencia: ${refExtra}`;
+            if (obsExtra) lineaPago += ` | Observaciones: ${obsExtra}`;
+          } else {
+            lineaPago += ` | Referencia: ${detalles}`;
+          }
+        }
+      } else {
+        const idxObs = refLower.indexOf('observaciones:');
+        if (idxObs >= 0) {
+          const refPart = referencia.slice(0, idxObs).replace(/\|\s*$/, '').trim();
+          const obsPart = referencia.slice(idxObs).replace(/^observaciones:\s*/i, '').trim();
+          if (refPart) lineaPago += ` | Referencia: ${refPart}`;
+          if (obsPart) lineaPago += ` | Observaciones: ${obsPart}`;
+        } else {
+          lineaPago += ` | Referencia: ${referencia}`;
+        }
+      }
+    } else {
+      // Efectivo: solo observaciones
+      lineaPago += ` | Observaciones: ${referencia}`;
+    }
+
+    desglosePagos.push(lineaPago);
+  }
+
+  // Construir referencia completa con desglose
+  const paymentReference = `PAGO MIXTO - Total: $${totalMixto.toFixed(2)}\n${desglosePagos.join('\n')}`;
+  
+  return {
+    paymentMethod: 'Pago Mixto',
+    paymentReference
+  };
 }
 
 export const listarTickets = async (): Promise<TicketListItem[]> => {
@@ -413,6 +561,26 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
     const tickets: TicketListItem[] = [];
     const ordenesProcesadas = new Set<number>();
 
+    const buildItemsForOrdenes = async (ordenIds: number[]) => {
+      let items: TicketListItem['items'] = [];
+      for (const ordenIdItem of ordenIds) {
+        const ordenItems = await obtenerItemsOrden(ordenIdItem);
+        const mapped = ordenItems.map((item) => {
+          const nombre = item.productoTamanoEtiqueta
+            ? `${item.productoNombre} (${item.productoTamanoEtiqueta})`
+            : item.productoNombre;
+          return {
+            name: nombre,
+            quantity: item.cantidad,
+            price: item.precioUnitario,
+            total: item.totalLinea
+          };
+        });
+        items = items.concat(mapped);
+      }
+      return items;
+    };
+
     for (const row of rows) {
       // Si esta orden es parte de una cuenta agrupada, ya fue procesada o será procesada como principal
       if (ordenesProcesadas.has(row.orden_id)) {
@@ -477,23 +645,19 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           }
         }
 
-        // Obtener método de pago y referencia del último pago de la orden principal
-        const [pagoAgrupado] = await pool.query<RowDataPacket[]>(
-          `SELECT fp.nombre, p.referencia 
+        // Obtener todos los pagos de la orden principal para detectar pago mixto
+        const [todosPagosAgrupados] = await pool.query<RowDataPacket[]>(
+          `SELECT fp.nombre, p.referencia, p.monto, p.fecha_pago
            FROM pago p 
            JOIN forma_pago fp ON fp.id = p.forma_pago_id 
-           WHERE p.orden_id = ? 
-           ORDER BY p.fecha_pago DESC 
-           LIMIT 1`,
+           WHERE p.orden_id = ? AND p.estado = 'aplicado'
+           ORDER BY p.fecha_pago ASC`,
           [row.orden_id]
         );
-        // Si la referencia contiene información de débito/crédito, usarla; si no, usar el nombre de la forma de pago
-        const referencia = pagoAgrupado[0]?.referencia;
-        const formaPagoNombre = pagoAgrupado[0]?.nombre || null;
-        const paymentMethod = (referencia && (referencia.includes('Tarjeta Débito') || referencia.includes('Tarjeta Crédito')))
-          ? referencia.split(' - ')[0] // Extraer solo el tipo de tarjeta (ej: "Tarjeta Débito")
-          : formaPagoNombre;
-        const paymentReference = referencia || null;
+        
+        const { paymentMethod, paymentReference } = buildPaymentInfo(todosPagosAgrupados);
+
+        const items = await buildItemsForOrdenes(ordenIdsAgrupados);
 
         tickets.push({
           id: ticketId,
@@ -518,7 +682,8 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           isPrinted: status === 'printed',
           printedBy: row.impreso_por_nombre,
           printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null,
-          isGrouped: true
+          isGrouped: true,
+          items
         });
 
         // Marcar todas las órdenes como procesadas
@@ -531,6 +696,20 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
         if (row.impreso === 1 && row.ultima_impresion_exitosa === 1) {
           status = 'printed';
         }
+
+        const items = await buildItemsForOrdenes([row.orden_id]);
+
+        // Obtener todos los pagos de esta orden para detectar pago mixto
+        const [todosPagos] = await pool.query<RowDataPacket[]>(
+          `SELECT fp.nombre, p.referencia, p.monto, p.fecha_pago
+           FROM pago p 
+           JOIN forma_pago fp ON fp.id = p.forma_pago_id 
+           WHERE p.orden_id = ? AND p.estado = 'aplicado'
+           ORDER BY p.fecha_pago ASC`,
+          [row.orden_id]
+        );
+        
+        const { paymentMethod, paymentReference } = buildPaymentInfo(todosPagos);
 
         tickets.push({
           id: row.orden_folio,
@@ -549,19 +728,12 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           createdAt: utcToMxISO(row.orden_fecha) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,
           cashierName: row.cajero_nombre,
-          paymentMethod: (() => {
-            // Si la referencia contiene información de débito/crédito, usarla
-            const referencia = row.pago_referencia;
-            const formaPagoNombre = row.forma_pago_nombre || null;
-            if (referencia && (referencia.includes('Tarjeta Débito') || referencia.includes('Tarjeta Crédito'))) {
-              return referencia.split(' - ')[0]; // Extraer solo el tipo de tarjeta
-            }
-            return formaPagoNombre;
-          })(),
-          paymentReference: row.pago_referencia || null,
+          paymentMethod,
+          paymentReference,
           isPrinted: row.impreso === 1,
           printedBy: row.impreso_por_nombre,
-          printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null
+          printedAt: row.impreso_en ? utcToMxISO(row.impreso_en) : null,
+          items
         });
 
         ordenesProcesadas.add(row.orden_id);

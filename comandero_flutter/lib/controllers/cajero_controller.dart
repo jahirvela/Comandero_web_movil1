@@ -11,6 +11,7 @@ import '../services/socket_service.dart';
 import '../services/cierres_service.dart';
 import '../services/tickets_service.dart';
 import '../services/ordenes_service.dart';
+import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
 
@@ -40,8 +41,8 @@ class CajeroController extends ChangeNotifier {
 
       // 2. Conectar Socket.IO ANTES de configurar listeners
       print('🔌 Cajero: Conectando Socket.IO...');
+      final socketService = SocketService();
       try {
-        final socketService = SocketService();
         if (!socketService.isConnected) {
           await socketService.connect();
           print('✅ Cajero: Socket.IO conectado exitosamente');
@@ -53,7 +54,21 @@ class CajeroController extends ChangeNotifier {
       }
 
       // 3. Configurar listeners DESPUÉS de conectar Socket.IO
-      _setupSocketListeners();
+      // Verificar que esté conectado antes de configurar
+      if (socketService.isConnected) {
+        _setupSocketListeners();
+        print('✅ Cajero: Listeners de Socket.IO configurados');
+      } else {
+        print('⚠️ Cajero: Socket.IO no está conectado aún, esperando...');
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          if (socketService.isConnected) {
+            _setupSocketListeners();
+            print('✅ Cajero: Listeners de Socket.IO configurados después de esperar');
+          } else {
+            print('❌ Cajero: Socket.IO no se conectó, los listeners no se configuraron');
+          }
+        });
+      }
 
       // 4. Cargar datos desde el backend
       await Future.wait([refreshBills(), loadCashClosures()]);
@@ -69,6 +84,15 @@ class CajeroController extends ChangeNotifier {
   // Configurar listeners de Socket.IO
   void _setupSocketListeners() {
     final socketService = SocketService();
+    
+    // Verificar que Socket.IO esté conectado antes de configurar listeners
+    if (!socketService.isConnected) {
+      print('⚠️ Cajero: Socket.IO no está conectado en _setupSocketListeners');
+      return;
+    }
+    
+    print('✅ Cajero: Socket.IO está conectado, configurando listeners...');
+    print('📡 Cajero: URL de Socket.IO: ${ApiConfig.socketUrl}');
 
     // Escuchar nuevas órdenes (para crear facturas automáticamente)
     socketService.onOrderCreated((data) {
@@ -534,10 +558,28 @@ class CajeroController extends ChangeNotifier {
     try {
       print('🔄 Cajero: Cargando cierres de caja desde backend...');
       final cierresService = CierresService();
-      final cierres = await cierresService.listarCierresCaja();
+      // Cargar cierres de los últimos 7 días para asegurar que incluya la apertura de hoy
+      final ahora = date_utils.AppDateUtils.now();
+      final fechaInicio = ahora.subtract(const Duration(days: 7));
+      final fechaFin = ahora;
+      final cierres = await cierresService.listarCierresCaja(
+        fechaInicio: fechaInicio,
+        fechaFin: fechaFin,
+      );
       _cashClosures = cierres;
-      notifyListeners();
       print('✅ Cajero: ${cierres.length} cierres cargados desde el backend');
+      // Debug: mostrar aperturas encontradas
+      final apertura = getTodayCashOpening();
+      if (apertura != null) {
+        print('📋 Cajero: Apertura encontrada - ID: ${apertura.id}, Fecha: ${apertura.fecha}, Efectivo Inicial: ${apertura.efectivoInicial}');
+      } else {
+        print('⚠️ Cajero: No se encontró apertura de caja para hoy');
+        print('📋 Cajero: Total de cierres cargados: ${cierres.length}');
+        if (cierres.isNotEmpty) {
+          print('📋 Cajero: Primer cierre - Fecha: ${cierres.first.fecha}, Efectivo Inicial: ${cierres.first.efectivoInicial}, Total Neto: ${cierres.first.totalNeto}');
+        }
+      }
+      notifyListeners();
     } catch (e, stackTrace) {
       print('❌ Error al cargar cierres de caja: $e');
       print('Stack trace: $stackTrace');
@@ -551,6 +593,11 @@ class CajeroController extends ChangeNotifier {
   void selectBill(BillModel bill) {
     _selectedBill = bill;
     notifyListeners();
+  }
+
+  // Obtener bill por ID
+  BillModel? getBillById(String billId) {
+    return _billRepository.getBill(billId);
   }
 
   // Cambiar filtro de estado
@@ -578,7 +625,12 @@ class CajeroController extends ChangeNotifier {
   }
 
   // Procesar pago
-  Future<void> processPayment(PaymentModel payment) async {
+  Future<void> processPayment(
+    PaymentModel payment, {
+    bool keepBillOpen = false,
+    int? ordenIdOverride,
+    List<int>? ordenIdsOverride,
+  }) async {
     try {
       // Obtener formas de pago disponibles
       final formasPago = await _pagosService.getFormasPago();
@@ -603,6 +655,17 @@ class CajeroController extends ChangeNotifier {
           orElse: () => formasPago.isNotEmpty ? formasPago[0] : {'id': 2},
         );
         formaPagoId = forma['id'] as int;
+      } else if (tipoLower.contains('transfer') || tipoLower.contains('transferencia')) {
+        final forma = formasPago.firstWhere(
+          (f) =>
+              (f['nombre'] as String).toLowerCase().contains('transfer') ||
+              (f['nombre'] as String)
+                  .toLowerCase()
+                  .contains('transferencia'),
+          orElse: () => formasPago.isNotEmpty ? formasPago[0] : {'id': 3},
+        );
+        formaPagoId = forma['id'] as int;
+        print('💳 CajeroController: Forma de pago transferencia encontrada: ${forma['nombre']} (ID: $formaPagoId)');
       } else if (tipoLower.contains('mixed') || tipoLower.contains('mixto')) {
         // Para pagos mixtos, crear múltiples pagos o usar la primera forma disponible
         formaPagoId = formasPago.isNotEmpty ? formasPago[0]['id'] as int : 1;
@@ -612,23 +675,67 @@ class CajeroController extends ChangeNotifier {
         throw Exception('Forma de pago no encontrada: ${payment.type}');
       }
 
-      // Obtener el ordenId del bill
-      final bill = _billRepository.getBill(payment.billId);
-      if (bill == null) {
-        throw Exception('Bill no encontrado: ${payment.billId}');
-      }
+      // Obtener el ordenId - usar override si está disponible (para pagos mixtos)
+      int? ordenId;
+      List<int> ordenIdsCompletos;
+      BillModel? billForMeta;
+      
+      if (ordenIdOverride != null) {
+        // Usar el ordenId proporcionado (pago mixto)
+        ordenId = ordenIdOverride;
+        ordenIdsCompletos = (ordenIdsOverride != null && ordenIdsOverride.isNotEmpty) ? ordenIdsOverride : [ordenId];
+        print('💳 CajeroController: Usando ordenId override: $ordenId (pago mixto)');
+        // Intentar obtener bill para metadata (mesero/mesa)
+        billForMeta = _billRepository.getBill(payment.billId);
+      } else {
+        // Obtener el ordenId del bill (flujo normal)
+        print('💳 CajeroController: Buscando bill con ID: "${payment.billId}"');
+        print('💳 CajeroController: Bills disponibles: ${_billRepository.bills.map((b) => b.id).toList()}');
+        print('💳 CajeroController: keepBillOpen: $keepBillOpen');
+        
+        var bill = _billRepository.getBill(payment.billId);
+        
+        // Si el bill no está disponible pero keepBillOpen es true, podría ser un pago parcial
+        // Intentar recargar los bills desde el backend
+        if (bill == null && keepBillOpen) {
+          print('⚠️ CajeroController: Bill no encontrado pero keepBillOpen=true, recargando bills...');
+          try {
+            await _billRepository.loadBills();
+            bill = _billRepository.getBill(payment.billId);
+          } catch (e) {
+            print('❌ CajeroController: Error al recargar bills: $e');
+          }
+        }
+        
+        if (bill == null) {
+          print('❌ CajeroController: Bill no encontrado. BillId recibido: "${payment.billId}"');
+          print('❌ CajeroController: Tipo de pago: ${payment.type}, keepBillOpen: $keepBillOpen');
+          throw Exception('Bill no encontrado: ${payment.billId}');
+        }
+        print('✅ CajeroController: Bill encontrado. OrdenId: ${bill.ordenId}');
+        billForMeta = bill;
 
-      // El ordenId debe estar en el bill (se agrega cuando se crea la orden)
-      final ordenId = bill.ordenId;
-      if (ordenId == null) {
-        throw Exception(
-          'El bill no tiene un ordenId asociado. BillId: ${payment.billId}',
-        );
-      }
+        // El ordenId debe estar en el bill (se agrega cuando se crea la orden)
+        ordenId = bill.ordenId;
+        if (ordenId == null) {
+          throw Exception(
+            'El bill no tiene un ordenId asociado. BillId: ${payment.billId}',
+          );
+        }
 
-      // CRÍTICO: Extraer todos los ordenIds si es una cuenta agrupada
-      final ordenIdsCompletos = bill.ordenIdsFromBillIdInt;
+        // CRÍTICO: Extraer todos los ordenIds si es una cuenta agrupada
+        ordenIdsCompletos = bill.ordenIdsFromBillIdInt;
+      }
       final esCuentaAgrupada = ordenIdsCompletos.length > 1;
+
+      // ENRIQUECER pago con metadata para historial (mesero/orden/mesa) antes de guardar
+      final tableNumberForHistory = payment.tableNumber ?? billForMeta?.tableNumber;
+      final waiterNameForHistory = payment.waiterName ?? billForMeta?.waiterName;
+      final paymentEnriched = payment.copyWith(
+        ordenId: ordenId,
+        waiterName: waiterNameForHistory,
+        tableNumber: tableNumberForHistory,
+      );
 
       // Preparar datos del pago para el backend
       // Validar que los datos requeridos estén presentes
@@ -677,43 +784,57 @@ class CajeroController extends ChangeNotifier {
       }
 
       // Agregar referencia solo si tiene valor (no enviar null explícitamente)
-      // Para pagos con tarjeta, usar transactionId o authorizationCode como referencia
       String? referencia;
-      if (payment.type.toLowerCase().contains('card') ||
+      if (payment.type.toLowerCase().contains('transfer') ||
+          payment.type.toLowerCase().contains('transferencia')) {
+        // Transferencia: "Banco: X | Referencia: Y | Observaciones: Z" para ticket ordenado y sin duplicados
+        final parts = <String>[];
+        if (payment.bankName != null && payment.bankName!.trim().isNotEmpty) {
+          parts.add('Banco: ${payment.bankName!.trim()}');
+        }
+        if (payment.reference != null && payment.reference!.trim().isNotEmpty) {
+          parts.add('Referencia: ${payment.reference!.trim()}');
+        }
+        if (payment.notes != null && payment.notes!.trim().isNotEmpty) {
+          parts.add('Observaciones: ${payment.notes!.trim()}');
+        }
+        referencia = parts.isEmpty ? null : parts.join(' | ');
+      } else if (payment.type.toLowerCase().contains('card') ||
           payment.type.toLowerCase().contains('tarjeta')) {
-        // Para tarjeta, incluir información de débito/crédito
         final cardTypeLabel = payment.cardMethod == 'debito'
             ? 'Tarjeta Débito'
-            : (payment.cardMethod == 'credito' ? 'Tarjeta Crédito' : 'Tarjeta');
-
-        // Construir referencia con tipo de tarjeta y detalles de transacción
-        final List<String> referenciaParts = [cardTypeLabel];
-
-        if (payment.transactionId != null &&
-            payment.transactionId!.isNotEmpty) {
-          referenciaParts.add('TX: ${payment.transactionId}');
+            : (payment.cardMethod == 'credito'
+                ? 'Tarjeta Crédito'
+                : 'Tarjeta');
+        final ref = payment.reference?.trim() ?? '';
+        final hasRef = ref.isNotEmpty;
+        final hasTx = payment.transactionId != null &&
+            payment.transactionId!.isNotEmpty;
+        final hasAuth = payment.authorizationCode != null &&
+            payment.authorizationCode!.isNotEmpty;
+        final hasLast4 = payment.last4Digits != null &&
+            payment.last4Digits!.isNotEmpty;
+        if (hasTx || hasAuth || hasLast4) {
+          final list = <String>[cardTypeLabel];
+          if (hasTx) list.add('TX: ${payment.transactionId}');
+          if (hasAuth) list.add('Auth: ${payment.authorizationCode}');
+          if (hasLast4) list.add('****${payment.last4Digits}');
+          referencia = list.join(' - ');
+        } else if (hasRef) {
+          referencia = '$cardTypeLabel - Ref: $ref';
+        } else {
+          referencia = cardTypeLabel;
         }
-
-        if (payment.authorizationCode != null &&
-            payment.authorizationCode!.isNotEmpty) {
-          referenciaParts.add('Auth: ${payment.authorizationCode}');
-        }
-
-        if (payment.last4Digits != null && payment.last4Digits!.isNotEmpty) {
-          referenciaParts.add('****${payment.last4Digits}');
-        }
-
-        referencia = referenciaParts.join(' - ');
-
-        // Si no hay información de transacción, usar solo el tipo de tarjeta
-        if (referencia == cardTypeLabel &&
-            payment.notes != null &&
-            payment.notes!.isNotEmpty) {
-          referencia = '$cardTypeLabel - ${payment.notes}';
+        if (payment.notes != null && payment.notes!.trim().isNotEmpty) {
+          referencia = '$referencia | Observaciones: ${payment.notes!.trim()}';
         }
       } else {
-        // Para efectivo, usar notes si está disponible
-        referencia = payment.notes;
+        // Efectivo u otros: solo texto; el backend añade "Observaciones:"
+        referencia = payment.reference?.trim().isNotEmpty == true
+            ? payment.reference!.trim()
+            : payment.notes?.trim().isNotEmpty == true
+                ? payment.notes!.trim()
+                : null;
       }
 
       if (referencia != null &&
@@ -741,35 +862,89 @@ class CajeroController extends ChangeNotifier {
       }
 
       // Actualizar repositorio local
-      _paymentRepository.addPayment(payment);
-      _billRepository.removeBill(payment.billId);
+      _paymentRepository.addPayment(paymentEnriched);
+      
+      // Solo eliminar el bill si keepBillOpen es false (último pago)
+      if (!keepBillOpen) {
+        print('💳 CajeroController: Eliminando bill ${payment.billId} (último pago)');
+        _billRepository.removeBill(payment.billId);
 
-      // Actualizar _bills inmediatamente después de eliminar
-      // NO llamar a loadBills() aquí porque puede eliminar bills pendientes que aún deberían estar visibles
-      // Solo actualizar la lista local de bills pendientes
-      _bills = _billRepository.pendingBills;
+        // Actualizar _bills inmediatamente después de eliminar
+        // NO llamar a loadBills() aquí porque puede eliminar bills pendientes que aún deberían estar visibles
+        // Solo actualizar la lista local de bills pendientes
+        _bills = _billRepository.pendingBills;
+      } else {
+        print('💳 CajeroController: Manteniendo bill ${payment.billId} abierto (pago parcial)');
+      }
       notifyListeners();
 
       // Emitir evento Socket para notificar al admin en tiempo real
       final socketService = SocketService();
-      socketService.emit('pago.creado', {
+      final eventoPago = <String, dynamic>{
         'ordenId': ordenId,
         'ordenIds': esCuentaAgrupada
             ? ordenIdsCompletos
             : null, // Incluir todos los ordenIds si es cuenta agrupada
-        'billId': payment.billId,
-        'monto': payment.totalAmount,
-        'metodoPago': payment.type,
-        'propina': payment.tipAmount ?? 0,
-        'efectivoRecibido': payment.cashReceived,
-        'cambio': payment.change ?? 0,
-        'cajero': payment.cashierName,
-        'timestamp': payment.timestamp.toIso8601String(),
-        'tableNumber': payment.tableNumber,
-      });
+        'billId': paymentEnriched.billId,
+        'monto': paymentEnriched.totalAmount,
+        'metodoPago': paymentEnriched.type,
+        'propina': paymentEnriched.tipAmount ?? 0,
+        'efectivoRecibido': paymentEnriched.cashReceived,
+        'cambio': paymentEnriched.change ?? 0,
+        'cajero': paymentEnriched.cashierName,
+        'timestamp': paymentEnriched.timestamp.toIso8601String(),
+        'tableNumber': paymentEnriched.tableNumber,
+        'waiterName': paymentEnriched.waiterName,
+      };
+      
+      // Agregar información específica para transferencia
+      if (paymentEnriched.type == PaymentType.transfer) {
+        eventoPago['banco'] = paymentEnriched.bankName;
+        eventoPago['referencia'] = paymentEnriched.reference;
+        eventoPago['tipoPago'] = 'transferencia';
+      }
+      
+      // Agregar información específica para tarjeta
+      if (paymentEnriched.type == PaymentType.card) {
+        eventoPago['terminal'] = paymentEnriched.terminal;
+        eventoPago['metodoTarjeta'] = paymentEnriched.cardMethod;
+        eventoPago['transactionId'] = paymentEnriched.transactionId;
+        eventoPago['authorizationCode'] = paymentEnriched.authorizationCode;
+        eventoPago['last4Digits'] = paymentEnriched.last4Digits;
+        eventoPago['tipoPago'] = 'tarjeta';
+      }
+      
+      // Agregar información específica para efectivo
+      if (paymentEnriched.type == PaymentType.cash) {
+        eventoPago['tipoPago'] = 'efectivo';
+      }
+      
+      // Agregar información específica para mixto
+      // Nota: Los pagos mixtos se procesan como pagos individuales (cash, card, transfer)
+      // pero se marca con keepBillOpen para indicar que es parte de un pago mixto
+      if (keepBillOpen) {
+        eventoPago['esPagoParcial'] = true;
+        eventoPago['tipoPago'] = 'mixto_parcial';
+      } else {
+        // Si es el último pago de un mixto, verificar si hay más pagos en el repositorio
+        final pagosDelBill = _paymentRepository.payments.where((p) => p.billId == payment.billId).toList();
+        if (pagosDelBill.length > 1) {
+          eventoPago['esPagoMixto'] = true;
+          eventoPago['tipoPago'] = 'mixto';
+          eventoPago['totalPagos'] = pagosDelBill.length;
+        }
+      }
+      
+      // Agregar notas si existen
+      if (paymentEnriched.notes != null && paymentEnriched.notes!.isNotEmpty) {
+        eventoPago['notas'] = paymentEnriched.notes;
+      }
+      
+      socketService.emit('pago.creado', eventoPago);
       print(
         '📢 Cajero: Evento pago.creado emitido para orden $ordenId${esCuentaAgrupada ? ' (cuenta agrupada: ${ordenIdsCompletos.length} órdenes)' : ''}',
       );
+      print('📢 Cajero: Datos del evento: $eventoPago');
 
       notifyListeners();
       // Los pagos ya están guardados en la BD a través del servicio
@@ -870,6 +1045,7 @@ class CajeroController extends ChangeNotifier {
     String? nota,
   }) async {
     try {
+      print('💰 Cajero: Iniciando apertura de caja con efectivo inicial: $efectivoInicial');
       final cierresService = CierresService();
       // Crear un cierre con solo efectivo inicial (apertura)
       final apertura = CashCloseModel(
@@ -893,15 +1069,62 @@ class CajeroController extends ChangeNotifier {
         efectivoInicial: efectivoInicial,
       );
 
+      print('💰 Cajero: Enviando apertura al backend...');
       // Enviar al backend (el backend manejará que es una apertura si efectivoFinal es igual a efectivoInicial y totalPagos es 0)
-      await cierresService.crearCierreCaja(apertura);
+      final aperturaCreada = await cierresService.crearCierreCaja(apertura);
+      print('💰 Cajero: Apertura creada exitosamente - ID: ${aperturaCreada.id}');
 
-      // Recargar cierres para obtener la apertura actualizada
+      // Agregar la apertura localmente inmediatamente para que se muestre
+      _cashClosures.insert(0, aperturaCreada);
+      print('💰 Cajero: Apertura agregada localmente. Total cierres: ${_cashClosures.length}');
+      
+      // Notificar inmediatamente para actualizar la UI
+      notifyListeners();
+
+      // Recargar cierres para asegurar sincronización con el backend
+      print('💰 Cajero: Recargando cierres desde el backend...');
       await loadCashClosures();
+      print('💰 Cajero: Cierres recargados. Verificando apertura...');
+      
+      final aperturaEncontrada = getTodayCashOpening();
+      if (aperturaEncontrada != null) {
+        print('✅ Cajero: Apertura encontrada después de recargar - ID: ${aperturaEncontrada.id}');
+      } else {
+        print('⚠️ Cajero: No se encontró apertura después de recargar');
+      }
 
       notifyListeners();
     } catch (e) {
-      print('Error al registrar apertura de caja: $e');
+      print('❌ Error al registrar apertura de caja: $e');
+      rethrow;
+    }
+  }
+
+  // Cancelar apertura de caja
+  Future<void> cancelCashOpening(String aperturaId) async {
+    try {
+      // Buscar la apertura en la lista
+      final aperturaIndex = _cashClosures.indexWhere((c) => c.id == aperturaId);
+      if (aperturaIndex == -1) {
+        throw Exception('Apertura no encontrada');
+      }
+
+      final apertura = _cashClosures[aperturaIndex];
+      
+      // Verificar que sea una apertura (no un cierre con ventas)
+      if (apertura.totalNeto > 0 || apertura.efectivoInicial == 0) {
+        throw Exception('No se puede cancelar: no es una apertura válida');
+      }
+
+      // Eliminar de la lista local
+      _cashClosures.removeAt(aperturaIndex);
+      notifyListeners();
+
+      // TODO: Si el backend tiene un endpoint para eliminar aperturas, llamarlo aquí
+      // Por ahora solo lo eliminamos localmente
+      print('✅ Apertura cancelada localmente: $aperturaId');
+    } catch (e) {
+      print('❌ Error al cancelar apertura: $e');
       rethrow;
     }
   }
@@ -1001,16 +1224,21 @@ class CajeroController extends ChangeNotifier {
 
     double totalCash = 0;
     double totalCard = 0;
+    double totalTransfer = 0;
     double totalTips = 0;
 
     for (final payment in todayPayments) {
-      if (payment.type == PaymentType.cash) {
+      final paymentTypeLower = payment.type.toLowerCase();
+      if (paymentTypeLower.contains('cash') || paymentTypeLower.contains('efectivo')) {
         totalCash += payment.totalAmount;
         totalTips += payment.tipAmount ?? 0;
-      } else if (payment.type == PaymentType.card) {
+      } else if (paymentTypeLower.contains('card') || paymentTypeLower.contains('tarjeta')) {
         totalCard += payment.totalAmount;
         totalTips += payment.tipAmount ?? 0;
-      } else if (payment.type == PaymentType.mixed) {
+      } else if (paymentTypeLower.contains('transfer') || paymentTypeLower.contains('transferencia')) {
+        totalTransfer += payment.totalAmount;
+        totalTips += payment.tipAmount ?? 0;
+      } else if (paymentTypeLower.contains('mixed') || paymentTypeLower.contains('mixto')) {
         totalCash += payment.cashApplied ?? 0;
         totalCard += payment.totalAmount - (payment.cashApplied ?? 0);
         totalTips += payment.tipAmount ?? 0;
@@ -1019,9 +1247,11 @@ class CajeroController extends ChangeNotifier {
 
     return {
       'totalCash': totalCash,
-      'totalCard': totalCard,
+      'totalCard': totalCard + totalTransfer,
+      'cardOnly': totalCard,
+      'totalTransfer': totalTransfer,
       'totalTips': totalTips,
-      'total': totalCash + totalCard,
+      'total': totalCash + totalCard + totalTransfer,
     };
   }
 
@@ -1033,6 +1263,190 @@ class CajeroController extends ChangeNotifier {
   // Obtener facturas pagadas
   List<BillModel> getPaidBills() {
     return _bills.where((bill) => bill.status == BillStatus.paid).toList();
+  }
+
+  // Obtener historial completo de cobros del día (desde última apertura de caja)
+  Map<String, dynamic> getCollectionHistory({String? periodo}) {
+    final now = DateTime.now();
+    DateTime fechaInicio;
+    DateTime fechaFin = now;
+
+    // Determinar rango de fechas según el período
+    switch (periodo) {
+      case 'ayer':
+        fechaInicio = DateTime(now.year, now.month, now.day - 1);
+        fechaFin = DateTime(now.year, now.month, now.day);
+        break;
+      case 'semana':
+        fechaInicio = now.subtract(const Duration(days: 7));
+        break;
+      case 'mes':
+        fechaInicio = DateTime(now.year, now.month - 1, now.day);
+        break;
+      case 'hoy':
+      default:
+        fechaInicio = DateTime(now.year, now.month, now.day);
+        // Para "hoy", buscar la última apertura de caja del día
+        final apertura = getTodayCashOpening();
+        if (apertura != null && apertura.fecha.isAfter(fechaInicio)) {
+          fechaInicio = apertura.fecha;
+        }
+        // Buscar el último cierre de caja con ventas del día
+        final cierresConVentas = _cashClosures.where((cierre) {
+          final esHoy =
+              cierre.fecha.year == now.year &&
+              cierre.fecha.month == now.month &&
+              cierre.fecha.day == now.day;
+          final esCierreConVentas = cierre.totalNeto > 0;
+          return esHoy && esCierreConVentas;
+        }).toList();
+        if (cierresConVentas.isNotEmpty) {
+          cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
+          final ultimoCierre = cierresConVentas.first;
+          if (ultimoCierre.fecha.isAfter(fechaInicio)) {
+            fechaInicio = ultimoCierre.fecha;
+          }
+        }
+        break;
+    }
+
+    // Filtrar pagos según el rango de fechas
+    final filteredPayments = _payments.where((payment) {
+      return payment.timestamp.isAfter(fechaInicio) && 
+             payment.timestamp.isBefore(fechaFin.add(const Duration(days: 1)));
+    }).toList();
+
+    // Agrupar por método de pago
+    final efectivoPayments = <Map<String, dynamic>>[];
+    final tarjetaPayments = <Map<String, dynamic>>[];
+    final transferenciaPayments = <Map<String, dynamic>>[];
+    final mixtoPayments = <Map<String, dynamic>>[];
+    final tipsDetails = <Map<String, dynamic>>[];
+
+    double totalEfectivo = 0;
+    double totalTarjeta = 0;
+    double totalTransferencia = 0;
+    double totalMixto = 0;
+    double totalTips = 0;
+
+    for (final payment in filteredPayments) {
+      // NO depender del BillRepository (después de cobrar, el bill se elimina)
+      // Usar metadata guardada en el PaymentModel; si falta, fallback al bill (compatibilidad)
+      final bill = _billRepository.getBill(payment.billId);
+      final ordenIdValue = payment.ordenId ?? bill?.ordenId;
+      final ordenIdStr = ordenIdValue != null ? 'ORD-${ordenIdValue.toString().padLeft(6, '0')}' : 'N/A';
+      final waiterName = payment.waiterName ?? bill?.waiterName ?? 'N/A';
+      final mesaInfo = payment.tableNumber != null
+          ? 'Mesa ${payment.tableNumber}'
+          : (bill?.isTakeaway == true ? 'Para llevar' : 'N/A');
+
+      final paymentInfo = {
+        'id': payment.id,
+        'ordenId': ordenIdStr,
+        'mesa': mesaInfo,
+        'monto': payment.totalAmount,
+        'fecha': payment.timestamp,
+        'waiterName': waiterName,
+      };
+
+      final paymentTypeLower = payment.type.toLowerCase();
+      if (paymentTypeLower.contains('cash') || paymentTypeLower.contains('efectivo')) {
+        efectivoPayments.add(paymentInfo);
+        totalEfectivo += payment.totalAmount;
+        if (payment.tipAmount != null && payment.tipAmount! > 0) {
+          totalTips += payment.tipAmount!;
+          tipsDetails.add({
+            'ordenId': ordenIdStr,
+            'mesa': mesaInfo,
+            'metodo': 'Efectivo',
+            'monto': payment.tipAmount!,
+            'waiterName': waiterName,
+            'fecha': payment.timestamp,
+          });
+        }
+      } else if (paymentTypeLower.contains('card') || paymentTypeLower.contains('tarjeta')) {
+        final cardType = payment.cardMethod == 'credito' ? 'Tarjeta Crédito' : 'Tarjeta Débito';
+        tarjetaPayments.add({
+          ...paymentInfo,
+          'tipoTarjeta': cardType,
+        });
+        totalTarjeta += payment.totalAmount;
+        if (payment.tipAmount != null && payment.tipAmount! > 0) {
+          totalTips += payment.tipAmount!;
+          tipsDetails.add({
+            'ordenId': ordenIdStr,
+            'mesa': mesaInfo,
+            'metodo': cardType,
+            'monto': payment.tipAmount!,
+            'waiterName': waiterName,
+            'fecha': payment.timestamp,
+          });
+        }
+      } else if (paymentTypeLower.contains('transfer') || paymentTypeLower.contains('transferencia')) {
+        transferenciaPayments.add({
+          ...paymentInfo,
+          'banco': payment.bankName,
+          'referencia': payment.reference,
+        });
+        totalTransferencia += payment.totalAmount;
+        if (payment.tipAmount != null && payment.tipAmount! > 0) {
+          totalTips += payment.tipAmount!;
+          tipsDetails.add({
+            'ordenId': ordenIdStr,
+            'mesa': mesaInfo,
+            'metodo': 'Transferencia',
+            'monto': payment.tipAmount!,
+            'waiterName': waiterName,
+            'fecha': payment.timestamp,
+          });
+        }
+      } else if (paymentTypeLower.contains('mixed') || paymentTypeLower.contains('mixto')) {
+        mixtoPayments.add({
+          ...paymentInfo,
+          'efectivo': payment.cashApplied ?? 0,
+          'otro': payment.totalAmount - (payment.cashApplied ?? 0),
+        });
+        totalMixto += payment.totalAmount;
+        if (payment.tipAmount != null && payment.tipAmount! > 0) {
+          totalTips += payment.tipAmount!;
+          tipsDetails.add({
+            'ordenId': ordenIdStr,
+            'mesa': mesaInfo,
+            'metodo': 'Pago Mixto',
+            'monto': payment.tipAmount!,
+            'waiterName': waiterName,
+            'fecha': payment.timestamp,
+          });
+        }
+      }
+    }
+
+    // Ordenar propinas por fecha (más reciente primero)
+    tipsDetails.sort((a, b) => (b['fecha'] as DateTime).compareTo(a['fecha'] as DateTime));
+
+    return {
+      'efectivo': {
+        'total': totalEfectivo,
+        'pagos': efectivoPayments,
+      },
+      'tarjeta': {
+        'total': totalTarjeta,
+        'pagos': tarjetaPayments,
+      },
+      'transferencia': {
+        'total': totalTransferencia,
+        'pagos': transferenciaPayments,
+      },
+      'mixto': {
+        'total': totalMixto,
+        'pagos': mixtoPayments,
+      },
+      'propinas': {
+        'total': totalTips,
+        'detalles': tipsDetails,
+      },
+      'totalGeneral': totalEfectivo + totalTarjeta + totalTransferencia + totalMixto,
+    };
   }
 
   // Obtener cierres pendientes
@@ -1047,23 +1461,40 @@ class CajeroController extends ChangeNotifier {
   }
 
   // Obtener la apertura de caja del día actual
-  // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo) y numeroOrdenes = 0
+  // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo)
+  // Nota: No usamos pedidosParaLlevar porque se mapea incorrectamente desde el backend (usa numeroOrdenes)
   CashCloseModel? getTodayCashOpening() {
-    final hoy = DateTime.now();
+    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
+    final hoy = date_utils.AppDateUtils.now();
+    print('🔍 Cajero.getTodayCashOpening: Buscando apertura para hoy ${hoy.year}-${hoy.month}-${hoy.day} (hora: ${hoy.hour}:${hoy.minute})');
+    print('🔍 Cajero.getTodayCashOpening: Total de cierres cargados: ${_cashClosures.length}');
+    
+    // Buscar aperturas del día de hoy o del día anterior (para manejar zonas horarias)
+    // Una apertura es válida si fue creada hoy o si fue creada ayer después de las 6pm
+    final inicioHoy = DateTime(hoy.year, hoy.month, hoy.day);
+    final ayer = hoy.subtract(const Duration(days: 1));
+    final inicioAyer18h = DateTime(ayer.year, ayer.month, ayer.day, 18); // 6pm de ayer
+    
     final aperturas = _cashClosures.where((cierre) {
-      // Verificar que sea del día de hoy
+      // Verificar que sea del día de hoy (comparar año, mes y día)
       final esHoy =
           cierre.fecha.year == hoy.year &&
           cierre.fecha.month == hoy.month &&
           cierre.fecha.day == hoy.day;
+      
+      // También considerar como "hoy" si fue creado ayer después de las 6pm
+      // (esto maneja el caso de zonas horarias y cierres nocturnos)
+      final esAyerNoche = cierre.fecha.isAfter(inicioAyer18h) && cierre.fecha.isBefore(inicioHoy);
 
       // Verificar que sea una apertura: tiene efectivo inicial y no tiene ventas significativas
+      // No usamos pedidosParaLlevar porque se mapea con numeroOrdenes del backend
       final esApertura =
           cierre.efectivoInicial > 0 &&
-          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0) &&
-          cierre.pedidosParaLlevar == 0;
+          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0);
 
-      return esHoy && esApertura;
+      print('🔍 Cajero.getTodayCashOpening: Cierre ${cierre.id} - Fecha: ${cierre.fecha.year}-${cierre.fecha.month}-${cierre.fecha.day} ${cierre.fecha.hour}:${cierre.fecha.minute}, esHoy: $esHoy, esAyerNoche: $esAyerNoche, efectivoInicial: ${cierre.efectivoInicial}, totalNeto: ${cierre.totalNeto}, esApertura: $esApertura');
+
+      return (esHoy || esAyerNoche) && esApertura;
     }).toList();
 
     // Retornar la más reciente (última apertura del día)
@@ -1078,7 +1509,8 @@ class CajeroController extends ChangeNotifier {
     final apertura = getTodayCashOpening();
     if (apertura == null) return false; // No hay apertura, caja cerrada
 
-    final hoy = DateTime.now();
+    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
+    final hoy = date_utils.AppDateUtils.now();
     // Buscar cierres de caja del día con ventas significativas (totalNeto > 0)
     // que sean más recientes que la apertura
     final cierresConVentas = _cashClosures.where((cierre) {
@@ -1179,6 +1611,8 @@ class CajeroController extends ChangeNotifier {
         return Colors.blue;
       case PaymentType.mixed:
         return Colors.purple;
+      case PaymentType.transfer:
+        return Colors.teal;
       default:
         return Colors.grey;
     }

@@ -533,16 +533,19 @@ class MenuItem {
 
 // Modelo para tamaños de menú
 class MenuSize {
+  final int? id;
   final String name;
   final double price;
 
   MenuSize({
+    this.id,
     required this.name,
     required this.price,
   });
 
   factory MenuSize.fromJson(Map<String, dynamic> json) {
     return MenuSize(
+      id: (json['id'] as num?)?.toInt(),
       name: (json['name'] ?? json['nombre'] ?? json['etiqueta'] ?? '').toString(),
       price: (json['price'] ?? json['precio'] ?? 0).toDouble(),
     );
@@ -550,6 +553,7 @@ class MenuSize {
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'name': name,
       'price': price,
     };
@@ -567,6 +571,7 @@ class RecipeIngredient {
   final bool isOptional; // Si el ingrediente es opcional (ej: cilantro, cebolla)
   final String? category;
   final String? inventoryItemId;
+  final int? sizeId; // Tamaño específico del producto (si aplica)
 
   RecipeIngredient({
     required this.id,
@@ -578,6 +583,7 @@ class RecipeIngredient {
     this.isOptional = false, // Por defecto, todos los ingredientes son obligatorios
     this.category,
     this.inventoryItemId,
+    this.sizeId,
   });
 
   factory RecipeIngredient.fromJson(Map<String, dynamic> json) {
@@ -595,6 +601,12 @@ class RecipeIngredient {
         return normalized == 'true' || normalized == '1';
       }
       return fallback;
+    }
+
+    int? _parseInt(dynamic value) {
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
     }
 
     return RecipeIngredient(
@@ -623,6 +635,12 @@ class RecipeIngredient {
               json['inventarioItemId'] ??
               json['inventario_item_id'])
           ?.toString(),
+      sizeId: _parseInt(
+        json['sizeId'] ??
+            json['tamanoId'] ??
+            json['productoTamanoId'] ??
+            json['producto_tamano_id'],
+      ),
     );
   }
 
@@ -637,6 +655,7 @@ class RecipeIngredient {
       'isOptional': isOptional,
       'category': category,
       'inventoryItemId': inventoryItemId,
+      'sizeId': sizeId,
     };
   }
 
@@ -650,6 +669,7 @@ class RecipeIngredient {
     bool? isOptional,
     String? category,
     String? inventoryItemId,
+    int? sizeId,
   }) {
     return RecipeIngredient(
       id: id ?? this.id,
@@ -661,6 +681,7 @@ class RecipeIngredient {
       isOptional: isOptional ?? this.isOptional,
       category: category ?? this.category,
       inventoryItemId: inventoryItemId ?? this.inventoryItemId,
+      sizeId: sizeId ?? this.sizeId,
     );
   }
 }

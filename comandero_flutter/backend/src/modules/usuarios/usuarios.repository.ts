@@ -123,29 +123,51 @@ export const crearUsuario = async ({
   actualizadoPor?: number | null;
 }) => {
   return withTransaction(async (conn) => {
+    // Construir la consulta dinámicamente para incluir password si está disponible
+    const fields = [
+      'nombre',
+      'username',
+      'telefono',
+      'password_hash',
+      'activo',
+      'password_actualizada_en',
+      'password_actualizada_por_usuario_id'
+    ];
+    
+    const values = [
+      ':nombre',
+      ':username',
+      ':telefono',
+      ':passwordHash',
+      ':activo',
+      'NOW()',
+      ':actualizadoPor'
+    ];
+    
+    const params: Record<string, unknown> = {
+      nombre,
+      username,
+      telefono: telefono ?? null,
+      passwordHash,
+      activo: activo ? 1 : 0,
+      actualizadoPor: actualizadoPor ?? null
+    };
+    
+    // Incluir password si passwordPlain está definido
+    if (passwordPlain !== undefined && passwordPlain !== null) {
+      fields.push('password');
+      values.push(':passwordPlain');
+      params.passwordPlain = passwordPlain;
+    }
+    
     const [result] = await conn.execute<ResultSetHeader>(
       `
       INSERT INTO usuario (
-        nombre,
-        username,
-        telefono,
-        password_hash,
-        password,
-        activo,
-        password_actualizada_en,
-        password_actualizada_por_usuario_id
+        ${fields.join(', ')}
       )
-      VALUES (:nombre, :username, :telefono, :passwordHash, :passwordPlain, :activo, NOW(), :actualizadoPor)
+      VALUES (${values.join(', ')})
       `,
-      {
-        nombre,
-        username,
-        telefono: telefono ?? null,
-        passwordHash,
-        passwordPlain: passwordPlain ?? null,
-        activo: activo ? 1 : 0,
-        actualizadoPor: actualizadoPor ?? null
-      }
+      params
     );
 
     const usuarioId = result.insertId;
@@ -263,6 +285,25 @@ export const eliminarUsuario = async (id: number) => {
     `,
     { id }
   );
+};
+
+export const eliminarUsuarioPermanente = async (id: number) => {
+  await withTransaction(async (conn) => {
+    await conn.execute(
+      `
+      DELETE FROM usuario_rol
+      WHERE usuario_id = :id
+      `,
+      { id }
+    );
+    await conn.execute(
+      `
+      DELETE FROM usuario
+      WHERE id = :id
+      `,
+      { id }
+    );
+  });
 };
 
 export const obtenerRolesDisponibles = async () => {

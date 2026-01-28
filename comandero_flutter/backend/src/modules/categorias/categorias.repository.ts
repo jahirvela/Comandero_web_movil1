@@ -15,6 +15,7 @@ export const listarCategorias = async () => {
     `
     SELECT *
     FROM categoria
+    WHERE activo = 1
     ORDER BY nombre
     `
   );

@@ -1,0 +1,24 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: Cuenta agrupada (2 órdenes): ORD-000070, ORD-000071
+Fecha: 16/01/26, 1:03 p.m.
+Mesa: 2
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  1  Agua de Horchata (Chica)     20.00
+  1  Agua de Jamaica Casera...    22.00
+------------------------------------------
+Subtotal:                    $   42.00
+E1TOTAL:                      $   42.00
+E0==========================================
+a1
+k3Cuenta agrupada (2 órdenes): ORD-000070, ORD-000071
+
+Cuenta agrupada (2 órdenes): ORD-000070, ORD-000071
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

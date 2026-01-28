@@ -1,0 +1,18 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000121
+Fecha: 27/01/26, 5:29 p.m.
+Mesa: 1
+Mesero: Jahir
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  2x  Consome (Mediano)
+  4x  Taco de Barbacoa Suave
+  2x  Agua de Horchata (Grande)
+------------------------------------------
+a1
+ORD-000121
+27/01/26, 5:29 p.m.
+a0i

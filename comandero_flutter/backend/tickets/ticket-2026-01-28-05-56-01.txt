@@ -1,0 +1,17 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000130
+Fecha: 27/01/26, 11:56 p.m.
+Mesa: 3
+Mesero: David Morales
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  2x  Taco de Barbacoa Suave
+     NOTA: con cebolla
+------------------------------------------
+a1
+ORD-000130
+27/01/26, 11:56 p.m.
+a0i

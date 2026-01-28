@@ -1,6 +1,8 @@
 import {
   listarMesas,
   obtenerMesaPorId,
+  obtenerMesaPorCodigo,
+  obtenerMesaPorCodigoIncluyendoInactivos,
   crearMesa,
   actualizarMesa,
   eliminarMesa,
@@ -13,7 +15,7 @@ import type {
   CambiarEstadoMesaInput,
   CrearMesaInput
 } from './mesas.schemas.js';
-import { notFound } from '../../utils/http-error.js';
+import { conflict, notFound } from '../../utils/http-error.js';
 import { emitTableCreated, emitTableUpdated, emitTableDeleted } from '../../realtime/events.js';
 
 export const obtenerMesas = () => listarMesas();
@@ -27,6 +29,24 @@ export const obtenerMesa = async (id: number) => {
 };
 
 export const crearNuevaMesa = async (input: CrearMesaInput) => {
+  const existente = await obtenerMesaPorCodigoIncluyendoInactivos(input.codigo);
+  if (existente) {
+    if (existente.activo) {
+      throw conflict(`Ya existe una mesa con el número ${input.codigo}`);
+    }
+    // Reactivar mesa existente inactiva reutilizando el código
+    await actualizarMesa(existente.id, {
+      codigo: input.codigo,
+      nombre: input.nombre ?? existente.nombre,
+      capacidad: input.capacidad ?? existente.capacidad,
+      ubicacion: input.ubicacion ?? existente.ubicacion,
+      estadoMesaId: input.estadoMesaId ?? existente.estadoMesaId,
+      activo: true
+    });
+    const mesaReactivada = await obtenerMesa(existente.id);
+    emitTableCreated(mesaReactivada);
+    return mesaReactivada;
+  }
   const id = await crearMesa({
     codigo: input.codigo,
     nombre: input.nombre ?? null,

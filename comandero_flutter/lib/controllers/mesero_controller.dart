@@ -11,6 +11,8 @@ import '../services/productos_service.dart';
 import '../services/categorias_service.dart';
 import '../services/socket_service.dart';
 import '../services/alertas_service.dart';
+import '../services/kitchen_alerts_service.dart';
+import '../models/kitchen_alert.dart';
 import '../utils/date_utils.dart' as date_utils;
 
 class MeseroController extends ChangeNotifier {
@@ -53,6 +55,23 @@ class MeseroController extends ChangeNotifier {
   // Estado de la vista actual
   String _currentView = 'floor';
 
+  // Nombre del usuario logueado (para enviar al cajero y mostrar en historial)
+  String? _loggedUserName;
+
+  /// Fijar usuario logueado sin notificar (evita loops en build)
+  void setLoggedUserName(String userName) {
+    if (userName.isEmpty) return;
+    if (_loggedUserName == userName) return;
+    _loggedUserName = userName;
+  }
+
+  // Estado para cuenta dividida por persona (por mesa)
+  final Map<String, bool> _isDividedAccountModeByTable = {}; // tableId -> si está en modo cuenta dividida
+  final Map<String, Map<String, List<String>>> _personCartItemsByTable = {}; // tableId -> {personId -> [cartItemId, ...]}
+  final Map<String, Map<String, String>> _personNamesByTable = {}; // tableId -> {personId -> nombre}
+  final Map<String, int> _nextPersonIdByTable = {}; // tableId -> siguiente ID de persona
+  final Map<String, String?> _selectedPersonIdByTable = {}; // tableId -> ID de persona seleccionada
+
   // Información del cliente para pedidos "Para llevar"
   String? _takeawayCustomerName;
   String? _takeawayCustomerPhone;
@@ -73,6 +92,28 @@ class MeseroController extends ChangeNotifier {
       (_selectedTable == null && _takeawayCustomerName != null);
   List<ProductModel> get products => _products;
   List<Map<String, dynamic>> get categories => _categories;
+  bool get isDividedAccountMode {
+    if (_selectedTable == null) return false;
+    return _isDividedAccountModeByTable[_selectedTable!.id.toString()] ?? false;
+  }
+  
+  Map<String, String> get personNames {
+    if (_selectedTable == null) return {};
+    final tableId = _selectedTable!.id.toString();
+    return Map.unmodifiable(_personNamesByTable[tableId] ?? {});
+  }
+  
+  Map<String, List<String>> get personCartItems {
+    if (_selectedTable == null) return {};
+    final tableId = _selectedTable!.id.toString();
+    return Map.unmodifiable(_personCartItemsByTable[tableId] ?? {});
+  }
+  
+  String? get selectedPersonId {
+    if (_selectedTable == null) return null;
+    final tableId = _selectedTable!.id.toString();
+    return _selectedPersonIdByTable[tableId];
+  }
 
   // Obtener carrito de la mesa actual o del modo takeaway
   List<CartItem> getCurrentCart() {
@@ -91,6 +132,20 @@ class MeseroController extends ChangeNotifier {
   // Obtener total de artículos en todos los carritos
   int get totalCartItems {
     return _tableOrders.values.fold(0, (total, items) => total + items.length);
+  }
+
+  // Verificar si una persona tiene una cuenta cerrada (bill pendiente)
+  bool isPersonAccountClosed(int tableId, String personId) {
+    final bills = _billRepository.bills.where((bill) => 
+      bill.tableNumber == tableId && 
+      bill.isDividedAccount && 
+      bill.personAccounts != null &&
+      bill.status == BillStatus.pending
+    ).toList();
+    
+    return bills.any((bill) {
+      return bill.personAccounts!.any((personAccount) => personAccount.id == personId);
+    });
   }
 
   MeseroController({required BillRepository billRepository})
@@ -131,9 +186,23 @@ class MeseroController extends ChangeNotifier {
       // 5. Socket.IO ya se conecta en AuthController.login()
       // NO conectar aquí para evitar conexiones duplicadas
       // Configurar listeners después de un breve delay para asegurar que el socket esté conectado
-      Future.delayed(const Duration(milliseconds: 1000), () {
-        _setupSocketListeners();
-        print('✅ Mesero: Listeners de Socket.IO configurados');
+      // Esperar más tiempo y verificar conexión antes de configurar listeners
+      Future.delayed(const Duration(milliseconds: 2000), () {
+        final socketService = SocketService();
+        if (socketService.isConnected) {
+          _setupSocketListeners();
+          print('✅ Mesero: Listeners de Socket.IO configurados');
+        } else {
+          print('⚠️ Mesero: Socket.IO no está conectado aún, reintentando...');
+          socketService.connect().then((_) {
+            Future.delayed(const Duration(milliseconds: 500), () {
+              _setupSocketListeners();
+              print('✅ Mesero: Listeners de Socket.IO configurados después de reconectar');
+            });
+          }).catchError((e) {
+            print('❌ Mesero: Error al conectar Socket.IO: $e');
+          });
+        }
       });
 
       // 6. Cargar flags y notificaciones en background (no crítico)
@@ -509,6 +578,26 @@ class MeseroController extends ChangeNotifier {
   // NUEVO SISTEMA SIMPLIFICADO: Backend es fuente de verdad
   void _setupSocketListeners() {
     final socketService = SocketService();
+    
+    // Verificar que Socket.IO esté conectado antes de configurar listeners
+    if (!socketService.isConnected) {
+      print('⚠️ Mesero: Socket.IO no está conectado, esperando conexión...');
+      // Esperar hasta 5 segundos para que se conecte
+      int attempts = 0;
+      while (attempts < 10 && !socketService.isConnected) {
+        Future.delayed(const Duration(milliseconds: 500), () {});
+        attempts++;
+      }
+      if (!socketService.isConnected) {
+        print('❌ Mesero: Socket.IO no se conectó después de esperar, intentando reconectar...');
+        socketService.connect().catchError((e) {
+          print('❌ Mesero: Error al reconectar Socket.IO: $e');
+        });
+        return; // Los listeners se configurarán cuando se conecte
+      }
+    }
+    
+    print('✅ Mesero: Socket.IO está conectado, configurando listeners...');
 
     // Estados FINALIZADOS que deben remover la orden del historial
     final estadosFinalizados = [
@@ -546,6 +635,19 @@ class MeseroController extends ChangeNotifier {
             for (var order in orders) {
               if (order['ordenId'] == ordenId) {
                 order['status'] = estadoNombre;
+                final tiempoEstimado =
+                    data['tiempoEstimadoPreparacion'] ??
+                    data['estimatedTime'];
+                if (tiempoEstimado != null) {
+                  final tiempoAnterior = order['estimatedTime'] as int?;
+                  order['estimatedTime'] = tiempoEstimado;
+                  
+                  // Si el tiempo cambió, mostrar notificación
+                  if (tiempoAnterior != null && tiempoAnterior != tiempoEstimado) {
+                    // La notificación se mostrará más abajo en el código
+                    print('⏱️ Mesero: Tiempo estimado actualizado para orden $ordenId: $tiempoAnterior -> $tiempoEstimado min');
+                  }
+                }
                 break;
               }
             }
@@ -593,6 +695,36 @@ class MeseroController extends ChangeNotifier {
           }
 
           notifyListeners();
+
+          // Verificar si el tiempo estimado cambió y mostrar notificación
+          final tiempoEstimadoNuevo =
+              data['tiempoEstimadoPreparacion'] ??
+              data['estimatedTime'];
+          if (tiempoEstimadoNuevo != null) {
+            // Buscar el tiempo anterior en el historial
+            int? tiempoAnterior;
+            for (var orders in _tableOrderHistory.values) {
+              final orderFound = orders.firstWhere(
+                (o) => o['ordenId'] == ordenId,
+                orElse: () => <String, dynamic>{},
+              );
+              if (orderFound.isNotEmpty) {
+                tiempoAnterior = orderFound['estimatedTime'] as int?;
+                break;
+              }
+            }
+            
+            // Si el tiempo cambió, mostrar notificación
+            if (tiempoAnterior != null && tiempoAnterior != tiempoEstimadoNuevo) {
+              final mesaInfo = mesaCodigo != null ? 'Mesa $mesaCodigo' : 'Para llevar';
+              addNotification(
+                '⏱️ Tiempo estimado actualizado',
+                'Orden $ordenId ($mesaInfo): ${tiempoAnterior} min → ${tiempoEstimadoNuevo} min',
+                ordenId: ordenId,
+                tipo: 'info',
+              );
+            }
+          }
 
           // Mostrar notificación para estados importantes
           final esEstadoImportante =
@@ -1058,6 +1190,34 @@ class MeseroController extends ChangeNotifier {
         print('Stack trace: $stackTrace');
       }
     });
+
+    // Escuchar alertas nuevas de cocina (nuevo sistema) para mostrarlas al mesero
+    final kitchenAlertsService = KitchenAlertsService(socketService);
+    kitchenAlertsService.listenNewAlerts((KitchenAlert alert) {
+      try {
+        final mesaCodigo = alert.mesaCodigo ?? alert.tableId?.toString();
+        final createdByRole = alert.createdByRole ?? 'mesero';
+        final createdByUsername = alert.createdByUsername;
+        final senderLabel = (createdByUsername != null &&
+                createdByUsername.isNotEmpty)
+            ? '$createdByUsername ($createdByRole)'
+            : createdByRole;
+
+        final titulo = '🚨 Alerta a cocina';
+        final mensaje = mesaCodigo != null && mesaCodigo.isNotEmpty
+            ? 'Mesa $mesaCodigo - ${alert.message} ($senderLabel)'
+            : '${alert.message} ($senderLabel)';
+
+        addNotification(
+          titulo,
+          mensaje,
+          ordenId: alert.orderId,
+          tipo: 'kitchen-alert-${alert.type.name}',
+        );
+      } catch (e) {
+        print('❌ Mesero: Error al procesar kitchen:alert:new: $e');
+      }
+    });
   }
 
   // Mapa para guardar ordenId por mesa
@@ -1181,17 +1341,15 @@ class MeseroController extends ChangeNotifier {
     // Mapear nombre de categoría a ID de categoría
     int categoryId = _getCategoryIdFromName(categoriaNombre);
 
+    final tamanosRaw = data['tamanos'] as List<dynamic>? ?? [];
+    final tamanos = tamanosRaw
+        .map((t) => ProductSize.fromJson(t as Map<String, dynamic>))
+        .toList();
+
     // Obtener precio (puede venir de tamanos si tiene tamaños)
     double price = 0.0;
-    if (data['tamanos'] != null && (data['tamanos'] as List).isNotEmpty) {
-      // Si tiene tamaños, usar el precio del primer tamaño
-      final tamanos = data['tamanos'] as List;
-      if (tamanos.isNotEmpty) {
-        price =
-            (tamanos[0]['precio'] as num?)?.toDouble() ??
-            (data['precio'] as num?)?.toDouble() ??
-            0.0;
-      }
+    if (tamanos.isNotEmpty) {
+      price = tamanos.first.price;
     } else {
       price = (data['precio'] as num?)?.toDouble() ?? 0.0;
     }
@@ -1207,6 +1365,8 @@ class MeseroController extends ChangeNotifier {
       hot: data['picante'] as bool? ?? false,
       extras: null,
       customizations: null,
+      sizes: tamanos,
+      hasSizes: tamanos.isNotEmpty,
     );
   }
 
@@ -1239,7 +1399,7 @@ class MeseroController extends ChangeNotifier {
   }
 
   // Seleccionar mesa
-  void selectTable(TableModel table) {
+  void selectTable(TableModel table) async {
     _selectedTable = table;
     setCurrentView('table');
 
@@ -1247,7 +1407,80 @@ class MeseroController extends ChangeNotifier {
     notifyListeners();
 
     // Cargar historial de forma asíncrona respetando los flags
-    _loadHistoryForTable(table.id);
+    await _loadHistoryForTable(table.id);
+    
+    // Después de cargar el historial, verificar si hay órdenes en modo dividido
+    // y restaurar el modo dividido si es necesario
+    final tableId = table.id.toString();
+    final history = _tableOrderHistory[tableId] ?? [];
+    final hasDividedOrders = history.any((order) => order['isDividedAccount'] == true);
+    
+    if (hasDividedOrders && !(_isDividedAccountModeByTable[tableId] ?? false)) {
+      // Restaurar modo dividido si hay órdenes en modo dividido
+      _isDividedAccountModeByTable[tableId] = true;
+      
+      // Restaurar información de personas desde el historial
+      final personNamesFromHistory = <String, String>{};
+      final personAssignmentsFromHistory = <String, List<String>>{};
+      
+      for (var order in history) {
+        if (order['isDividedAccount'] == true) {
+          final personNames = order['personNames'] as Map<String, dynamic>?;
+          final personAssignments = order['personAssignments'] as Map<String, dynamic>?;
+          
+          if (personNames != null) {
+            personNames.forEach((personId, name) {
+              if (!personNamesFromHistory.containsKey(personId)) {
+                personNamesFromHistory[personId] = name.toString();
+              }
+            });
+          }
+          
+          if (personAssignments != null) {
+            personAssignments.forEach((personId, items) {
+              if (items is List) {
+                if (!personAssignmentsFromHistory.containsKey(personId)) {
+                  personAssignmentsFromHistory[personId] = [];
+                }
+                personAssignmentsFromHistory[personId]!.addAll(
+                  items.map((item) => item.toString())
+                );
+              }
+            });
+          }
+        }
+      }
+      
+      // Restaurar nombres de personas si existen
+      if (personNamesFromHistory.isNotEmpty) {
+        _personNamesByTable[tableId] = personNamesFromHistory;
+        
+        // Inicializar listas de items por persona si no existen
+        if (!_personCartItemsByTable.containsKey(tableId)) {
+          _personCartItemsByTable[tableId] = {};
+        }
+        
+        // Restaurar el siguiente ID de persona
+        if (personNamesFromHistory.isNotEmpty) {
+          final maxId = personNamesFromHistory.keys
+              .map((id) {
+                final match = RegExp(r'person_(\d+)').firstMatch(id);
+                return match != null ? int.tryParse(match.group(1) ?? '0') ?? 0 : 0;
+              })
+              .fold(0, (max, id) => id > max ? id : max);
+          _nextPersonIdByTable[tableId] = maxId + 1;
+        }
+        
+        // Seleccionar la primera persona si no hay ninguna seleccionada
+        if (_selectedPersonIdByTable[tableId] == null && personNamesFromHistory.isNotEmpty) {
+          _selectedPersonIdByTable[tableId] = personNamesFromHistory.keys.first;
+        }
+      }
+      
+      // Redirigir a vista de cuenta dividida
+      setCurrentView('divided_account');
+      notifyListeners();
+    }
   }
 
   // Seleccionar vista de Para Llevar
@@ -1387,10 +1620,27 @@ class MeseroController extends ChangeNotifier {
       return;
     }
 
+    final cartItemId = DateTime.now().millisecondsSinceEpoch.toString();
+    final cartItemCustomizations = Map<String, dynamic>.from(customizations ?? {});
+
+    // Si está en modo dividida y hay una persona seleccionada, asignar automáticamente
+    if (isDividedAccountMode && selectedPersonId != null) {
+      final tableId = _selectedTable!.id.toString();
+      cartItemCustomizations['personId'] = selectedPersonId;
+      // Agregar a la lista de items de la persona
+      if (!_personCartItemsByTable.containsKey(tableId)) {
+        _personCartItemsByTable[tableId] = {};
+      }
+      if (!_personCartItemsByTable[tableId]!.containsKey(selectedPersonId)) {
+        _personCartItemsByTable[tableId]![selectedPersonId!] = [];
+      }
+      _personCartItemsByTable[tableId]![selectedPersonId!]!.add(cartItemId);
+    }
+
     final cartItem = CartItem(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: cartItemId,
       product: product,
-      customizations: customizations ?? {},
+      customizations: cartItemCustomizations,
       tableId: cartKey,
     );
 
@@ -1411,11 +1661,195 @@ class MeseroController extends ChangeNotifier {
     if (cartKey == null) return;
 
     if (_tableOrders[cartKey] != null) {
+      // Si está en modo dividida, remover también de asignaciones de personas
+      if (isDividedAccountMode && _selectedTable != null) {
+        final tableId = _selectedTable!.id.toString();
+        final personCartItems = _personCartItemsByTable[tableId];
+        if (personCartItems != null) {
+          for (var personItems in personCartItems.values) {
+            personItems.remove(itemId);
+          }
+        }
+      }
+      
       _tableOrders[cartKey] = _tableOrders[cartKey]!
           .where((item) => item.id != itemId)
           .toList();
       notifyListeners();
     }
+  }
+
+  // ========== MÉTODOS PARA CUENTA DIVIDIDA POR PERSONA ==========
+  
+  /// Activar/desactivar modo cuenta dividida (por mesa)
+  void setDividedAccountMode(bool enabled) {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    
+    if ((_isDividedAccountModeByTable[tableId] ?? false) == enabled) return;
+    _isDividedAccountModeByTable[tableId] = enabled;
+    
+    if (!enabled) {
+      // Al desactivar, limpiar asignaciones de personas para esta mesa
+      _personCartItemsByTable.remove(tableId);
+      _personNamesByTable.remove(tableId);
+      _selectedPersonIdByTable.remove(tableId);
+      _nextPersonIdByTable.remove(tableId);
+      // Remover personId de todos los items del carrito de esta mesa
+      final cart = getCurrentCart();
+      for (var item in cart) {
+        item.customizations.remove('personId');
+      }
+    } else {
+      // Al activar, crear primera persona por defecto si no existe ninguna
+      if (!_personNamesByTable.containsKey(tableId)) {
+        _personNamesByTable[tableId] = {};
+        _personCartItemsByTable[tableId] = {};
+        _nextPersonIdByTable[tableId] = 1;
+      }
+      final personNames = _personNamesByTable[tableId]!;
+      if (personNames.isEmpty) {
+        final nextId = _nextPersonIdByTable[tableId]!;
+        final firstPersonId = 'person_$nextId';
+        personNames[firstPersonId] = 'Persona 1';
+        _personCartItemsByTable[tableId]![firstPersonId] = [];
+        _nextPersonIdByTable[tableId] = nextId + 1;
+      }
+    }
+    
+    notifyListeners();
+  }
+  
+  /// Resetear modo dividido para una mesa (cuando se cierra la cuenta completamente)
+  void resetDividedAccountModeForTable(String tableId) {
+    _isDividedAccountModeByTable.remove(tableId);
+    _personCartItemsByTable.remove(tableId);
+    _personNamesByTable.remove(tableId);
+    _selectedPersonIdByTable.remove(tableId);
+    _nextPersonIdByTable.remove(tableId);
+    notifyListeners();
+  }
+
+  /// Agregar una nueva persona (para la mesa actual)
+  String addPerson({String? name}) {
+    if (_selectedTable == null) throw Exception('No hay mesa seleccionada');
+    final tableId = _selectedTable!.id.toString();
+    
+    if (!_nextPersonIdByTable.containsKey(tableId)) {
+      _nextPersonIdByTable[tableId] = 1;
+    }
+    if (!_personNamesByTable.containsKey(tableId)) {
+      _personNamesByTable[tableId] = {};
+      _personCartItemsByTable[tableId] = {};
+    }
+    
+    final nextId = _nextPersonIdByTable[tableId]!;
+    final personId = 'person_$nextId';
+    _nextPersonIdByTable[tableId] = nextId + 1;
+    
+    final personNames = _personNamesByTable[tableId]!;
+    personNames[personId] = name ?? 'Persona ${personNames.length + 1}';
+    _personCartItemsByTable[tableId]![personId] = [];
+    notifyListeners();
+    return personId;
+  }
+
+  /// Eliminar una persona (solo si no tiene productos asignados)
+  void removePerson(String personId) {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    final personCartItems = _personCartItemsByTable[tableId];
+    
+    if (personCartItems?[personId]?.isNotEmpty ?? false) {
+      throw Exception('No se puede eliminar una persona que tiene productos asignados');
+    }
+    _personNamesByTable[tableId]?.remove(personId);
+    _personCartItemsByTable[tableId]?.remove(personId);
+    notifyListeners();
+  }
+
+  /// Renombrar una persona
+  void renamePerson(String personId, String newName) {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    final personNames = _personNamesByTable[tableId];
+    
+    if (personNames == null || !personNames.containsKey(personId)) {
+      throw Exception('Persona no encontrada: $personId');
+    }
+    personNames[personId] = newName.trim().isEmpty 
+        ? 'Persona ${personNames.keys.toList().indexOf(personId) + 1}'
+        : newName.trim();
+    notifyListeners();
+  }
+
+  /// Asignar un producto del carrito a una persona
+  void assignCartItemToPerson(String cartItemId, String personId) {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    final personNames = _personNamesByTable[tableId];
+    final personCartItems = _personCartItemsByTable[tableId];
+    
+    if (personNames == null || !personNames.containsKey(personId)) {
+      throw Exception('Persona no encontrada: $personId');
+    }
+    
+    // Remover de otras personas
+    if (personCartItems != null) {
+      for (var personItems in personCartItems.values) {
+        personItems.remove(cartItemId);
+      }
+      
+      // Agregar a la persona seleccionada
+      if (!personCartItems[personId]!.contains(cartItemId)) {
+        personCartItems[personId]!.add(cartItemId);
+      }
+    }
+    
+    // Actualizar customizations del CartItem
+    final cart = getCurrentCart();
+    final item = cart.firstWhere((item) => item.id == cartItemId, orElse: () => cart.first);
+    item.customizations['personId'] = personId;
+    
+    notifyListeners();
+  }
+
+  /// Obtener el personId asignado a un cartItem
+  String? getPersonIdForCartItem(String cartItemId) {
+    final cart = getCurrentCart();
+    final item = cart.firstWhere((item) => item.id == cartItemId, orElse: () => cart.first);
+    return item.customizations['personId'] as String?;
+  }
+
+  /// Obtener productos asignados a una persona
+  List<CartItem> getItemsForPerson(String personId) {
+    if (_selectedTable == null) return [];
+    final tableId = _selectedTable!.id.toString();
+    final cart = getCurrentCart();
+    final itemIds = _personCartItemsByTable[tableId]?[personId] ?? [];
+    return cart.where((item) => itemIds.contains(item.id)).toList();
+  }
+
+  /// Obtener productos sin asignar (solo en modo dividida)
+  List<CartItem> getUnassignedItems() {
+    if (!isDividedAccountMode) return [];
+    final cart = getCurrentCart();
+    return cart.where((item) => item.customizations['personId'] == null).toList();
+  }
+
+  /// Establecer la persona seleccionada para agregar productos
+  void setSelectedPersonId(String? personId) {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    
+    if (personId != null) {
+      final personNames = _personNamesByTable[tableId];
+      if (personNames == null || !personNames.containsKey(personId)) {
+        throw Exception('Persona no encontrada: $personId');
+      }
+    }
+    _selectedPersonIdByTable[tableId] = personId;
+    notifyListeners();
   }
 
   // Limpiar carrito de la mesa actual
@@ -1431,6 +1865,14 @@ class MeseroController extends ChangeNotifier {
     if (cartKey == null) return;
 
     _tableOrders[cartKey] = [];
+    
+    // Si está en modo dividida, limpiar también asignaciones de personas para esta mesa
+    if (isDividedAccountMode && _selectedTable != null) {
+      final tableId = _selectedTable!.id.toString();
+      _personCartItemsByTable[tableId]?.clear();
+      // No limpiar _personNamesByTable ni _nextPersonIdByTable porque las personas pueden seguir existiendo
+    }
+    
     notifyListeners();
   }
 
@@ -1454,7 +1896,7 @@ class MeseroController extends ChangeNotifier {
     final cart = getCurrentCart();
     return cart.fold(0.0, (total, item) {
       final qty = (item.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
-      double itemTotal = item.product.price * qty;
+      double itemTotal = _getBaseUnitPrice(item) * qty;
 
       // Agregar precio de extras si existen
       final extraPrices =
@@ -1475,6 +1917,22 @@ class MeseroController extends ChangeNotifier {
 
       return total + itemTotal;
     });
+  }
+
+  double _getBaseUnitPrice(CartItem item) {
+    final sizePrice = item.customizations['sizePrice'] ??
+        item.customizations['unitPrice'];
+    if (sizePrice is num) {
+      return sizePrice.toDouble();
+    }
+    return item.product.price;
+  }
+
+  String _formatProductNameWithSize(String name, String? size) {
+    if (size == null || size.isEmpty) {
+      return name;
+    }
+    return '$name ($size)';
   }
 
   // Obtener estadísticas de ocupación
@@ -1891,6 +2349,7 @@ class MeseroController extends ChangeNotifier {
         final ordenData = orden as Map<String, dynamic>;
         final ordenId = ordenData['id'] as int?;
         if (ordenId == null) continue;
+        int? tiempoEstimado;
 
         final createdAt = ordenData['creadoEn'] as String?;
         DateTime fecha;
@@ -1910,10 +2369,14 @@ class MeseroController extends ChangeNotifier {
           final ordenDetalle = await _ordenesService.getOrden(ordenId);
           if (ordenDetalle != null) {
             final items = ordenDetalle['items'] as List<dynamic>? ?? [];
+            tiempoEstimado = ordenDetalle['tiempoEstimadoPreparacion'] as int? ??
+                ordenDetalle['estimatedTime'] as int?;
             itemsNombres = items.map((item) {
               final nombre = item['productoNombre'] as String? ?? 'Producto';
+              final tamanoEtiqueta = item['productoTamanoEtiqueta'] as String?;
               final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
-              return cantidad > 1 ? '$nombre (x$cantidad)' : nombre;
+              final nombreConTamano = _formatProductNameWithSize(nombre, tamanoEtiqueta);
+              return cantidad > 1 ? '${cantidad}x $nombreConTamano' : nombreConTamano;
             }).toList();
           }
         } catch (e) {
@@ -1933,6 +2396,9 @@ class MeseroController extends ChangeNotifier {
           'customerName': ordenData['clienteNombre'] as String? ?? 'Cliente',
           'customerPhone': ordenData['clienteTelefono'] as String? ?? '',
           'tableNumber': null,
+          'estimatedTime': tiempoEstimado ??
+              ordenData['tiempoEstimadoPreparacion'] ??
+              ordenData['estimatedTime'],
         });
       }
 
@@ -2217,7 +2683,9 @@ class MeseroController extends ChangeNotifier {
           final itemData = item as Map<String, dynamic>;
           final cantidad = itemData['cantidad'] as int? ?? 1;
           final nombre = itemData['productoNombre'] as String? ?? 'Producto';
-          return '${cantidad}x $nombre';
+          final tamanoEtiqueta = itemData['productoTamanoEtiqueta'] as String?;
+          final nombreConTamano = _formatProductNameWithSize(nombre, tamanoEtiqueta);
+          return '${cantidad}x $nombreConTamano';
         }).toList();
 
         final createdAt = ordenDetalle['creadoEn'] as String?;
@@ -2244,6 +2712,8 @@ class MeseroController extends ChangeNotifier {
           'customerName': ordenDetalle['clienteNombre'] as String?,
           'customerPhone': ordenDetalle['clienteTelefono'] as String?,
           'tableNumber': ordenDetalle['mesaCodigo'] as String?,
+          'estimatedTime': ordenDetalle['tiempoEstimadoPreparacion'] ??
+              ordenDetalle['estimatedTime'],
           'notes': ordenDetalle['notas'] as String?,
         });
       }
@@ -2340,6 +2810,58 @@ class MeseroController extends ChangeNotifier {
       print(
         '✅ Historial mesa $tableId cargado: ${history.length} órdenes activas',
       );
+
+      // Verificar si hay órdenes en modo dividido y restaurar el modo si es necesario
+      final hasDividedOrders = history.any((order) => order['isDividedAccount'] == true);
+      if (hasDividedOrders && !(_isDividedAccountModeByTable[tableKey] ?? false)) {
+        // Restaurar modo dividido si hay órdenes en modo dividido
+        _isDividedAccountModeByTable[tableKey] = true;
+        
+        // Restaurar información de personas desde el historial
+        final personNamesFromHistory = <String, String>{};
+        
+        for (var order in history) {
+          if (order['isDividedAccount'] == true) {
+            final personNames = order['personNames'] as Map<String, dynamic>?;
+            
+            if (personNames != null) {
+              personNames.forEach((personId, name) {
+                if (!personNamesFromHistory.containsKey(personId)) {
+                  personNamesFromHistory[personId] = name.toString();
+                }
+              });
+            }
+          }
+        }
+        
+        // Restaurar nombres de personas si existen
+        if (personNamesFromHistory.isNotEmpty) {
+          _personNamesByTable[tableKey] = personNamesFromHistory;
+          
+          // Inicializar listas de items por persona si no existen
+          if (!_personCartItemsByTable.containsKey(tableKey)) {
+            _personCartItemsByTable[tableKey] = {};
+          }
+          
+          // Restaurar el siguiente ID de persona
+          if (personNamesFromHistory.isNotEmpty) {
+            final maxId = personNamesFromHistory.keys
+                .map((id) {
+                  final match = RegExp(r'person_(\d+)').firstMatch(id);
+                  return match != null ? int.tryParse(match.group(1) ?? '0') ?? 0 : 0;
+                })
+                .fold(0, (max, id) => id > max ? id : max);
+            _nextPersonIdByTable[tableKey] = maxId + 1;
+          }
+          
+          // Seleccionar la primera persona si no hay ninguna seleccionada
+          if (_selectedPersonIdByTable[tableKey] == null && personNamesFromHistory.isNotEmpty) {
+            _selectedPersonIdByTable[tableKey] = personNamesFromHistory.keys.first;
+          }
+        }
+        
+        print('✅ Modo dividido restaurado para mesa $tableId');
+      }
 
       notifyListeners();
     } catch (e) {
@@ -2500,6 +3022,7 @@ class MeseroController extends ChangeNotifier {
       splitCount = (firstOrder['splitCount'] as int?) ?? 1;
       waiterNotes = firstOrder['notes'] as String?;
 
+      String? waiterNameFromOrder;
       for (var order in allOrders) {
         final ordenIdActual = order['ordenId'] as int?;
         if (ordenIdActual != null) {
@@ -2507,6 +3030,13 @@ class MeseroController extends ChangeNotifier {
           try {
             final ordenData = await _ordenesService.getOrden(ordenIdActual);
             if (ordenData != null) {
+              // Obtener el nombre del mesero desde la orden (solo la primera vez)
+              if (waiterNameFromOrder == null) {
+                waiterNameFromOrder = ordenData['creadoPorNombre'] as String? ??
+                    ordenData['creadoPorUsuarioNombre'] as String? ??
+                    ordenData['waiterName'] as String?;
+              }
+              
               // Acumular descuentos y propinas de todas las órdenes
               final descuentoOrden =
                   (ordenData['descuentoTotal'] as num?)?.toDouble() ?? 0.0;
@@ -2559,9 +3089,16 @@ class MeseroController extends ChangeNotifier {
                 
                 totalConsumo += totalLinea;
 
+                final productoNombre =
+                    item['productoNombre'] as String? ?? 'Producto';
+                final tamanoEtiqueta =
+                    item['productoTamanoEtiqueta'] as String?;
                 allBillItems.add(
                   BillItem(
-                    name: item['productoNombre'] as String? ?? 'Producto',
+                    name: _formatProductNameWithSize(
+                      productoNombre,
+                      tamanoEtiqueta,
+                    ),
                     quantity: cantidad,
                     price: precioUnitario,
                     total: totalLinea,
@@ -2660,6 +3197,107 @@ class MeseroController extends ChangeNotifier {
           _processingTakeawayOrder = false;
           return;
         }
+
+        // Verificar si es cuenta dividida (buscar en la primera orden del historial)
+        final firstOrderTakeaway = allOrders.isNotEmpty ? allOrders.first : null;
+        final isDividedAccountTakeaway = firstOrderTakeaway?['isDividedAccount'] as bool? ?? false;
+        Map<String, dynamic>? personAssignmentsFromHistoryTakeaway;
+        Map<String, String>? personNamesFromHistoryTakeaway;
+        
+        if (isDividedAccountTakeaway && firstOrderTakeaway != null) {
+          personAssignmentsFromHistoryTakeaway = firstOrderTakeaway['personAssignments'] as Map<String, dynamic>?;
+          personNamesFromHistoryTakeaway = (firstOrderTakeaway['personNames'] as Map?)?.map((k, v) => MapEntry(k.toString(), v.toString()));
+        }
+
+        // Si es cuenta dividida, crear estructura por persona (misma lógica que en sendToCashier)
+        List<PersonAccount>? personAccountsTakeaway;
+        if (isDividedAccountTakeaway && personAssignmentsFromHistoryTakeaway != null && personNamesFromHistoryTakeaway != null) {
+          personAccountsTakeaway = [];
+          
+          final itemsByPersonTakeaway = <String, List<BillItem>>{};
+          
+          for (var personId in personNamesFromHistoryTakeaway.keys) {
+            itemsByPersonTakeaway[personId] = [];
+            final assignedItems = personAssignmentsFromHistoryTakeaway[personId] as List<dynamic>? ?? [];
+            
+            for (var assignedItemKey in assignedItems) {
+              final itemKeyParts = assignedItemKey.toString().split('|');
+              if (itemKeyParts.length >= 2) {
+                final itemName = itemKeyParts[0];
+                final itemQty = int.tryParse(itemKeyParts[1]) ?? 1;
+                
+                final matchingItem = allBillItems.firstWhere(
+                  (item) => item.name == itemName && item.quantity == itemQty,
+                  orElse: () => allBillItems.first,
+                );
+                
+                itemsByPersonTakeaway[personId]!.add(matchingItem.copyWith(personId: personId));
+              }
+            }
+            
+            final personSubtotal = itemsByPersonTakeaway[personId]!.fold<double>(
+              0.0,
+              (sum, item) => sum + item.total,
+            );
+            
+            final personDiscount = descuentoTotal > 0
+                ? (personSubtotal / totalConsumo) * descuentoTotal
+                : 0.0;
+            
+            final personTip = propinaSugerida > 0
+                ? (personSubtotal / totalConsumo) * propinaSugerida
+                : 0.0;
+            
+            final personTotal = personSubtotal - personDiscount + personTip;
+            
+            personAccountsTakeaway.add(PersonAccount(
+              id: personId,
+              name: personNamesFromHistoryTakeaway[personId] ?? 'Persona',
+              items: itemsByPersonTakeaway[personId]!,
+              subtotal: personSubtotal,
+              tax: 0.0,
+              discount: personDiscount,
+              total: personTotal,
+            ));
+          }
+          
+          // Items sin asignar
+          final assignedItemNamesTakeaway = personAssignmentsFromHistoryTakeaway.values
+              .expand((list) => (list as List<dynamic>).map((e) => e.toString()))
+              .toSet();
+          
+          final unassignedItemsTakeaway = <BillItem>[];
+          for (var item in allBillItems) {
+            final itemKey = '${item.name}|${item.quantity}';
+            if (!assignedItemNamesTakeaway.contains(itemKey)) {
+              unassignedItemsTakeaway.add(item);
+            }
+          }
+          
+          if (unassignedItemsTakeaway.isNotEmpty) {
+            final unassignedSubtotal = unassignedItemsTakeaway.fold<double>(
+              0.0,
+              (sum, item) => sum + item.total,
+            );
+            final unassignedDiscount = descuentoTotal > 0
+                ? (unassignedSubtotal / totalConsumo) * descuentoTotal
+                : 0.0;
+            final unassignedTip = propinaSugerida > 0
+                ? (unassignedSubtotal / totalConsumo) * propinaSugerida
+                : 0.0;
+            final unassignedTotal = unassignedSubtotal - unassignedDiscount + unassignedTip;
+            
+            personAccountsTakeaway.add(PersonAccount(
+              id: 'unassigned',
+              name: 'Sin asignar',
+              items: unassignedItemsTakeaway,
+              subtotal: unassignedSubtotal,
+              tax: 0.0,
+              discount: unassignedDiscount,
+              total: unassignedTotal,
+            ));
+          }
+        }
         
         final bill = BillModel(
           id: billId,
@@ -2673,12 +3311,14 @@ class MeseroController extends ChangeNotifier {
           splitCount: splitCount,
           status: BillStatus.pending,
           createdAt: fechaCreacionMasAntigua ?? date_utils.AppDateUtils.now(),
-          waiterName: 'Mesero',
+          waiterName: _loggedUserName ?? waiterNameFromOrder ?? 'Mesero',
           waiterNotes: waiterNotes,
           requestedByWaiter: true,
           isTakeaway: true,
           customerName: clienteNombre,
           customerPhone: clienteTelefono,
+          isDividedAccount: isDividedAccountTakeaway,
+          personAccounts: personAccountsTakeaway,
         );
 
         _billRepository.addBill(bill);
@@ -2718,6 +3358,9 @@ class MeseroController extends ChangeNotifier {
           'waiterNotes': waiterNotes,
           'multipleOrders':
               ordenIdsList.length > 1, // Flag para indicar múltiples órdenes
+          'isDividedAccount': isDividedAccountTakeaway,
+          if (personAccountsTakeaway != null)
+            'personAccounts': personAccountsTakeaway.map((pa) => pa.toJson()).toList(),
         });
 
         print(
@@ -2883,6 +3526,7 @@ class MeseroController extends ChangeNotifier {
         '📋 Mesero: Datos del historial - Descuento: $descuentoHistorial, Propina: $propinaHistorial, SplitCount: $splitCountHistorial',
       );
 
+      String? waiterNameFromOrder;
       for (var order in allOrders) {
         final ordenId = order['ordenId'] as int?;
         if (ordenId != null) {
@@ -2890,6 +3534,13 @@ class MeseroController extends ChangeNotifier {
           try {
             final ordenData = await _ordenesService.getOrden(ordenId);
             if (ordenData != null) {
+              // Obtener el nombre del mesero desde la orden (solo la primera vez)
+              if (waiterNameFromOrder == null) {
+                waiterNameFromOrder = ordenData['creadoPorNombre'] as String? ??
+                    ordenData['creadoPorUsuarioNombre'] as String? ??
+                    ordenData['waiterName'] as String?;
+              }
+              
               final items = ordenData['items'] as List<dynamic>? ?? [];
               for (var item in items) {
                 final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
@@ -2908,9 +3559,11 @@ class MeseroController extends ChangeNotifier {
                 
                 totalConsumo += totalLinea;
 
+                final productoNombre = item['productoNombre'] as String? ?? 'Producto';
+                final tamanoEtiqueta = (item['productoTamanoEtiqueta'] ?? item['tamanoEtiqueta'] ?? item['tamanoNombre'] ?? item['sizeName'] ?? item['size'])?.toString();
                 allBillItems.add(
                   BillItem(
-                    name: item['productoNombre'] as String? ?? 'Producto',
+                    name: _formatProductNameWithSize(productoNombre, tamanoEtiqueta),
                     quantity: cantidad,
                     price: precioUnitario,
                     total: totalLinea,
@@ -2981,24 +3634,180 @@ class MeseroController extends ChangeNotifier {
         final subtotalConDescuento = totalConsumo - descuentoHistorial;
         final totalFinal = subtotalConDescuento + propinaHistorial;
 
+        // Verificar si es cuenta dividida (buscar en TODAS las órdenes del historial)
+        final isDividedAccount = allOrders.any((order) => order['isDividedAccount'] == true);
+        Map<String, dynamic>? personAssignmentsFromHistory;
+        Map<String, String>? personNamesFromHistory;
+        
+        if (isDividedAccount) {
+          // Consolidar personAssignments y personNames de TODAS las órdenes
+          personAssignmentsFromHistory = <String, dynamic>{};
+          personNamesFromHistory = <String, String>{};
+          
+          for (var order in allOrders) {
+            if (order['isDividedAccount'] == true) {
+              final orderPersonAssignments = order['personAssignments'] as Map<String, dynamic>?;
+              final orderPersonNames = (order['personNames'] as Map?)?.map((k, v) => MapEntry(k.toString(), v.toString()));
+              
+              // Agregar nombres de personas (sin duplicar)
+              if (orderPersonNames != null) {
+                personNamesFromHistory.addAll(orderPersonNames);
+              }
+              
+              // Consolidar asignaciones de items por persona
+              if (orderPersonAssignments != null) {
+                for (var personId in orderPersonAssignments.keys) {
+                  if (!personAssignmentsFromHistory.containsKey(personId)) {
+                    personAssignmentsFromHistory[personId] = <dynamic>[];
+                  }
+                  final assignedItems = orderPersonAssignments[personId] as List<dynamic>? ?? [];
+                  (personAssignmentsFromHistory[personId] as List).addAll(assignedItems);
+                }
+              }
+            }
+          }
+          
+          // Si no hay personNames en el historial, usar los del estado actual de la mesa
+          if (personNamesFromHistory.isEmpty && _selectedTable != null) {
+            final tableId = _selectedTable!.id.toString();
+            personNamesFromHistory = Map.from(_personNamesByTable[tableId] ?? {});
+          }
+        }
+
+        // Si es cuenta dividida, crear estructura por persona
+        List<PersonAccount>? personAccounts;
+        if (isDividedAccount && personAssignmentsFromHistory != null && personNamesFromHistory != null) {
+          personAccounts = [];
+          
+          // Crear un mapa de items por persona basado en personAssignments
+          final itemsByPerson = <String, List<BillItem>>{};
+          
+          // Crear un mapa de items disponibles con contadores para evitar duplicados
+          // Usar un mapa que cuenta cuántas veces aparece cada item
+          final itemCountMap = <String, List<BillItem>>{};
+          for (var item in allBillItems) {
+            final itemKey = '${item.name}|${item.quantity}';
+            if (!itemCountMap.containsKey(itemKey)) {
+              itemCountMap[itemKey] = [];
+            }
+            itemCountMap[itemKey]!.add(item);
+          }
+          
+          // Para cada persona, buscar sus items en allBillItems
+          for (var personId in personNamesFromHistory.keys) {
+            itemsByPerson[personId] = [];
+            final assignedItems = personAssignmentsFromHistory[personId] as List<dynamic>? ?? [];
+            
+            // Para cada item asignado a esta persona, buscarlo en itemCountMap
+            for (var assignedItemKey in assignedItems) {
+              final itemKey = assignedItemKey.toString();
+              
+              // Buscar el item en itemCountMap
+              if (itemCountMap.containsKey(itemKey) && itemCountMap[itemKey]!.isNotEmpty) {
+                // Tomar el primer item disponible y removerlo para evitar duplicados
+                final matchingItem = itemCountMap[itemKey]!.removeAt(0);
+                
+                // Crear BillItem con personId
+                itemsByPerson[personId]!.add(matchingItem.copyWith(personId: personId));
+              } else {
+                // Si no se encuentra, intentar parsear el key para buscar por nombre y cantidad
+                final itemKeyParts = itemKey.split('|');
+                if (itemKeyParts.length >= 2) {
+                  final itemName = itemKeyParts[0];
+                  final itemQty = int.tryParse(itemKeyParts[1]) ?? 1;
+                  final searchKey = '$itemName|$itemQty';
+                  
+                  if (itemCountMap.containsKey(searchKey) && itemCountMap[searchKey]!.isNotEmpty) {
+                    final matchingItem = itemCountMap[searchKey]!.removeAt(0);
+                    itemsByPerson[personId]!.add(matchingItem.copyWith(personId: personId));
+                  } else {
+                    print('⚠️ No se encontró item "$itemKey" en allBillItems para $personId');
+                  }
+                }
+              }
+            }
+            
+            // Calcular subtotales por persona
+            final personSubtotal = itemsByPerson[personId]!.fold<double>(
+              0.0,
+              (sum, item) => sum + item.total,
+            );
+            
+            // Aplicar descuento proporcional por persona (si hay descuento)
+            final personDiscount = descuentoHistorial > 0
+                ? (personSubtotal / totalConsumo) * descuentoHistorial
+                : 0.0;
+            
+            // Aplicar propina proporcional por persona (si hay propina)
+            final personTip = propinaHistorial > 0
+                ? (personSubtotal / totalConsumo) * propinaHistorial
+                : 0.0;
+            
+            final personTotal = personSubtotal - personDiscount + personTip;
+            
+            personAccounts.add(PersonAccount(
+              id: personId,
+              name: personNamesFromHistory[personId] ?? 'Persona',
+              items: itemsByPerson[personId]!,
+              subtotal: personSubtotal,
+              tax: 0.0,
+              discount: personDiscount,
+              total: personTotal,
+            ));
+          }
+          
+          // Agregar items sin asignar (si los hay) a una persona "Sin asignar"
+          // Usar los items que quedaron en itemCountMap (no fueron asignados a ninguna persona)
+          final unassignedItems = <BillItem>[];
+          for (var itemsList in itemCountMap.values) {
+            unassignedItems.addAll(itemsList);
+          }
+          
+          if (unassignedItems.isNotEmpty) {
+            final unassignedSubtotal = unassignedItems.fold<double>(
+              0.0,
+              (sum, item) => sum + item.total,
+            );
+            final unassignedDiscount = descuentoHistorial > 0
+                ? (unassignedSubtotal / totalConsumo) * descuentoHistorial
+                : 0.0;
+            final unassignedTip = propinaHistorial > 0
+                ? (unassignedSubtotal / totalConsumo) * propinaHistorial
+                : 0.0;
+            final unassignedTotal = unassignedSubtotal - unassignedDiscount + unassignedTip;
+            
+            personAccounts.add(PersonAccount(
+              id: 'unassigned',
+              name: 'Sin asignar',
+              items: unassignedItems,
+              subtotal: unassignedSubtotal,
+              tax: 0.0,
+              discount: unassignedDiscount,
+              total: unassignedTotal,
+            ));
+          }
+        }
+
         final bill = BillModel(
           id: billId,
           tableNumber: selectedTable.number,
           ordenId: lastOrdenId,
-          items: allBillItems,
+          items: allBillItems, // Mantener items planos para compatibilidad
           subtotal: totalConsumo,
           tax: 0.0,
           total: totalFinal,
           discount: descuentoHistorial,
           status: BillStatus.pending,
           createdAt: date_utils.AppDateUtils.now(),
-          waiterName: 'Mesero',
+          waiterName: _loggedUserName ?? waiterNameFromOrder ?? 'Mesero',
           waiterNotes: notesHistorial,
           requestedByWaiter: true,
           isTakeaway: isTakeawayHistorial,
           customerName: customerNameHistorial,
           customerPhone: customerPhoneHistorial,
           splitCount: splitCountHistorial,
+          isDividedAccount: isDividedAccount,
+          personAccounts: personAccounts,
         );
 
         _billRepository.addBill(bill);
@@ -3035,6 +3844,9 @@ class MeseroController extends ChangeNotifier {
           'waiterNotes': notesHistorial,
           'multipleOrders':
               ordenIdsList.length > 1, // Flag para indicar múltiples órdenes
+          'isDividedAccount': isDividedAccount,
+          if (personAccounts != null)
+            'personAccounts': personAccounts.map((pa) => pa.toJson()).toList(),
         });
 
         print(
@@ -3059,6 +3871,34 @@ class MeseroController extends ChangeNotifier {
           return ordenId == null || !ordenIdsACerrar.contains(ordenId);
         }).toList();
 
+        // Si es cuenta dividida y se cerró completamente, resetear el modo dividido para esta mesa
+        // Esto permite que la próxima vez que se seleccione la mesa, pueda elegir entre general o dividida
+        // SOLO resetear si se cerraron TODAS las órdenes activas de la mesa
+        if (isDividedAccount) {
+          // Verificar si quedan órdenes activas para otras personas
+          final remainingOrders = historialCompleto.where((order) {
+            final ordenId = order['ordenId'] as int?;
+            if (ordenId == null) return false;
+            final status = (order['status'] as String?)?.toLowerCase() ?? '';
+            final esExcluida =
+                status.contains('pagada') ||
+                status.contains('cancelada') ||
+                status.contains('cerrada') ||
+                status.contains('enviada') ||
+                status.contains('cobrada') ||
+                ordenIdsACerrar.contains(ordenId);
+            return !esExcluida && order['isDividedAccount'] == true;
+          }).toList();
+          
+          // Solo resetear si no quedan órdenes activas
+          if (remainingOrders.isEmpty) {
+            resetDividedAccountModeForTable(tableIdStr);
+            print('✅ Mesero: Modo dividido reseteado para Mesa ${bill.tableNumber} (todas las cuentas cerradas)');
+          } else {
+            print('⚠️ Mesero: Quedan ${remainingOrders.length} órdenes activas, no se resetea modo dividido');
+          }
+        }
+        
         // Notificar cambios INMEDIATAMENTE para actualizar la UI
         notifyListeners();
 
@@ -3141,7 +3981,7 @@ class MeseroController extends ChangeNotifier {
       final total = cart.fold(0.0, (sum, item) {
         final qty =
             (item.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
-        double itemTotal = item.product.price * qty;
+        double itemTotal = _getBaseUnitPrice(item) * qty;
 
         // Agregar precio de extras si existen
         final extraPrices =
@@ -3168,7 +4008,7 @@ class MeseroController extends ChangeNotifier {
             (item.customizations['quantity'] as num?)?.toInt() ?? 1;
 
         // Calcular precio unitario incluyendo extras y salsas
-        double unitPrice = item.product.price;
+        double unitPrice = _getBaseUnitPrice(item);
 
         // Agregar extras al precio unitario
         final extraPrices =
@@ -3188,12 +4028,30 @@ class MeseroController extends ChangeNotifier {
         }
 
         return BillItem(
-          name: item.product.name,
+          name: _formatProductNameWithSize(
+            item.product.name,
+            item.customizations['size'] as String?,
+          ),
           quantity: quantity,
           price: unitPrice,
           total: unitPrice * quantity,
         );
       }).toList();
+
+      // Intentar obtener el nombre del mesero desde la orden del backend
+      String? waiterNameFromOrder;
+      if (ordenId != null) {
+        try {
+          final ordenData = await _ordenesService.getOrden(ordenId);
+          if (ordenData != null) {
+            waiterNameFromOrder = ordenData['creadoPorNombre'] as String? ??
+                ordenData['creadoPorUsuarioNombre'] as String? ??
+                ordenData['waiterName'] as String?;
+          }
+        } catch (e) {
+          print('Error al obtener nombre del mesero desde orden $ordenId: $e');
+        }
+      }
 
       final bill = BillModel(
         id: billId,
@@ -3206,7 +4064,7 @@ class MeseroController extends ChangeNotifier {
         discount: 0.0,
         status: BillStatus.pending,
         createdAt: date_utils.AppDateUtils.now(),
-        waiterName: 'Mesero',
+        waiterName: _loggedUserName ?? waiterNameFromOrder ?? 'Mesero',
         requestedByWaiter: true,
       );
 
@@ -3345,6 +4203,289 @@ class MeseroController extends ChangeNotifier {
     }
   }
 
+  // Enviar cuenta individual de una persona específica al cajero
+  Future<void> sendPersonAccountToCashier(int tableId, String personId, String personName) async {
+    final tableIdStr = tableId.toString();
+    
+    // Cargar historial si no está cargado
+    final history = _tableOrderHistory[tableIdStr] ?? [];
+    if (history.isEmpty) {
+      await loadTableOrderHistory(tableId);
+    }
+
+    // Obtener solo las órdenes de esta persona específica
+    final historialCompleto = _tableOrderHistory[tableIdStr] ?? [];
+    final personOrders = historialCompleto.where((order) {
+      // Verificar que sea cuenta dividida y que esta orden pertenezca a esta persona
+      if (order['isDividedAccount'] != true) return false;
+      
+      final personAssignments = order['personAssignments'] as Map<String, dynamic>?;
+      if (personAssignments == null) return false;
+      
+      // Verificar si esta orden tiene items asignados a esta persona
+      final assignedItems = personAssignments[personId] as List<dynamic>?;
+      return assignedItems != null && assignedItems.isNotEmpty;
+    }).toList();
+
+    if (personOrders.isEmpty) {
+      throw Exception('$personName no tiene pedidos para cerrar cuenta');
+    }
+
+    // Filtrar solo órdenes no pagadas/cerradas
+    final ordenesNoPagadas = personOrders.where((order) {
+      final status = (order['status'] as String?)?.toLowerCase() ?? '';
+      final esExcluida =
+          status.contains('pagada') ||
+          status.contains('cancelada') ||
+          status.contains('cerrada') ||
+          status.contains('enviada') ||
+          status.contains('cobrada');
+      return !esExcluida;
+    }).toList();
+
+    if (ordenesNoPagadas.isEmpty) {
+      throw Exception('$personName no tiene pedidos activos para cerrar cuenta');
+    }
+
+    final selectedTable = _tables.firstWhere(
+      (table) => table.id == tableId,
+      orElse: () {
+        if (_selectedTable != null) {
+          return _selectedTable!;
+        }
+        if (_tables.isEmpty) {
+          throw Exception('No hay mesas disponibles');
+        }
+        return _tables.first;
+      },
+    );
+
+    // Obtener todos los items de las órdenes de esta persona
+    final allBillItems = <BillItem>[];
+    double totalConsumo = 0.0;
+    int? lastOrdenId;
+
+    for (var order in ordenesNoPagadas) {
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId == null) continue;
+      
+      lastOrdenId = ordenId;
+      try {
+        final ordenData = await _ordenesService.getOrden(ordenId);
+        if (ordenData != null) {
+          final items = ordenData['items'] as List<dynamic>? ?? [];
+          final personAssignments = order['personAssignments'] as Map<String, dynamic>?;
+          final assignedItems = personAssignments?[personId] as List<dynamic>? ?? [];
+          
+          // Crear un set de items asignados a esta persona para filtrar
+          final assignedItemKeys = assignedItems.map((e) => e.toString()).toSet();
+          
+          for (var item in items) {
+            final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+            final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+            final productoNombre = item['productoNombre'] as String? ?? 'Producto';
+            final tamanoEtiqueta = (item['productoTamanoEtiqueta'] ?? item['tamanoEtiqueta'] ?? item['tamanoNombre'] ?? item['sizeName'] ?? item['size'])?.toString();
+            final nombreConTamano = _formatProductNameWithSize(productoNombre, tamanoEtiqueta);
+            final itemKey = '$nombreConTamano|$cantidad';
+            
+            // Solo incluir items que están asignados a esta persona
+            if (!assignedItemKeys.contains(itemKey)) continue;
+            
+            final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+            final totalLineaCalculado = precioUnitario * cantidad;
+            final totalLinea = (totalLineaBackend <= 0.01 || (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
+                ? totalLineaCalculado
+                : totalLineaBackend;
+            
+            totalConsumo += totalLinea;
+            
+            allBillItems.add(
+              BillItem(
+                name: nombreConTamano,
+                quantity: cantidad,
+                price: precioUnitario,
+                total: totalLinea,
+                personId: personId,
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        print('Error al obtener detalles de orden $ordenId: $e');
+      }
+    }
+
+    if (allBillItems.isEmpty) {
+      throw Exception('No se encontraron items para $personName');
+    }
+
+    // Obtener datos adicionales de la primera orden
+    final firstOrder = ordenesNoPagadas.first;
+    final descuentoHistorial = (firstOrder['discount'] as num?)?.toDouble() ?? 0.0;
+    final propinaHistorial = (firstOrder['tip'] as num?)?.toDouble() ?? 0.0;
+    final splitCountHistorial = (firstOrder['splitCount'] as int?) ?? 1;
+    final notesHistorial = firstOrder['notes'] as String?;
+    String? waiterNameFromOrder;
+    for (var order in ordenesNoPagadas) {
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId != null) {
+        try {
+          final ordenData = await _ordenesService.getOrden(ordenId);
+          if (ordenData != null && waiterNameFromOrder == null) {
+            waiterNameFromOrder = ordenData['creadoPorNombre'] as String? ??
+                ordenData['creadoPorUsuarioNombre'] as String? ??
+                ordenData['waiterName'] as String?;
+          }
+        } catch (e) {
+          // Continuar si hay error
+        }
+      }
+    }
+
+    // Generar billId único para esta persona
+    final ordenIdsList = ordenesNoPagadas.map((o) => o['ordenId'] as int?).whereType<int>().toList()..sort();
+    final billId = 'BILL-MESA-${selectedTable.number}-PERSONA-$personId-${ordenIdsList.join('-')}';
+
+    // Verificar si ya existe un bill pendiente
+    final existingBill = _billRepository.bills
+        .where((b) => b.id == billId && b.status == BillStatus.pending)
+        .toList();
+    if (existingBill.isNotEmpty) {
+      print('⚠️ Mesero: Ya existe un bill pendiente para $personName con ID $billId');
+      // Remover solo las órdenes de esta persona del historial
+      final ordenIdsACerrar = ordenIdsList.toSet();
+      final historialActual = _tableOrderHistory[tableIdStr] ?? [];
+      _tableOrderHistory[tableIdStr] = historialActual.map((order) {
+        final ordenId = order['ordenId'] as int?;
+        if (ordenId == null || !ordenIdsACerrar.contains(ordenId)) {
+          return order;
+        }
+        // Marcar como cerrada solo para esta persona (no eliminar completamente)
+        final updatedOrder = Map<String, dynamic>.from(order);
+        final personAssignments = updatedOrder['personAssignments'] as Map<String, dynamic>?;
+        if (personAssignments != null && personAssignments.containsKey(personId)) {
+          // Remover esta persona de las asignaciones (indicando que su cuenta está cerrada)
+          final updatedAssignments = Map<String, dynamic>.from(personAssignments);
+          updatedAssignments.remove(personId);
+          updatedOrder['personAssignments'] = updatedAssignments;
+        }
+        return updatedOrder;
+      }).toList();
+      
+      notifyListeners();
+      return;
+    }
+
+    // Calcular totales
+    final subtotalConDescuento = totalConsumo - descuentoHistorial;
+    final totalFinal = subtotalConDescuento + propinaHistorial;
+
+    // Crear PersonAccount solo para esta persona
+    final personSubtotal = totalConsumo;
+    final personDiscount = descuentoHistorial;
+    final personTip = propinaHistorial;
+    final personTotal = totalFinal;
+
+    final personAccount = PersonAccount(
+      id: personId,
+      name: personName,
+      items: allBillItems,
+      subtotal: personSubtotal,
+      tax: 0.0,
+      discount: personDiscount,
+      total: personTotal,
+    );
+
+    // Crear bill solo con esta persona
+    final bill = BillModel(
+      id: billId,
+      tableNumber: selectedTable.number,
+      items: allBillItems,
+      subtotal: personSubtotal,
+      tax: 0.0,
+      discount: personDiscount,
+      total: personTotal, // personTotal ya incluye la propina (personSubtotal - personDiscount + personTip)
+      status: BillStatus.pending,
+      createdAt: date_utils.AppDateUtils.now(),
+      waiterName: _loggedUserName ?? waiterNameFromOrder ?? 'Mesero',
+      waiterNotes: notesHistorial,
+      requestedByWaiter: true,
+      isTakeaway: false,
+      splitCount: splitCountHistorial,
+      isDividedAccount: true,
+      personAccounts: [personAccount], // Solo esta persona
+    );
+
+    _billRepository.addBill(bill);
+
+    // Emitir evento Socket.IO
+    final socketService = SocketService();
+    socketService.emit('cuenta.enviada', {
+      'id': bill.id,
+      'tableNumber': bill.tableNumber,
+      'ordenId': lastOrdenId,
+      'ordenIds': ordenIdsList,
+      'items': allBillItems.map((item) => ({
+            'name': item.name,
+            'quantity': item.quantity,
+            'price': item.price,
+            'total': item.total,
+          })).toList(),
+      'subtotal': personSubtotal,
+      'tax': 0.0,
+      'total': personTotal,
+      'discount': personDiscount,
+      'tip': personTip,
+      'status': 'pending',
+      'createdAt': date_utils.AppDateUtils.now().toIso8601String(),
+      'waiterName': bill.waiterName,
+      'splitCount': splitCountHistorial,
+      'isDividedAccount': true,
+      'personAccounts': [personAccount.toJson()],
+    });
+
+    print('✅ Mesero: Cuenta de $personName enviada al cajero - ID: $billId');
+
+    // Remover solo las órdenes de esta persona del historial (marcándolas como parcialmente cerradas)
+    final ordenIdsACerrar = ordenIdsList.toSet();
+    final historialActual = _tableOrderHistory[tableIdStr] ?? [];
+    _tableOrderHistory[tableIdStr] = historialActual.map((order) {
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId == null || !ordenIdsACerrar.contains(ordenId)) {
+        return order;
+      }
+      // Si la orden tiene múltiples personas, solo remover esta persona
+      final personAssignments = order['personAssignments'] as Map<String, dynamic>?;
+      if (personAssignments != null && personAssignments.length > 1) {
+        final updatedOrder = Map<String, dynamic>.from(order);
+        final updatedAssignments = Map<String, dynamic>.from(personAssignments);
+        updatedAssignments.remove(personId);
+        updatedOrder['personAssignments'] = updatedAssignments;
+        return updatedOrder;
+      }
+      // Si solo tiene esta persona, remover completamente la orden
+      return null;
+    }).whereType<Map<String, dynamic>>().toList();
+
+    // Marcar órdenes como cerradas en backend solo si ya no tienen otras personas
+    for (var order in ordenesNoPagadas) {
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId != null) {
+        final personAssignments = order['personAssignments'] as Map<String, dynamic>?;
+        // Solo marcar como cerrada si esta era la única persona o si ya no quedan personas
+        if (personAssignments == null || personAssignments.length <= 1) {
+          await _marcarOrdenComoCerradaEnBackend(ordenId);
+          _sentToCashierOrders.add(ordenId);
+        }
+      }
+    }
+
+    await _saveSentToCashierOrders();
+    notifyListeners();
+
+    print('✅ Mesero: Cuenta de $personName cerrada. Quedan órdenes activas para otras personas.');
+  }
+
   // Mejorar sendToKitchen para agregar al historial y enviar a cocina
   Future<void> sendOrderToKitchen({
     bool isTakeaway = false,
@@ -3356,11 +4497,14 @@ class MeseroController extends ChangeNotifier {
     String? orderNote,
     double tip = 0.0,
     int splitCount = 1,
+    List<CartItem>? specificItems, // Items específicos a enviar (para cuenta dividida)
+    String? personId, // ID de la persona (para cuenta dividida)
   }) async {
     // Permitir pedidos para llevar sin mesa seleccionada
     if (!isTakeaway && _selectedTable == null) return;
 
-    final currentCart = getCurrentCart();
+    // Usar items específicos si se proporcionan, sino usar el carrito completo
+    final currentCart = specificItems ?? getCurrentCart();
     if (currentCart.isEmpty) return;
 
     // Variables para el catch (necesarias para guardar historial en caso de error)
@@ -3378,7 +4522,6 @@ class MeseroController extends ChangeNotifier {
       final items = currentCart.map((cartItem) {
         final quantity =
             (cartItem.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
-        final price = cartItem.product.price;
 
         // Extraer nota de customizations si existe
         final nota = cartItem.customizations['nota'] as String?;
@@ -3442,7 +4585,7 @@ class MeseroController extends ChangeNotifier {
         final productoId = cartItem.product.id;
 
         // Calcular precio unitario incluyendo extras
-        double precioUnitarioConExtras = price;
+        double precioUnitarioConExtras = _getBaseUnitPrice(cartItem);
         for (var priceEntry in extraPrices) {
           if (priceEntry is Map) {
             final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
@@ -3465,8 +4608,7 @@ class MeseroController extends ChangeNotifier {
 
         return {
           'productoId': productoId,
-          'productoTamanoId':
-              null, // Por ahora null, se puede expandir si hay tamaños
+          'productoTamanoId': cartItem.customizations['sizeId'] as int?,
           'cantidad': quantity,
           'precioUnitario': precioUnitarioConExtras,
           'nota': notaFinal.isNotEmpty ? notaFinal : null,
@@ -3479,7 +4621,7 @@ class MeseroController extends ChangeNotifier {
       subtotal = currentCart.fold(0.0, (sum, item) {
         final qty =
             (item.customizations['quantity'] as num?)?.toDouble() ?? 1.0;
-        double itemTotal = item.product.price * qty;
+        double itemTotal = _getBaseUnitPrice(item) * qty;
 
         // Agregar precio de extras si existen
         final extraPrices =
@@ -3573,12 +4715,52 @@ class MeseroController extends ChangeNotifier {
       // Guardar items del carrito antes de limpiarlo (para el historial)
       itemsText = currentCart.map((item) {
         final qty = item.customizations['quantity'] as int? ?? 1;
-        return '${qty}x ${item.product.name}';
+        final nombreProducto = item.product.name;
+        final tamano = item.customizations['size'] as String?;
+        final nombreConTamano = _formatProductNameWithSize(nombreProducto, tamano);
+        return '${qty}x $nombreConTamano';
       }).toList();
 
       // Crear pedido para historial local usando la fecha real del backend
       // IMPORTANTE: Usar formato consistente para el ID: ORD-{numero}
       final formattedOrderId = 'ORD-${ordenIdInt.toString().padLeft(6, '0')}';
+      
+      // Guardar información de asignación de personas si está en modo dividida
+      Map<String, dynamic>? personAssignments;
+      Map<String, String>? personNamesForHistory;
+      if (isDividedAccountMode && _selectedTable != null) {
+        final tableId = _selectedTable!.id.toString();
+        personAssignments = {};
+        personNamesForHistory = Map.from(_personNamesByTable[tableId] ?? {});
+        
+        // Si se está enviando el pedido de una persona específica, solo incluir esa persona
+        if (personId != null && personNamesForHistory.containsKey(personId)) {
+          // Solo incluir esta persona en el historial
+          personNamesForHistory = {personId: personNamesForHistory[personId]!};
+        }
+        
+        // Mapear cada item del carrito a su personId
+        for (var item in currentCart) {
+          final itemPersonId = item.customizations['personId'] as String?;
+          // Si se especificó una persona, solo incluir items de esa persona
+          if (personId != null && itemPersonId != personId) {
+            continue;
+          }
+          if (itemPersonId != null) {
+            final qty = item.customizations['quantity'] as int? ?? 1;
+            final nombreProducto = item.product.name;
+            final tamano = item.customizations['size'] as String?;
+            final nombreConTamano = _formatProductNameWithSize(nombreProducto, tamano);
+            final itemKey = '$nombreConTamano|$qty';
+            
+            if (!personAssignments.containsKey(itemPersonId)) {
+              personAssignments[itemPersonId] = [];
+            }
+            (personAssignments[itemPersonId] as List).add(itemKey);
+          }
+        }
+      }
+      
       final order = {
         'id': formattedOrderId, // Formato estandarizado: ORD-000067
         'ordenId': ordenIdInt, // ID real de la orden en BD
@@ -3599,6 +4781,13 @@ class MeseroController extends ChangeNotifier {
         'tableNumber': isTakeaway
             ? null
             : _selectedTable?.number, // Agregar número de mesa
+        'estimatedTime': ordenCreada['tiempoEstimadoPreparacion'] ??
+            ordenCreada['estimatedTime'] ??
+            estimatedTimeMinutes,
+        // Campos para cuenta dividida (usando getter que obtiene el estado por mesa)
+        'isDividedAccount': isDividedAccountMode,
+        if (personAssignments != null) 'personAssignments': personAssignments,
+        if (personNamesForHistory != null) 'personNames': personNamesForHistory,
       };
 
       // IMPORTANTE: Guardar en historial local INMEDIATAMENTE después de crear la orden
@@ -3693,8 +4882,16 @@ class MeseroController extends ChangeNotifier {
         pickupTime: pickupTime,
       );
 
-      // Limpiar carrito
-      clearCart();
+      // Limpiar carrito: solo los items enviados si se especificaron items específicos
+      if (specificItems != null) {
+        // Remover solo los items específicos que se enviaron
+        for (var item in specificItems) {
+          removeFromCart(item.id);
+        }
+      } else {
+        // Limpiar carrito completo si no se especificaron items
+        clearCart();
+      }
 
       // Verificación final: asegurar que el historial tenga la orden
       // Esto es una medida de seguridad en caso de que algo haya fallado antes
@@ -3716,8 +4913,7 @@ class MeseroController extends ChangeNotifier {
       // Notificar cambios finales
       notifyListeners();
 
-      // Recargar bills para asegurar sincronización
-      await _billRepository.loadBills();
+      // NO recargar bills aquí; solo deben crearse al enviar cuenta al cajero
     } catch (e, stackTrace) {
       print('Error al enviar orden a cocina: $e');
       print('Stack trace: $stackTrace');
@@ -3750,7 +4946,10 @@ class MeseroController extends ChangeNotifier {
                         : currentCart.map((item) {
                             final qty =
                                 item.customizations['quantity'] as int? ?? 1;
-                            return '${qty}x ${item.product.name}';
+                            final nombreProducto = item.product.name;
+                            final tamano = item.customizations['size'] as String?;
+                            final nombreConTamano = _formatProductNameWithSize(nombreProducto, tamano);
+                            return '${qty}x $nombreConTamano';
                           }).toList()),
               'status': estadoRealOrden,
               'time': date_utils.AppDateUtils.formatTime(fechaCreacion),

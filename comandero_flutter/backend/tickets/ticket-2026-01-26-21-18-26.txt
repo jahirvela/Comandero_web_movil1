@@ -1,0 +1,25 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000110
+Fecha: 26/01/26, 3:11 p.m.
+Mesa: 1
+Cajero: Administrador General
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  2  Taco de Barbacoa Suave       50.00
+  1  Consome (Grande)             30.00
+------------------------------------------
+Subtotal:                    $   80.00
+E1TOTAL:                      $   80.00
+E0==========================================
+a1
+k
+ORD-000110
+
+ORD-000110
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

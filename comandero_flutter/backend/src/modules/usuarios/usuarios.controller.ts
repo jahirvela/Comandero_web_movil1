@@ -10,6 +10,7 @@ import {
   crearNuevoUsuario,
   actualizarUsuarioExistente,
   eliminarUsuarioExistente,
+  eliminarUsuarioPermanenteExistente,
   asignarRoles,
   obtenerCatalogoRoles
 } from './usuarios.service.js';
@@ -66,6 +67,20 @@ export const eliminarUsuarioController = async (
   try {
     const id = Number(req.params.id);
     await eliminarUsuarioExistente(id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const eliminarUsuarioPermanenteController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const id = Number(req.params.id);
+    await eliminarUsuarioPermanenteExistente(id);
     res.status(204).send();
   } catch (error) {
     next(error);

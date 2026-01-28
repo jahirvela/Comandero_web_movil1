@@ -103,37 +103,49 @@ class CierresService {
   /// Retorna el cierre creado
   Future<CashCloseModel> crearCierreCaja(CashCloseModel cierre) async {
     try {
-      final response = await _api.post(
-        '/cierres',
-        data: {
-          'fecha': cierre.fecha.toIso8601String(),
-          'efectivoInicial': cierre.efectivoInicial,
-          'efectivoFinal': cierre.efectivoContado,
-          'totalPagos': cierre.totalNeto,
-          'totalEfectivo': cierre.efectivo,
-          'totalTarjeta': cierre.tarjeta,
-          'notas': cierre.notaCajero ?? '',
-          if (cierre.notaCajero != null) 'notaCajero': cierre.notaCajero,
-          'otrosIngresos': cierre.otrosIngresos,
-          'otrosIngresosTexto': cierre.otrosIngresosTexto,
-          'efectivoContado': cierre.efectivoContado,
-          'totalDeclarado': cierre.totalDeclarado,
-        },
-      );
+      final dataToSend = {
+        'fecha': cierre.fecha.toIso8601String(),
+        'efectivoInicial': cierre.efectivoInicial,
+        'efectivoFinal': cierre.efectivoContado,
+        'totalPagos': cierre.totalNeto,
+        'totalEfectivo': cierre.efectivo,
+        'totalTarjeta': cierre.tarjeta,
+        'notas': cierre.notaCajero ?? '',
+        if (cierre.notaCajero != null) 'notaCajero': cierre.notaCajero,
+        'otrosIngresos': cierre.otrosIngresos,
+        'otrosIngresosTexto': cierre.otrosIngresosTexto,
+        'efectivoContado': cierre.efectivoContado,
+        'totalDeclarado': cierre.totalDeclarado,
+      };
+      
+      print('📤 CierresService.crearCierreCaja: Enviando datos al backend...');
+      print('📤 CierresService.crearCierreCaja: Data: $dataToSend');
+      
+      final response = await _api.post('/cierres', data: dataToSend);
+      
+      print('📥 CierresService.crearCierreCaja: Respuesta recibida - Status: ${response.statusCode}');
+      print('📥 CierresService.crearCierreCaja: Response data: ${response.data}');
 
       // Aceptar tanto 201 (creado) como 200 (actualizado)
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = response.data['data'] as Map<String, dynamic>?;
         if (data != null) {
+          print('✅ CierresService.crearCierreCaja: Cierre creado exitosamente');
           // Mapear la respuesta del backend al modelo
           return _mapBackendToCashCloseModel(data);
+        } else {
+          print('⚠️ CierresService.crearCierreCaja: response.data["data"] es null');
         }
+      } else {
+        print('⚠️ CierresService.crearCierreCaja: Status code inesperado: ${response.statusCode}');
       }
 
       // Si no se puede mapear, devolver el cierre original
+      print('⚠️ CierresService.crearCierreCaja: Devolviendo cierre original');
       return cierre;
-    } catch (e) {
-      print('Error al crear cierre de caja: $e');
+    } catch (e, stackTrace) {
+      print('❌ Error al crear cierre de caja: $e');
+      print('❌ Stack trace: $stackTrace');
       // Si es un error 409 (conflicto), intentar obtener el cierre existente
       if (e.toString().contains('409') || e.toString().contains('Conflict')) {
         print('⚠️ Cierre duplicado detectado, el backend debería haberlo actualizado');

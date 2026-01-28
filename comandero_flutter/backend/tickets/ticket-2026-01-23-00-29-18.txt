@@ -1,0 +1,24 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000093
+Fecha: 22/01/26, 6:20 p.m.
+Mesa: 2
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  4  Agua de Jamaica Casera...   120.00
+------------------------------------------
+Subtotal:                    $  120.00
+E1TOTAL:                      $  120.00
+E0==========================================
+a1
+k
+ORD-000093
+
+ORD-000093
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

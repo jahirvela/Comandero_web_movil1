@@ -1,0 +1,17 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000110
+Fecha: 26/01/26, 3:11 p.m.
+Mesa: 1
+Mesero: David Morales
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  2x  Taco de Barbacoa Suave
+  1x  Consome (Grande)
+------------------------------------------
+a1
+ORD-000110
+26/01/26, 3:11 p.m.
+a0i

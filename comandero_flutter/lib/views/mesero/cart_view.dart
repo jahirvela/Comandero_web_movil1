@@ -14,8 +14,6 @@ class CartView extends StatefulWidget {
 
 class _CartViewState extends State<CartView> {
   double discountPercentage = 0.0;
-  double tipPercentage = 0.0;
-  double tipAmount = 0.0;
   bool isTakeaway = false;
   String customerName = '';
   String customerPhone = '';
@@ -37,8 +35,7 @@ class _CartViewState extends State<CartView> {
         final subtotal = controller.calculateTotal();
         final discountAmount = subtotal * (discountPercentage / 100);
         final subtotalAfterDiscount = subtotal - discountAmount;
-        tipAmount = subtotalAfterDiscount * (tipPercentage / 100);
-        final total = subtotalAfterDiscount + tipAmount;
+        final total = subtotalAfterDiscount;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -62,7 +59,7 @@ class _CartViewState extends State<CartView> {
                             _buildEmptyCart(isTablet),
                           ] else ...[
                             // Artículos del pedido
-                            _buildOrderItems(cart, isTablet),
+                            _buildOrderItems(cart, controller, isTablet),
                             const SizedBox(height: 24),
 
                             // Sección de descuento
@@ -81,15 +78,10 @@ class _CartViewState extends State<CartView> {
                             _buildSplitSection(isTablet),
                             const SizedBox(height: 24),
 
-                            // Propina
-                            _buildTipSection(isTablet),
-                            const SizedBox(height: 24),
-
                             // Resumen y totales
                             _buildSummarySection(
                               subtotal,
                               discountAmount,
-                              tipAmount,
                               total,
                               splitCount,
                               isTablet,
@@ -230,7 +222,7 @@ class _CartViewState extends State<CartView> {
     );
   }
 
-  Widget _buildOrderItems(List<CartItem> cart, bool isTablet) {
+  Widget _buildOrderItems(List<CartItem> cart, MeseroController controller, bool isTablet) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -251,19 +243,21 @@ class _CartViewState extends State<CartView> {
               ),
             ),
             const SizedBox(height: 16),
-            ...cart.map((item) => _buildCartItem(item, isTablet)),
+            ...cart.map((item) => _buildCartItem(item, controller, isTablet)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCartItem(CartItem item, bool isTablet) {
+  Widget _buildCartItem(CartItem item, MeseroController controller, bool isTablet) {
     final product = item.product;
     final quantity = (item.customizations['quantity'] as int?) ?? 1;
     final kitchenNotes = (item.customizations['kitchenNotes'] as String?) ?? '';
     final extras =
         (item.customizations['extras'] as List<dynamic>?) ?? const [];
+    final personId = item.customizations['personId'] as String?;
+    final personName = personId != null ? controller.personNames[personId] : null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -320,6 +314,55 @@ class _CartViewState extends State<CartView> {
                     ),
                   ),
                 ],
+                // Mostrar persona asignada si es cuenta dividida
+                if (controller.isDividedAccountMode) ...[
+                  const SizedBox(height: 4),
+                  InkWell(
+                    onTap: () => _showPersonSelector(context, item, controller, isTablet),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: personId != null
+                            ? AppColors.primary.withValues(alpha: 0.1)
+                            : AppColors.warning.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: personId != null
+                              ? AppColors.primary.withValues(alpha: 0.3)
+                              : AppColors.warning.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            personId != null ? Icons.person : Icons.person_outline,
+                            size: isTablet ? 14.0 : 12.0,
+                            color: personId != null ? AppColors.primary : AppColors.warning,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            personName ?? 'Sin asignar',
+                            style: TextStyle(
+                              fontSize: isTablet ? 12.0 : 10.0,
+                              color: personId != null ? AppColors.primary : AppColors.warning,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.edit,
+                            size: isTablet ? 12.0 : 10.0,
+                            color: personId != null ? AppColors.primary : AppColors.warning,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 if (extras.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Wrap(
@@ -363,7 +406,7 @@ class _CartViewState extends State<CartView> {
                 children: [
                   if (quantity > 1)
                     Text(
-                      '\$${(product.price * quantity).toStringAsFixed(0)}',
+                      '\$${(((_getUnitPrice(item) * quantity)).toStringAsFixed(0))}',
                       style: TextStyle(
                         fontSize: isTablet ? 18.0 : 16.0,
                         fontWeight: FontWeight.bold,
@@ -372,7 +415,7 @@ class _CartViewState extends State<CartView> {
                     )
                   else
                     Text(
-                      '\$${product.price.toStringAsFixed(0)}',
+                      '\$${_getUnitPrice(item).toStringAsFixed(0)}',
                       style: TextStyle(
                         fontSize: isTablet ? 18.0 : 16.0,
                         fontWeight: FontWeight.bold,
@@ -381,7 +424,7 @@ class _CartViewState extends State<CartView> {
                     ),
                   if (quantity > 1)
                     Text(
-                      '\$${product.price.toStringAsFixed(0)} c/u',
+                      '\$${_getUnitPrice(item).toStringAsFixed(0)} c/u',
                       style: TextStyle(
                         fontSize: isTablet ? 12.0 : 10.0,
                         color: AppColors.textSecondary,
@@ -403,6 +446,15 @@ class _CartViewState extends State<CartView> {
         ],
       ),
     );
+  }
+
+  double _getUnitPrice(CartItem item) {
+    final customPrice =
+        item.customizations['sizePrice'] ?? item.customizations['unitPrice'];
+    if (customPrice is num) {
+      return customPrice.toDouble();
+    }
+    return item.product.price;
   }
 
   Widget _buildDiscountSection(bool isTablet) {
@@ -724,112 +776,9 @@ class _CartViewState extends State<CartView> {
     );
   }
 
-  Widget _buildTipSection(bool isTablet) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.border),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Propina',
-              style: TextStyle(
-                fontSize: isTablet ? 20.0 : 18.0,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Botones de porcentaje rápido
-            Row(
-              children: [
-                _buildTipButton('0%', 0.0, isTablet),
-                const SizedBox(width: 8),
-                _buildTipButton('10%', 10.0, isTablet),
-                const SizedBox(width: 8),
-                _buildTipButton('15%', 15.0, isTablet),
-                const SizedBox(width: 8),
-                _buildTipButton('20%', 20.0, isTablet),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // Campo personalizado
-            TextField(
-              onChanged: (value) {
-                setState(() {
-                  tipPercentage = double.tryParse(value) ?? 0.0;
-                });
-              },
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: 'Propina personalizada (%)',
-                hintText: '0',
-                suffixText: '%',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Campo de monto fijo
-            TextField(
-              onChanged: (value) {
-                setState(() {
-                  tipAmount = double.tryParse(value) ?? 0.0;
-                  // Calcular porcentaje equivalente
-                  final subtotal = context
-                      .read<MeseroController>()
-                      .calculateTotal();
-                  if (subtotal > 0) {
-                    tipPercentage = (tipAmount / subtotal) * 100;
-                  }
-                });
-              },
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: 'Propina (monto fijo)',
-                hintText: '0.00',
-                prefixText: '\$',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTipButton(String label, double percentage, bool isTablet) {
-    final isSelected = tipPercentage == percentage;
-
-    return Expanded(
-      child: ElevatedButton(
-        onPressed: () {
-          setState(() {
-            tipPercentage = percentage;
-          });
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isSelected ? AppColors.primary : AppColors.secondary,
-          foregroundColor: isSelected ? Colors.white : AppColors.textPrimary,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-        child: Text(label, style: TextStyle(fontSize: isTablet ? 14.0 : 12.0)),
-      ),
-    );
-  }
-
   Widget _buildSummarySection(
     double subtotal,
     double discountAmount,
-    double tipAmount,
     double total,
     int splitCount,
     bool isTablet,
@@ -882,28 +831,6 @@ class _CartViewState extends State<CartView> {
                     style: TextStyle(
                       fontSize: isTablet ? 16.0 : 14.0,
                       color: AppColors.success,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            if (tipAmount > 0) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Propina (${tipPercentage.toStringAsFixed(0)}%):',
-                    style: TextStyle(
-                      fontSize: isTablet ? 16.0 : 14.0,
-                      color: AppColors.info,
-                    ),
-                  ),
-                  Text(
-                    '\$${tipAmount.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 16.0 : 14.0,
-                      color: AppColors.info,
                     ),
                   ),
                 ],
@@ -1224,12 +1151,9 @@ class _CartViewState extends State<CartView> {
                     return;
                   }
 
-                  // Calcular descuento y propina
+                  // Calcular descuento
                   final subtotal = controller.calculateTotal();
                   final discountAmount = subtotal * (discountPercentage / 100);
-                  final subtotalAfterDiscount = subtotal - discountAmount;
-                  final calculatedTip = subtotalAfterDiscount * (tipPercentage / 100);
-
                   // Enviar pedido a cocina
                   await controller.sendOrderToKitchen(
                     isTakeaway: finalIsTakeaway,
@@ -1238,7 +1162,6 @@ class _CartViewState extends State<CartView> {
                     waiterName: userName,
                     discount: discountAmount,
                     orderNote: orderNote.trim().isNotEmpty ? orderNote.trim() : null,
-                    tip: calculatedTip,
                     splitCount: splitCount,
                   );
                   
@@ -1384,4 +1307,155 @@ class _CartViewState extends State<CartView> {
       ),
     );
   }
+
+  // Diálogo para seleccionar persona para un producto
+  void _showPersonSelector(
+    BuildContext context,
+    CartItem item,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    final personNames = controller.personNames;
+    final currentPersonId = item.customizations['personId'] as String?;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Asignar a persona',
+              style: TextStyle(
+                fontSize: isTablet ? 20.0 : 18.0,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (personNames.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'No hay personas. Agrega una persona primero.',
+                  style: TextStyle(
+                    fontSize: isTablet ? 14.0 : 12.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              )
+            else
+              ...personNames.entries.map((entry) {
+                final personId = entry.key;
+                final personName = entry.value;
+                final isSelected = currentPersonId == personId;
+
+                return ListTile(
+                  leading: Icon(
+                    isSelected ? Icons.person : Icons.person_outline,
+                    color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                  ),
+                  title: Text(
+                    personName,
+                    style: TextStyle(
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? Icon(Icons.check_circle, color: AppColors.primary)
+                      : null,
+                  onTap: () {
+                    controller.assignCartItemToPerson(item.id, personId);
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: Icon(
+                currentPersonId == null ? Icons.check_circle : Icons.radio_button_unchecked,
+                color: currentPersonId == null ? AppColors.warning : AppColors.textSecondary,
+              ),
+              title: Text(
+                'Sin asignar',
+                style: TextStyle(
+                  fontWeight: currentPersonId == null ? FontWeight.w600 : FontWeight.normal,
+                  color: currentPersonId == null ? AppColors.warning : AppColors.textPrimary,
+                ),
+              ),
+              onTap: () {
+                // Remover asignación: simplemente remover personId del item
+                // El controller se actualizará cuando se modifique el carrito
+                final cart = controller.getCurrentCart();
+                final itemToUpdate = cart.firstWhere((i) => i.id == item.id);
+                itemToUpdate.customizations.remove('personId');
+                Navigator.pop(context);
+              },
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                _showAddPersonDialog(context, controller, isTablet);
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Agregar persona'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: BorderSide(color: AppColors.primary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Diálogo para agregar persona
+  void _showAddPersonDialog(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    final nameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Agregar Persona'),
+        content: TextField(
+          controller: nameController,
+          decoration: const InputDecoration(
+            labelText: 'Nombre de la persona',
+            hintText: 'Ej: Juan, María, Persona 1',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              if (name.isNotEmpty) {
+                controller.addPerson(name: name);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Agregar'),
+          ),
+        ],
+      ),
+    );
+  }
+
 }

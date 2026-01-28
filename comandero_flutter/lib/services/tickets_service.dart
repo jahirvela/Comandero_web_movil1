@@ -89,9 +89,41 @@ class TicketsService {
       status = BillStatus.pending;
     }
 
-    // Crear items básicos (el backend no devuelve items detallados en la lista)
-    // Si necesitas los items, deberías hacer una llamada adicional o modificar el backend
-    final items = <BillItem>[];
+    // Crear items si el backend los incluye en la lista
+    final items = (data['items'] as List<dynamic>?)
+            ?.map((item) {
+              final map = item as Map<String, dynamic>;
+              final baseName = map['name'] as String? ?? 'Producto';
+              final sizeLabel = (map['sizeLabel'] ??
+                      map['productoTamanoEtiqueta'] ??
+                      map['tamanoEtiqueta'] ??
+                      map['tamanoNombre'] ??
+                      map['sizeName'] ??
+                      map['size'] ??
+                      map['tamaño'] ??
+                      map['productoTamano'] ??
+                      map['productoTamanioEtiqueta'])
+                  ?.toString();
+              
+              // Debug: imprimir información del item para verificar
+              if (sizeLabel != null && sizeLabel.isNotEmpty) {
+                print('📦 TicketsService: Producto "$baseName" tiene tamaño: "$sizeLabel"');
+              } else {
+                print('⚠️ TicketsService: Producto "$baseName" NO tiene tamaño. Campos disponibles: ${map.keys.toList()}');
+              }
+              
+              final nombreFinal = _formatProductNameWithSize(baseName, sizeLabel);
+              print('📦 TicketsService: Nombre final del producto: "$nombreFinal"');
+              
+              return BillItem(
+                name: nombreFinal,
+                quantity: (map['quantity'] as num?)?.toInt() ?? 1,
+                price: (map['price'] as num?)?.toDouble() ?? 0.0,
+                total: (map['total'] as num?)?.toDouble() ?? 0.0,
+              );
+            })
+            .toList() ??
+        [];
 
     // Parsear fecha de creación y convertir a zona horaria local
     DateTime createdAt;
@@ -214,5 +246,17 @@ class TicketsService {
       };
     }
   }
+}
+
+String _formatProductNameWithSize(String name, String? size) {
+  if (size == null || size.isEmpty || size.trim().isEmpty) {
+    return name;
+  }
+  final cleanSize = size.trim();
+  // Si el nombre ya incluye el tamaño en paréntesis, no agregarlo de nuevo
+  if (name.contains('($cleanSize)')) {
+    return name;
+  }
+  return '$name ($cleanSize)';
 }
 

@@ -1,0 +1,24 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000151
+Fecha: 15/01/26, 10:03 p.m.
+Mesa: 1
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  1  Agua de Horchata (Grande)     0.00
+------------------------------------------
+Subtotal:                    $   30.00
+E1TOTAL:                      $   30.00
+E0==========================================
+a1
+k
+ORD-000151
+
+ORD-000151
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

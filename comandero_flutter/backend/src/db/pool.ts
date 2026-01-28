@@ -85,7 +85,35 @@ const testConnection = async (retries = 3, delay = 2000) => {
   }
 };
 
-testConnection();
+const dropCategoriaUniqueIndex = async () => {
+  try {
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `
+      SELECT INDEX_NAME
+      FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'categoria'
+        AND NON_UNIQUE = 0
+        AND INDEX_NAME <> 'PRIMARY'
+      `
+    );
+
+    for (const row of rows) {
+      const indexName = row.INDEX_NAME as string;
+      await pool.query(`DROP INDEX \`${indexName}\` ON categoria`);
+      logger.info({ indexName }, 'Índice UNIQUE eliminado de categoria');
+    }
+  } catch (error) {
+    logger.warn({ err: error }, 'No se pudo eliminar índice UNIQUE de categoria');
+  }
+};
+
+const initPool = async () => {
+  await testConnection();
+  await dropCategoriaUniqueIndex();
+};
+
+initPool();
 
 export const withTransaction = async <T>(fn: (connection: mysql.PoolConnection) => Promise<T>) => {
   const connection = await pool.getConnection();

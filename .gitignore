@@ -1,0 +1,37 @@
+# Ignorar todo excepto comandero_flutter y archivos de configuración
+/*
+!comandero_flutter/
+!.gitignore
+!README.md
+!setup-git-repo.ps1
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Archivos temporales
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos de sistema operativo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Archivos de workspace
+*.code-workspace

@@ -12,7 +12,9 @@ const productoIngredienteSchema = z.object({
   unidad: z.string().min(1).max(32),
   cantidadPorPorcion: z.coerce.number().positive(),
   descontarAutomaticamente: z.boolean().optional().default(true),
-  esPersonalizado: z.boolean().optional().default(false)
+  esPersonalizado: z.boolean().optional().default(false),
+  esOpcional: z.boolean().optional().default(false),
+  tamanoId: z.number().int().positive().optional().nullable()
 });
 
 export const crearProductoSchema = z

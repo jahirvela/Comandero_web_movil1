@@ -1,0 +1,17 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000103
+Fecha: 22/01/26, 9:03 p.m.
+Mesa: 2
+Mesero: David Morales
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  1x  Alitas Mango Habanero (chicas 10...
+  1x  Alitas Mango Habanero (medianas ...
+------------------------------------------
+a1
+ORD-000103
+22/01/26, 9:03 p.m.
+a0i

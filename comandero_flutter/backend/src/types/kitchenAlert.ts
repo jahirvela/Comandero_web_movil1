@@ -16,6 +16,7 @@ export interface KitchenAlertPayload {
   id?: number;               // ID de la alerta en BD (opcional si aún no se guardó)
   orderId: number;
   tableId: number | null;    // null si es para llevar
+  mesaCodigo?: string;       // Código visible de la mesa (ej: "1")
   station: StationType;
   type: AlertType;
   message: string;           // Mensaje descriptivo de la alerta

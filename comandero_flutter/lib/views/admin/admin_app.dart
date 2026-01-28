@@ -9,6 +9,7 @@ import '../../models/admin_model.dart';
 import '../../models/order_model.dart';
 import '../../models/payment_model.dart' as payment_models;
 import '../../services/payment_repository.dart';
+import '../../services/socket_service.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../../utils/app_theme.dart';
@@ -469,8 +470,10 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    final apertura = controller.getTodayCashOpening();
-    final isOpen = controller.isCashRegisterOpen();
+    return Consumer<AdminController>(
+      builder: (context, ctrl, child) {
+        final apertura = ctrl.getTodayCashOpening();
+        final isOpen = ctrl.isCashRegisterOpen();
 
     return Card(
       elevation: 2,
@@ -655,6 +658,8 @@ class AdminApp extends StatelessWidget {
           ],
         ),
       ),
+    );
+      },
     );
   }
 
@@ -4208,12 +4213,41 @@ class AdminApp extends StatelessWidget {
     );
     List<RecipeIngredient> recipeIngredients =
         currentProduct.recipeIngredients?.toList() ?? [];
+    final hasSizes =
+        currentProduct.hasSizes && (currentProduct.sizes?.isNotEmpty ?? false);
+    final sizesWithId = (currentProduct.sizes ?? [])
+        .where((size) => size.id != null)
+        .toList();
+    final canUseSizeRecipes = hasSizes && sizesWithId.isNotEmpty;
+    final hasGeneralIngredients =
+        recipeIngredients.any((ingredient) => ingredient.sizeId == null);
+    MenuSize? selectedSize = canUseSizeRecipes
+        ? (hasGeneralIngredients ? null : sizesWithId.first)
+        : null;
+    final sizeNameById = {
+      for (final size in currentProduct.sizes ?? [])
+        if (size.id != null) size.id!: size.name
+    };
     
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
+        builder: (context, setState) {
+          final filteredEntries = recipeIngredients
+              .asMap()
+              .entries
+              .where((entry) {
+                if (!hasSizes || !canUseSizeRecipes) return true;
+                final ingredientSizeId = entry.value.sizeId;
+                if (selectedSize == null) {
+                  return ingredientSizeId == null;
+                }
+                return ingredientSizeId == selectedSize!.id;
+              })
+              .toList();
+
+          return AlertDialog(
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -4243,9 +4277,61 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: AppTheme.spacingMD),
+                  if (hasSizes) ...[
+                    Text(
+                      'Tamaño de receta',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: AppTheme.fontWeightSemibold,
+                          ),
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    DropdownButtonFormField<MenuSize?>(
+                      value: selectedSize,
+                      decoration: const InputDecoration(
+                        labelText: 'Seleccionar tamaño',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        const DropdownMenuItem<MenuSize?>(
+                          value: null,
+                          child: Text('General (aplica a todos)'),
+                        ),
+                        ...sizesWithId.map(
+                          (size) => DropdownMenuItem<MenuSize?>(
+                            value: size,
+                            child: Text(size.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: canUseSizeRecipes
+                          ? (value) {
+                              setState(() {
+                                selectedSize = value;
+                              });
+                            }
+                          : null,
+                    ),
+                    if (!canUseSizeRecipes) ...[
+                      SizedBox(height: AppTheme.spacingXS),
+                      Text(
+                        'Guarda el producto para poder configurar recetas por tamaño.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
+                    ],
+                    SizedBox(height: AppTheme.spacingMD),
+                  ],
                   
                   // Lista de ingredientes actuales
                   if (recipeIngredients.isNotEmpty) ...[
+                    if (filteredEntries.isEmpty)
+                      Text(
+                        'No hay ingredientes configurados para este tamaño.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
                     Text(
                       'Ingredientes configurados:',
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -4253,7 +4339,7 @@ class AdminApp extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: AppTheme.spacingSM),
-                    ...recipeIngredients.asMap().entries.map((entry) {
+                    ...filteredEntries.map((entry) {
                       final index = entry.key;
                       final ingredient = entry.value;
                       return Card(
@@ -4271,6 +4357,14 @@ class AdminApp extends StatelessWidget {
                                     : AppColors.textSecondary,
                                 ),
                               ),
+                              if (hasSizes && ingredient.sizeId != null)
+                                Text(
+                                  'Tamaño: ${sizeNameById[ingredient.sizeId] ?? ingredient.sizeId}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
                               if (ingredient.isOptional)
                                 Text(
                                   'Opcional',
@@ -4340,6 +4434,7 @@ class AdminApp extends StatelessWidget {
                             recipeIngredients,
                             setState,
                             isTablet,
+                            selectedSize?.id,
                             );
                           },
                           icon: const Icon(Icons.inventory_2),
@@ -4425,7 +4520,8 @@ class AdminApp extends StatelessWidget {
               child: const Text('Guardar Receta'),
             ),
           ],
-        ),
+        );
+        },
       ),
     );
   }
@@ -4437,6 +4533,7 @@ class AdminApp extends StatelessWidget {
     List<RecipeIngredient> recipeIngredients,
     StateSetter setState,
     bool isTablet,
+    int? sizeId,
   ) async {
     final quantityController = TextEditingController();
     final unitController = TextEditingController();
@@ -4621,6 +4718,7 @@ class AdminApp extends StatelessWidget {
                     isOptional: isOptionalNotifier.value,
                     category: selectedItem!.category,
                     inventoryItemId: selectedItem!.id,
+                    sizeId: sizeId,
                   );
                   
                   setState(() {
@@ -5581,34 +5679,30 @@ class AdminApp extends StatelessWidget {
       return 'No especificado';
     }
     
-    final method = paymentMethod.trim();
+    final method = paymentMethod.trim().toLowerCase();
     
     // Normalizar a español
-    if (method.toLowerCase().contains('efectivo') ||
-        method.toLowerCase() == 'cash') {
+    if (method.contains('efectivo') || method == 'cash') {
       return 'Efectivo';
     }
-    if (method.toLowerCase().contains('tarjeta débito') || 
-        method.toLowerCase().contains('debito') ||
-        method.toLowerCase() == 'tarjeta débito') {
+    if (method.contains('transferencia') || method == 'transfer') {
+      return 'Transferencia';
+    }
+    if (method.contains('tarjeta débito') || method.contains('debito')) {
       return 'Tarjeta Débito';
     }
-    if (method.toLowerCase().contains('tarjeta crédito') || 
-        method.toLowerCase().contains('credito') ||
-        method.toLowerCase() == 'tarjeta crédito') {
+    if (method.contains('tarjeta crédito') || method.contains('credito')) {
       return 'Tarjeta Crédito';
     }
-    if (method.toLowerCase().contains('tarjeta') ||
-        method.toLowerCase() == 'card') {
+    if (method.contains('tarjeta') || method == 'card') {
       return 'Tarjeta';
     }
-    if (method.toLowerCase().contains('mixto') ||
-        method.toLowerCase() == 'mixed') {
-      return 'Mixto';
+    if (method.contains('mixto') || method == 'mixed' || method.contains('pago mixto')) {
+      return 'Pago Mixto';
     }
     
     // Si ya está en español, capitalizar correctamente
-    return method
+    return paymentMethod
         .split(' ')
         .map((word) {
       if (word.isEmpty) return word;
@@ -7269,108 +7363,202 @@ class AdminApp extends StatelessWidget {
             ),
             ElevatedButton(
               onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  if (selectedRoles.isEmpty) {
+                print('🔵 Botón "Crear Usuario" presionado');
+                
+                // Validar que el formulario esté inicializado
+                if (formKey.currentState == null) {
+                  print('❌ formKey.currentState es null');
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Error: El formulario no está inicializado. Por favor, intenta nuevamente.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                // Validar formulario
+                final isValid = formKey.currentState!.validate();
+                print('🔵 Validación del formulario: $isValid');
+                
+                if (!isValid) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Por favor, completa todos los campos requeridos correctamente'),
+                      backgroundColor: Colors.orange,
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                  return;
+                }
+
+                // Validar roles
+                if (selectedRoles.isEmpty) {
+                  print('❌ No hay roles seleccionados');
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Debe seleccionar al menos un rol'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                // Validar campos requeridos manualmente
+                if (nameController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('El nombre completo es obligatorio'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                if (usernameController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('El nombre de usuario es obligatorio'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                if (passwordController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('La contraseña es obligatoria'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+                
+                print('🔵 Todos los campos son válidos. Creando usuario...');
+                print('🔵 Datos del usuario:');
+                print('  - Nombre: ${nameController.text.trim()}');
+                print('  - Username: ${usernameController.text.trim().toLowerCase()}');
+                print('  - Roles: $selectedRoles');
+                
+                // Mostrar indicador de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (dialogContext) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+
+                try {
+                  final newUser = AdminUser(
+                    id: 'temp', // Se asignará desde el backend
+                    name: nameController.text.trim(),
+                    username: usernameController.text.trim().toLowerCase(),
+                    password: passwordController.text,
+                    phone: phoneController.text.trim().isEmpty
+                        ? null
+                        : phoneController.text.trim(),
+                    roles: selectedRoles,
+                    isActive: true,
+                    createdAt: DateTime.now(),
+                    createdBy: 'current_admin',
+                  );
+                  
+                  print('🔵 Llamando a controller.addUser...');
+                  await controller.addUser(newUser);
+                  print('✅ Usuario creado exitosamente');
+                  
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  // Cerrar diálogo de creación
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Debe seleccionar al menos un rol'),
-                        backgroundColor: Colors.orange,
+                        content: Text('Usuario creado exitosamente'),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 3),
                       ),
                     );
-                    return;
                   }
+                } catch (e, stackTrace) {
+                  print('❌ Error al crear usuario: $e');
+                  print('❌ Stack trace: $stackTrace');
                   
-                  // Mostrar indicador de carga
-                  showDialog(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (context) =>
-                        const Center(child: CircularProgressIndicator()),
-                  );
-
-                  try {
-                    final newUser = AdminUser(
-                      id: 'temp', // Se asignará desde el backend
-                      name: nameController.text,
-                      username: usernameController.text.toLowerCase(),
-                      password: passwordController.text,
-                      phone: phoneController.text.isEmpty
-                          ? null
-                          : phoneController.text,
-                      roles: selectedRoles,
-                      isActive: true,
-                      createdAt: DateTime.now(),
-                      createdBy: 'current_admin',
-                    );
+                  // Cerrar diálogo de carga
+                  if (context.mounted) Navigator.of(context).pop();
+                  
+                  if (context.mounted) {
+                    // Extraer mensaje de error más claro
+                    String errorMessage = 'Error al crear usuario';
+                    final errorStr = e.toString();
                     
-                    await controller.addUser(newUser);
-                    
-                    // Cerrar diálogo de carga
-                    if (context.mounted) Navigator.of(context).pop();
-                    
-                    // Cerrar diálogo de creación
-                    if (context.mounted) Navigator.of(context).pop();
-                    
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Usuario creado exitosamente'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    // Cerrar diálogo de carga
-                    if (context.mounted) Navigator.of(context).pop();
-                    
-                    if (context.mounted) {
-                      // Extraer mensaje de error más claro
-                      String errorMessage = 'Error al crear usuario';
-                      final errorStr = e.toString();
-                      if (errorStr.contains('Error al obtener roles')) {
-                        errorMessage =
-                            'Error al obtener roles del sistema. Verifica que el backend esté funcionando correctamente.';
-                      } else if (errorStr.contains('Rol no encontrado')) {
-                        errorMessage =
-                            'Uno de los roles seleccionados no existe en el sistema.';
-                      } else if (errorStr.contains('Error de conexión') || 
-                                 errorStr.contains('No se pudo conectar') ||
-                                 errorStr.contains('backend esté corriendo')) {
-                        errorMessage =
-                            'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
-                      } else if (errorStr.contains('401') ||
-                          errorStr.contains('403')) {
-                        errorMessage =
-                            'No tienes permisos para crear usuarios.';
-                      } else if (errorStr.contains('username')) {
-                        errorMessage = 'El nombre de usuario ya existe.';
+                    if (errorStr.contains('Error al obtener roles')) {
+                      errorMessage =
+                          'Error al obtener roles del sistema. Verifica que el backend esté funcionando correctamente.';
+                    } else if (errorStr.contains('Rol no encontrado') || 
+                               errorStr.contains('Roles no encontrados')) {
+                      errorMessage =
+                          'Uno o más roles seleccionados no existen en el sistema. Verifica los roles disponibles.';
+                    } else if (errorStr.contains('Error de conexión') || 
+                               errorStr.contains('No se pudo conectar') ||
+                               errorStr.contains('backend esté corriendo')) {
+                      errorMessage =
+                          'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+                    } else if (errorStr.contains('401')) {
+                      errorMessage =
+                          'No autorizado. Por favor, inicia sesión nuevamente.';
+                    } else if (errorStr.contains('403')) {
+                      errorMessage =
+                          'No tienes permisos para crear usuarios.';
+                    } else if (errorStr.contains('username') || 
+                               errorStr.contains('ya existe')) {
+                      errorMessage = 'El nombre de usuario ya existe. Por favor, elige otro.';
+                    } else if (errorStr.contains('Debe seleccionar al menos un rol')) {
+                      errorMessage = 'Debe seleccionar al menos un rol para el usuario.';
+                    } else if (errorStr.contains('El nombre no puede estar vacío')) {
+                      errorMessage = 'El nombre completo es obligatorio.';
+                    } else if (errorStr.contains('El nombre de usuario no puede estar vacío')) {
+                      errorMessage = 'El nombre de usuario es obligatorio.';
+                    } else if (errorStr.contains('La contraseña debe tener al menos')) {
+                      errorMessage = 'La contraseña debe tener al menos 6 caracteres.';
+                    } else {
+                      // Extraer el mensaje más relevante
+                      final match = RegExp(
+                        r'Exception:\s*(.+?)(?:Exception:|$)',
+                      ).firstMatch(errorStr);
+                      if (match != null) {
+                        errorMessage = match.group(1)?.trim() ?? errorMessage;
                       } else {
-                        // Extraer el mensaje más relevante
-                        final match = RegExp(
-                          r'Exception:\s*(.+?)(?:Exception:|$)',
+                        // Intentar extraer mensaje del error
+                        final errorMatch = RegExp(
+                          r'(?:message|error|Error):\s*(.+?)(?:\.|$)',
+                          caseSensitive: false,
                         ).firstMatch(errorStr);
-                        if (match != null) {
-                          errorMessage = match.group(1)?.trim() ?? errorMessage;
+                        if (errorMatch != null) {
+                          errorMessage = errorMatch.group(1)?.trim() ?? errorMessage;
                         } else {
-                          errorMessage = errorStr.length > 100 
-                              ? '${errorStr.substring(0, 100)}...' 
+                          errorMessage = errorStr.length > 150 
+                              ? '${errorStr.substring(0, 150)}...' 
                               : errorStr;
                         }
                       }
-                      
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(errorMessage),
-                          backgroundColor: Colors.red,
-                          duration: const Duration(seconds: 8),
-                          action: SnackBarAction(
-                            label: 'Cerrar',
-                            textColor: Colors.white,
-                            onPressed: () {},
-                          ),
-                        ),
-                      );
                     }
+                    
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(errorMessage),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 8),
+                        action: SnackBarAction(
+                          label: 'Cerrar',
+                          textColor: Colors.white,
+                          onPressed: () {},
+                        ),
+                      ),
+                    );
                   }
                 }
               },
@@ -7933,15 +8121,17 @@ class AdminApp extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Eliminar Usuario'),
-        content: Text('¿Estás seguro de eliminar el usuario "${user.name}"?'),
+        content: Text(
+          '¿Qué deseas hacer con el usuario "${user.name}"?\n\n'
+          'Puedes inactivarlo (no podrá ingresar) o eliminarlo de forma definitiva.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancelar'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () async {
-              // Mostrar indicador de carga
               showDialog(
                 context: context,
                 barrierDismissible: false,
@@ -7950,26 +8140,63 @@ class AdminApp extends StatelessWidget {
               );
 
               try {
-                await controller.deleteUser(user.id);
-                
-                // Cerrar diálogo de carga
+                await controller.setUserActive(user.id, false);
+
                 if (context.mounted) Navigator.of(context).pop();
-                
-                // Cerrar diálogo de confirmación
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Usuario "${user.name}" eliminado'),
+                      content: Text('Usuario "${user.name}" inactivado'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) Navigator.of(context).pop();
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Error al inactivar usuario: ${_extractErrorMessage(e)}',
+                      ),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Inactivar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
+              );
+
+              try {
+                await controller.deleteUserPermanently(user.id);
+
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) Navigator.of(context).pop();
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Usuario "${user.name}" eliminado definitivamente'),
                       backgroundColor: Colors.red,
                     ),
                   );
                 }
               } catch (e) {
-                // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -7987,7 +8214,7 @@ class AdminApp extends StatelessWidget {
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Eliminar'),
+            child: const Text('Eliminar definitivo'),
           ),
         ],
       ),
@@ -8906,6 +9133,21 @@ class AdminApp extends StatelessWidget {
                             constraints: const BoxConstraints(),
                           ),
                         SizedBox(width: AppTheme.spacingXS),
+                        // Botón de palomita para tickets pendientes (aceptar/entregar)
+                        if (ticket.status == payment_models.BillStatus.pending)
+                          IconButton(
+                            icon: const Icon(Icons.check_circle, size: 18),
+                            color: Colors.green,
+                            tooltip: 'Aceptar ticket',
+                            onPressed: () => _markTicketAsDelivered(
+                              context,
+                              ticket,
+                              controller,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        // Botón de palomita para tickets impresos (marcar como entregado)
                         if (ticket.status ==
                                 payment_models.BillStatus.printed &&
                             ticket.status !=
@@ -8913,6 +9155,7 @@ class AdminApp extends StatelessWidget {
                           IconButton(
                             icon: const Icon(Icons.check_circle, size: 18),
                             color: Colors.green,
+                            tooltip: 'Marcar como entregado',
                             onPressed: () => _markTicketAsDelivered(
                               context,
                               ticket,
@@ -9072,11 +9315,23 @@ class AdminApp extends StatelessWidget {
                         _showPrintTicketDialog(context, ticket, controller),
                   ),
                 ],
+                // Botón de palomita para tickets pendientes (aceptar/entregar)
+                if (ticket.status == payment_models.BillStatus.pending) ...[
+                  IconButton(
+                    icon: const Icon(Icons.check_circle),
+                    color: Colors.green,
+                    tooltip: 'Aceptar ticket',
+                    onPressed: () =>
+                        _markTicketAsDelivered(context, ticket, controller),
+                  ),
+                ],
+                // Botón de palomita para tickets impresos (marcar como entregado)
                 if (ticket.status == payment_models.BillStatus.printed &&
                     ticket.status != payment_models.BillStatus.delivered) ...[
                   IconButton(
                     icon: const Icon(Icons.check_circle),
                     color: Colors.green,
+                    tooltip: 'Marcar como entregado',
                     onPressed: () =>
                         _markTicketAsDelivered(context, ticket, controller),
                   ),
@@ -9150,17 +9405,21 @@ class AdminApp extends StatelessWidget {
     );
   }
 
-  // Marcar ticket como entregado
+  // Marcar ticket como entregado (desde pending o printed)
   void _markTicketAsDelivered(
     BuildContext context,
     payment_models.BillModel ticket,
     AdminController controller,
   ) {
+    final wasPending = ticket.status == payment_models.BillStatus.pending;
     controller.markTicketAsDelivered(ticket.id);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Ticket marcado como entregado'),
+      SnackBar(
+        content: Text(wasPending
+            ? 'Ticket aceptado y marcado como entregado'
+            : 'Ticket marcado como entregado'),
         backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -9255,8 +9514,12 @@ class AdminApp extends StatelessWidget {
           _buildCashCloseDateFilters(context, controller, isTablet),
           SizedBox(height: AppTheme.spacingLG),
 
-          // Información de apertura de caja del día
-          _buildCashOpeningInfoInClosures(context, controller, isTablet),
+          // Información de apertura de caja del día (en tiempo real)
+          Consumer<AdminController>(
+            builder: (context, adminController, child) {
+              return _buildCashOpeningInfoInClosures(context, adminController, isTablet);
+            },
+          ),
           SizedBox(height: AppTheme.spacingLG),
 
           // Tabla/Lista de cierres (usar Consumer para asegurar reconstrucción)
@@ -9453,10 +9716,12 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    final apertura = controller.getTodayCashOpening();
-    final isOpen = controller.isCashRegisterOpen();
+    return Consumer<AdminController>(
+      builder: (context, ctrl, child) {
+        final apertura = ctrl.getTodayCashOpening();
+        final isOpen = ctrl.isCashRegisterOpen();
 
-    return Card(
+        return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusLG),
@@ -9639,6 +9904,8 @@ class AdminApp extends StatelessWidget {
           ],
         ),
       ),
+    );
+      },
     );
   }
 
@@ -11852,6 +12119,24 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    // Asegurar que el controller esté inicializado y escuchando alertas cuando se entra a esta vista
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Verificar que el socket esté conectado y los listeners configurados
+      final socketService = SocketService();
+      if (!socketService.isConnected) {
+        socketService.connect().catchError((e) {
+          print('⚠️ Admin Cocina: Error al conectar Socket.IO: $e');
+        });
+      }
+      // El CocineroController ya se inicializa automáticamente, pero forzar recarga de alertas
+      // si no hay alertas cargadas aún
+      if (cocineroController.alerts.isEmpty) {
+        // El controller carga alertas automáticamente en _setupSocketListeners
+        // Solo verificamos que esté funcionando
+        print('📥 Admin Cocina: Verificando alertas del CocineroController...');
+      }
+    });
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
       child: Column(
@@ -11863,6 +12148,10 @@ class AdminApp extends StatelessWidget {
 
           // Estadísticas rápidas
           _buildKitchenStatsCards(cocineroController, isTablet),
+          const SizedBox(height: 24),
+
+          // Alertas de cocina
+          _buildKitchenAlertsSection(context, cocineroController, isTablet),
           const SizedBox(height: 24),
 
           // Lista de pedidos
@@ -12298,6 +12587,269 @@ class AdminApp extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildKitchenAlertsSection(
+    BuildContext context,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final socketService = SocketService();
+    final allAlerts = controller.alerts;
+    final filteredAlerts = controller.filteredAlerts;
+
+    final alertsToShow =
+        controller.selectedAlert != 'todas' && filteredAlerts.isNotEmpty
+        ? filteredAlerts
+        : allAlerts;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: AppColors.warning.withValues(alpha: 0.3),
+          width: 2,
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: AppColors.warning.withValues(alpha: 0.05),
+        ),
+        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: AppColors.warning,
+                  size: isTablet ? 20.0 : 18.0,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Alertas (${alertsToShow.length})',
+                  style: TextStyle(
+                    fontSize: isTablet ? 16.0 : 14.0,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.warning,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<SocketConnectionState>(
+                  valueListenable: socketService.connectionState,
+                  builder: (context, state, _) {
+                    final connected = state == SocketConnectionState.connected;
+                    final color = connected ? Colors.green : Colors.grey;
+                    final label = connected ? 'En vivo' : 'Sin conexión';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            connected
+                                ? Icons.podcasts
+                                : Icons.podcasts_outlined,
+                            size: isTablet ? 12.0 : 10.0,
+                            color: color,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: isTablet ? 10.0 : 9.0,
+                              fontWeight: FontWeight.w600,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () async {
+                    for (final alert in alertsToShow) {
+                      await controller.removeAlert(alert.id);
+                    }
+                  },
+                  icon: const Icon(Icons.clear_all, size: 14),
+                  label: const Text('Limpiar todas'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.warning,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: const Size(0, 32),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (alertsToShow.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline,
+                      color: AppColors.textSecondary,
+                      size: isTablet ? 16.0 : 14.0,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Sin alertas pendientes. Seguimos escuchando en tiempo real.',
+                        style: TextStyle(
+                          fontSize: isTablet ? 12.0 : 11.0,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...alertsToShow
+                          .take(3)
+                          .map((alert) => _buildKitchenAlertCard(
+                                context,
+                                alert,
+                                controller,
+                                isTablet,
+                              )),
+                      if (alertsToShow.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            'Y ${alertsToShow.length - 3} alerta(s) más...',
+                            style: TextStyle(
+                              fontSize: isTablet ? 11.0 : 10.0,
+                              color: AppColors.textSecondary,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKitchenAlertCard(
+    BuildContext context,
+    alert,
+    CocineroController controller,
+    bool isTablet,
+  ) {
+    final priorityColor =
+        alert.priority == 'high' || alert.priority == 'urgente'
+        ? AppColors.error
+        : AppColors.warning;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: priorityColor.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color: priorityColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      alert.type,
+                      style: TextStyle(
+                        fontSize: isTablet ? 14.0 : 12.0,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Mesa ${alert.tableNumber}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 11.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  alert.reason,
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 11.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                if (alert.sentBy != null || alert.sentByRole != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Enviado por ${alert.sentBy ?? 'Usuario'} (${alert.sentByRole ?? 'desconocido'})',
+                    style: TextStyle(
+                      fontSize: isTablet ? 11.0 : 10.0,
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 16),
+            onPressed: () async {
+              await controller.removeAlert(alert.id);
+            },
+            color: AppColors.textSecondary,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+          ),
+        ],
+      ),
     );
   }
 
@@ -13717,6 +14269,11 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                 final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
                 final productoNombre =
                     item['productoNombre'] as String? ?? 'Producto';
+                final productoTamano =
+                    item['productoTamanoEtiqueta'] as String? ?? '';
+                final productoNombreConTamano = productoTamano.isNotEmpty
+                    ? '$productoNombre ($productoTamano)'
+                    : productoNombre;
                 final precioUnitario =
                     (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
                 final totalLineaBackend =
@@ -13776,7 +14333,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        productoNombre,
+                                        productoNombreConTamano,
                                         style: TextStyle(
                                           fontSize: widget.isTablet
                                               ? 14.0
@@ -14077,6 +14634,38 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           ),
         ),
         
+        // Método de pago
+        if (widget.ticket.paymentMethod != null &&
+            widget.ticket.paymentMethod!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.payment,
+                  size: 16,
+                  color: AppColors.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Método de pago: ${_formatPaymentMethod(widget.ticket.paymentMethod)}',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 11.0 : 10.0,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
         // Propina
         if (widget.ticket.tipAmount != null &&
             widget.ticket.tipAmount! > 0) ...[
@@ -14109,7 +14698,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           ),
         ],
         
-        // Notas del pago
+        // Información de pago (banco, referencia, notas)
         if (widget.ticket.paymentNotes != null &&
             widget.ticket.paymentNotes!.isNotEmpty) ...[
           const SizedBox(height: 12),
@@ -14123,34 +14712,378 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.note, size: 16, color: AppColors.info),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Notas del pago:',
-                      style: TextStyle(
-                        fontSize: widget.isTablet ? 11.0 : 10.0,
-                        color: AppColors.info,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.ticket.paymentNotes!,
-                  style: TextStyle(
-                    fontSize: widget.isTablet ? 10.0 : 9.0,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
+                // Parsear las notas para separar banco, referencia y notas
+                ..._parsePaymentNotes(widget.ticket.paymentNotes!),
               ],
             ),
           ),
         ],
       ],
     );
+  }
+
+  // Parsear notas del pago para separar banco, referencia y notas
+  // También maneja pagos mixtos con desglose completo
+  List<Widget> _parsePaymentNotes(String paymentNotes) {
+    final List<Widget> widgets = [];
+    final notesLower = paymentNotes.toLowerCase();
+    
+    // Detectar si es un pago mixto
+    if (notesLower.contains('pago mixto') || notesLower.contains('pago 1:') || notesLower.contains('pago 2:')) {
+      // Es un pago mixto, mostrar el desglose completo
+      widgets.add(
+        Row(
+          children: [
+            Icon(Icons.payment, size: 16, color: AppColors.info),
+            const SizedBox(width: 8),
+            Text(
+              'Desglose de pagos:',
+              style: TextStyle(
+                fontSize: widget.isTablet ? 11.0 : 10.0,
+                color: AppColors.info,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+      
+      // Dividir por líneas y mostrar cada pago
+      final lineas = paymentNotes.split('\n');
+      for (final linea in lineas) {
+        if (linea.trim().isEmpty) continue;
+        
+        // Si es la línea del total, mostrarla destacada
+        if (linea.toLowerCase().contains('total:')) {
+          widgets.add(const SizedBox(height: 8));
+          widgets.add(
+            Text(
+              linea.trim(),
+              style: TextStyle(
+                fontSize: widget.isTablet ? 10.0 : 9.0,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          );
+        } else if (linea.toLowerCase().startsWith('pago ')) {
+          // Es una línea de pago individual
+          widgets.add(const SizedBox(height: 6));
+          
+          // Parsear la línea del pago
+          // Formato esperado: "Pago 1: Efectivo - $50.00 | Observaciones: ..."
+          // o "Pago 2: Tarjeta Débito - Ref: 456789"
+          // o "Pago 3: Transferencia - $30.00 | Banco: BBVA | Referencia: 56789"
+          
+          final partes = linea.split(' - ');
+          if (partes.length >= 2) {
+            final tipoYMonto = partes[0].trim(); // "Pago 1: Efectivo"
+            final detalles = partes.sublist(1).join(' - '); // Resto de la línea
+            
+            widgets.add(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tipoYMonto,
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 10.0 : 9.0,
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (detalles.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    // Parsear detalles adicionales (banco, referencia, observaciones)
+                    ..._parsePaymentDetails(detalles),
+                  ],
+                ],
+              ),
+            );
+          } else {
+            // Si no se puede parsear, mostrar la línea completa
+            widgets.add(
+              Text(
+                linea.trim(),
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 10.0 : 9.0,
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            );
+          }
+        }
+      }
+      
+      return widgets;
+    }
+    
+    // Si no es pago mixto, usar la lógica original para pagos individuales
+    String? banco;
+    String? referencia;
+    String? notas;
+    
+    // Extraer banco
+    if (notesLower.contains('banco:')) {
+      final bancoMatch = RegExp(r'banco:\s*([^|]+)', caseSensitive: false).firstMatch(paymentNotes);
+      if (bancoMatch != null) {
+        banco = bancoMatch.group(1)?.trim();
+      }
+    }
+    
+    // Extraer referencia: buscar primero "Referencia:" o "Ref:" explícito
+    if (notesLower.contains('referencia:') || notesLower.contains('ref:')) {
+      final refMatch = RegExp(r'(?:referencia|ref):\s*([^|]+)', caseSensitive: false).firstMatch(paymentNotes);
+      if (refMatch != null) {
+        referencia = refMatch.group(1)?.trim();
+        // Limpiar cualquier pipe o texto adicional después
+        if (referencia != null) {
+          referencia = referencia.split('|').first.trim();
+        }
+      }
+    }
+    
+    // Si no se encontró referencia explícita, buscar después de un pipe
+    if (referencia == null || referencia.isEmpty) {
+      final partes = paymentNotes.split('|');
+      if (partes.length > 1) {
+        // Buscar en las partes después del primer pipe
+        for (int i = 1; i < partes.length; i++) {
+          final parte = partes[i].trim();
+          // Si la parte no contiene "Banco:" ni "Observaciones:", podría ser la referencia
+          if (!parte.toLowerCase().contains('banco:') && 
+              !parte.toLowerCase().contains('observaciones:') &&
+              parte.isNotEmpty) {
+            // Remover "Referencia:" o "Ref:" si existe
+            var refTemp = parte.replaceAll(RegExp(r'referencia:\s*', caseSensitive: false), '');
+            refTemp = refTemp.replaceAll(RegExp(r'ref:\s*', caseSensitive: false), '');
+            refTemp = refTemp.trim();
+            if (refTemp.isNotEmpty) {
+              referencia = refTemp;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    // Si no se encontró banco ni referencia, usar todo como notas
+    if (banco == null && referencia == null) {
+      notas = paymentNotes;
+    } else {
+      // Extraer notas (lo que sobra después de banco y referencia)
+      var tempNotes = paymentNotes;
+      if (banco != null) {
+        tempNotes = tempNotes.replaceAll(RegExp(r'banco:\s*[^|]+', caseSensitive: false), '').trim();
+        if (referencia != null) {
+          tempNotes = tempNotes.replaceAll(RegExp(r'[|]\s*' + referencia.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+        } else {
+          tempNotes = tempNotes.replaceAll('|', '').trim();
+        }
+      }
+      if (tempNotes.isNotEmpty && tempNotes != banco && tempNotes != referencia) {
+        notas = tempNotes;
+      }
+    }
+    
+    // Construir widgets
+    widgets.add(
+      Row(
+        children: [
+          Icon(Icons.payment, size: 16, color: AppColors.info),
+          const SizedBox(width: 8),
+          Text(
+            'Información del pago:',
+            style: TextStyle(
+              fontSize: widget.isTablet ? 11.0 : 10.0,
+              color: AppColors.info,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+    
+    if (banco != null && banco.isNotEmpty) {
+      widgets.add(const SizedBox(height: 6));
+      widgets.add(
+        Text(
+          'Banco: $banco',
+          style: TextStyle(
+            fontSize: widget.isTablet ? 10.0 : 9.0,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+    
+    if (referencia != null && referencia.isNotEmpty) {
+      widgets.add(const SizedBox(height: 4));
+      widgets.add(
+        Text(
+          'Referencia: $referencia',
+          style: TextStyle(
+            fontSize: widget.isTablet ? 10.0 : 9.0,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+    
+    // Solo mostrar notas si no contienen información ya mostrada (banco o referencia)
+    if (notas != null && notas.isNotEmpty) {
+      // Limpiar notas de cualquier referencia duplicada
+      var notasLimpias = notas;
+      if (referencia != null && referencia.isNotEmpty) {
+        // Remover cualquier mención de "Referencia: X" o "Ref: X" de las notas
+        notasLimpias = notasLimpias.replaceAll(RegExp(r'(?:referencia|ref):\s*' + referencia.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+        notasLimpias = notasLimpias.replaceAll(RegExp(r'\|\s*(?:referencia|ref):\s*' + referencia.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+      }
+      if (banco != null && banco.isNotEmpty) {
+        // Remover cualquier mención de "Banco: X" de las notas
+        notasLimpias = notasLimpias.replaceAll(RegExp(r'banco:\s*' + banco.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+        notasLimpias = notasLimpias.replaceAll(RegExp(r'\|\s*banco:\s*' + banco.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+      }
+      // Limpiar pipes sobrantes y espacios
+      notasLimpias = notasLimpias.replaceAll(RegExp(r'^\|\s*|\s*\|$'), '').trim();
+      
+      // Solo mostrar si quedó algo útil después de limpiar
+      if (notasLimpias.isNotEmpty && notasLimpias != banco && notasLimpias != referencia) {
+        widgets.add(const SizedBox(height: 4));
+        widgets.add(
+          Text(
+            'Notas: $notasLimpias',
+            style: TextStyle(
+              fontSize: widget.isTablet ? 10.0 : 9.0,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        );
+      }
+    }
+    
+    return widgets;
+  }
+  
+  // Parsear detalles adicionales de un pago (banco, referencia, observaciones)
+  List<Widget> _parsePaymentDetails(String detalles) {
+    final List<Widget> widgets = [];
+    final detallesLower = detalles.toLowerCase();
+    
+    // Buscar banco
+    if (detallesLower.contains('banco:')) {
+      final bancoMatch = RegExp(r'banco:\s*([^|]+)', caseSensitive: false).firstMatch(detalles);
+      if (bancoMatch != null) {
+        final banco = bancoMatch.group(1)?.trim();
+        if (banco != null && banco.isNotEmpty) {
+          widgets.add(
+            Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: Text(
+                'Banco: $banco',
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 9.0 : 8.5,
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+    
+    // Buscar referencia
+    if (detallesLower.contains('referencia:') || detallesLower.contains('ref:')) {
+      final refMatch = RegExp(r'(?:referencia|ref):\s*([^|]+)', caseSensitive: false).firstMatch(detalles);
+      if (refMatch != null) {
+        final referencia = refMatch.group(1)?.trim();
+        if (referencia != null && referencia.isNotEmpty) {
+          widgets.add(
+            Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: Text(
+                'Referencia: $referencia',
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 9.0 : 8.5,
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+    
+    // Buscar observaciones (evitar duplicar si solo repite Banco/Referencia)
+    if (detallesLower.contains('observaciones:')) {
+      final obsMatch = RegExp(r'observaciones:\s*(.+)', caseSensitive: false).firstMatch(detalles);
+      if (obsMatch != null) {
+        final observaciones = obsMatch.group(1)?.trim();
+        if (observaciones != null && observaciones.isNotEmpty) {
+          final o = observaciones.toLowerCase();
+          final soloBancoRef = (o.contains('banco:') && (o.contains('referencia:') || o.contains('ref:')));
+          if (!soloBancoRef) {
+            widgets.add(
+              Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Text(
+                  'Observaciones: $observaciones',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 9.0 : 8.5,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    return widgets;
+  }
+
+  // Formatear método de pago en español
+  String _formatPaymentMethod(String? paymentMethod) {
+    if (paymentMethod == null || paymentMethod.isEmpty) {
+      return 'No especificado';
+    }
+    
+    final method = paymentMethod.trim().toLowerCase();
+    
+    // Normalizar a español
+    if (method.contains('efectivo') || method == 'cash') {
+      return 'Efectivo';
+    }
+    if (method.contains('transferencia') || method == 'transfer') {
+      return 'Transferencia';
+    }
+    if (method.contains('tarjeta débito') || method.contains('debito')) {
+      return 'Tarjeta Débito';
+    }
+    if (method.contains('tarjeta crédito') || method.contains('credito')) {
+      return 'Tarjeta Crédito';
+    }
+    if (method.contains('tarjeta') || method == 'card') {
+      return 'Tarjeta';
+    }
+    if (method.contains('mixto') || method == 'mixed' || method.contains('pago mixto')) {
+      return 'Pago Mixto';
+    }
+    
+    // Si ya está en español, capitalizar correctamente
+    return paymentMethod
+        .split(' ')
+        .map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+        })
+        .join(' ');
   }
 }
 

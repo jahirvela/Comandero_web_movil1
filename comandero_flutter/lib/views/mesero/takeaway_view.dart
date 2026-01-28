@@ -631,6 +631,7 @@ class _TakeawayViewState extends State<TakeawayView> {
               
               allItems.add({
                 'nombre': item['productoNombre'] as String? ?? 'Producto',
+                'tamano': item['productoTamanoEtiqueta'] as String?,
                 'cantidad': cantidad,
                 'precioUnitario': precioUnitario,
                 'subtotal': totalLinea, // Asegurar que siempre tenga el valor calculado correctamente
@@ -800,6 +801,7 @@ class _TakeawayViewState extends State<TakeawayView> {
                               rows: allItems.map((item) {
                                 final quantity = item['cantidad'] as int? ?? 1;
                                 final nombre = item['nombre'] as String? ?? 'Producto';
+                                final tamano = item['tamano'] as String? ?? '';
                                 final unitPrice = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
                                 
                                 // CRÍTICO: Recalcular subtotal siempre como cantidad × precioUnitario
@@ -822,7 +824,9 @@ class _TakeawayViewState extends State<TakeawayView> {
                                     ),
                                     DataCell(
                                       Text(
-                                        nombre,
+                                        tamano.isNotEmpty
+                                            ? '$nombre ($tamano)'
+                                            : nombre,
                                         style: TextStyle(fontSize: isTablet ? 13.0 : 11.0),
                                       ),
                                     ),

@@ -29,7 +29,9 @@ class ProductModifierModal extends StatefulWidget {
 class _ProductModifierModalState extends State<ProductModifierModal> {
   int quantity = 1;
   String? selectedSauce;
-  String? selectedSize; // Para consomés y bebidas
+  String? selectedSize;
+  int? selectedSizeId;
+  double? selectedSizePrice;
   String? selectedTemperature; // Para bebidas
   final Map<String, bool> selectedExtras = {};
   final Map<String, double> extraPrices = {};
@@ -59,6 +61,15 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
     super.initState();
     _loadProductsFromDB();
   }
+
+  List<Map<String, dynamic>> get _sizes {
+    final raw = widget.product['sizes'] as List<dynamic>?;
+    if (raw == null) return [];
+    return raw.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+  }
+
+  bool get _hasSizes =>
+      (widget.product['hasSizes'] as bool? ?? false) || _sizes.isNotEmpty;
 
   Future<void> _loadProductsFromDB() async {
     setState(() {
@@ -155,9 +166,13 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
       selectedSauce = null;
     }
 
-    // Inicializar tamaño para consomés
-    if (category == 'Consomes') {
-      selectedSize = 'Mediano';
+    // Inicializar tamaño desde la configuración del producto
+    if (_hasSizes && _sizes.isNotEmpty) {
+      final first = _sizes.first;
+      selectedSize = (first['name'] ?? first['nombre'] ?? first['etiqueta'])
+          ?.toString();
+      selectedSizeId = (first['id'] as num?)?.toInt();
+      selectedSizePrice = (first['price'] ?? first['precio'] ?? 0).toDouble();
     }
 
     // Inicializar temperatura para bebidas
@@ -180,22 +195,9 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
 
   double get totalPrice {
     final priceValue = widget.product['price'];
-    double basePrice = (priceValue is num ? priceValue.toDouble() : 0.0);
+    double basePrice = selectedSizePrice ??
+        (priceValue is num ? priceValue.toDouble() : 0.0);
     if (basePrice.isNaN || basePrice.isInfinite) basePrice = 0.0;
-
-    // Aplicar precio según tamaño si es consomé
-    if (widget.product['category'] == 'Consomes' && selectedSize != null) {
-      if (selectedSize == 'Chico') {
-        basePrice = (priceValue is num ? priceValue.toDouble() : 0.0);
-        if (basePrice.isNaN || basePrice.isInfinite) basePrice = 0.0;
-      } else if (selectedSize == 'Mediano') {
-        basePrice = (priceValue is num ? priceValue.toDouble() : 0.0) + 10;
-        if (basePrice.isNaN || basePrice.isInfinite) basePrice = 10.0;
-      } else if (selectedSize == 'Grande') {
-        basePrice = (priceValue is num ? priceValue.toDouble() : 0.0) + 20;
-        if (basePrice.isNaN || basePrice.isInfinite) basePrice = 20.0;
-      }
-    }
 
     // Agregar precio de extras
     double extrasTotal = 0.0;
@@ -254,8 +256,8 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                     _buildQuantitySection(isTablet),
                     SizedBox(height: AppTheme.spacingLG),
 
-                    // Tamaño (solo para consomés)
-                    if (category == 'Consomes') ...[
+                    // Tamaño (si el producto tiene tamaños configurados)
+                    if (_hasSizes) ...[
                       _buildSizeSection(isTablet),
                       SizedBox(height: AppTheme.spacingLG),
                     ],
@@ -383,8 +385,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                           color: AppColors.textSecondary,
                         ),
                       ),
-                      if (widget.product['category'] == 'Consomes' &&
-                          selectedSize != null) ...[
+                      if (_hasSizes && selectedSize != null) ...[
                         SizedBox(height: AppTheme.spacingSM),
                         Text(
                           'Tamaño seleccionado: $selectedSize',
@@ -411,7 +412,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                         borderRadius: BorderRadius.circular(AppTheme.radiusSM),
                       ),
                       child: Text(
-                        '\$${((widget.product['price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0)}',
+                        '\$${(selectedSizePrice ?? (widget.product['price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0)}',
                         style: TextStyle(
                           fontSize: isTablet ? 18.0 : 16.0,
                           fontWeight: AppTheme.fontWeightBold,
@@ -537,21 +538,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
   }
 
   Widget _buildSizeSection(bool isTablet) {
-    final priceValue = widget.product['price'];
-    final basePrice = (priceValue is num ? priceValue.toDouble() : 0.0);
-    final safeBasePrice = basePrice.isNaN || basePrice.isInfinite ? 0.0 : basePrice;
-    
-    final sizes = [
-      {'name': 'Chico', 'price': safeBasePrice},
-      {
-        'name': 'Mediano',
-        'price': safeBasePrice + 10,
-      },
-      {
-        'name': 'Grande',
-        'price': safeBasePrice + 20,
-      },
-    ];
+    final sizes = _sizes;
 
     return Card(
       elevation: 1,
@@ -565,7 +552,7 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Selecciona tamaño: Chico / Mediano / Grande',
+              'Selecciona tamaño',
               style: TextStyle(
                 fontSize: isTablet ? 16.0 : 14.0,
                 fontWeight: AppTheme.fontWeightSemibold,
@@ -578,20 +565,26 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 title: Text(
-                  '${size['name']} - \$${((size['price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0)}',
+                  '${size['name'] ?? size['nombre'] ?? size['etiqueta']} - \$${((size['price'] ?? size['precio'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0)}',
                 ),
                 trailing: Icon(
-                  selectedSize == size['name']
+                  selectedSize ==
+                          (size['name'] ?? size['nombre'] ?? size['etiqueta'])
                       ? Icons.check_circle
                       : Icons.radio_button_unchecked,
-                  color: selectedSize == size['name']
+                  color: selectedSize ==
+                          (size['name'] ?? size['nombre'] ?? size['etiqueta'])
                       ? AppColors.primary
                       : AppColors.border,
                   size: 20,
                 ),
                 onTap: () {
                   setState(() {
-                    selectedSize = size['name'] as String;
+                    selectedSize = (size['name'] ?? size['nombre'] ?? size['etiqueta'])
+                        ?.toString();
+                    selectedSizeId = (size['id'] as num?)?.toInt();
+                    selectedSizePrice =
+                        (size['price'] ?? size['precio'] ?? 0).toDouble();
                   });
                 },
               ),
@@ -938,11 +931,19 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
                   }
                 }
 
+                final baseUnitPrice =
+                    selectedSizePrice ??
+                    (widget.product['price'] as num?)?.toDouble() ??
+                    0.0;
+
                 final result = {
                   'quantity': quantity,
                   'sauce': finalSauce,
                   'saucePrice': saucePrice, // Precio de la salsa seleccionada
                   'size': selectedSize,
+                  'sizeId': selectedSizeId,
+                  'sizePrice': baseUnitPrice,
+                  'unitPrice': baseUnitPrice,
                   'temperature': selectedTemperature,
                   'extras': selectedExtras.entries
                       .where((e) => e.value)

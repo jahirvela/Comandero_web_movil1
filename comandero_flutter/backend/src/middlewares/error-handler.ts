@@ -33,7 +33,26 @@ export const errorHandler = (err: ApiError, _req: Request, res: Response, _next:
       error: 'duplicate_entry',
       message: message.includes('ux_producto_categoria_nombre') 
         ? 'Ya existe un producto con este nombre en esta categoría'
-        : message
+        : message.includes('ux_mesa_codigo')
+          ? 'Ya existe una mesa con ese número'
+          : message
+    });
+  }
+
+  // Manejar errores de FK (registro referenciado) - por ejemplo al borrar usuario con historial
+  if ((err as any).code === 'ER_ROW_IS_REFERENCED_2' ||
+      (typeof err.message === 'string' && err.message.includes('foreign key constraint fails'))) {
+    const mysqlError = err as any;
+    logger.warn({ err: mysqlError }, 'Intento de eliminar registro con referencias');
+
+    const rawMessage = err.message || 'No se puede eliminar porque existen registros relacionados';
+    const isUsuarioMesaHist = rawMessage.includes('mesa_estado_hist') || rawMessage.includes('fk_meh_usuario');
+
+    return res.status(409).json({
+      error: 'reference_constraint',
+      message: isUsuarioMesaHist
+        ? 'No se puede eliminar este usuario porque está referenciado en el historial de mesas. Puedes desactivarlo (activo=0) en lugar de eliminarlo permanentemente.'
+        : 'No se puede eliminar este registro porque tiene información relacionada en el sistema.'
     });
   }
 

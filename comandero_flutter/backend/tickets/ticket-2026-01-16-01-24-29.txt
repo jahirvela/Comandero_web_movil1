@@ -1,0 +1,24 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000100
+Fecha: 12/12/25, 4:54 a.m.
+Mesa: 11
+Cajero: Administrador
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  1  Agua de Jamaica Hecha ...     0.00
+------------------------------------------
+Subtotal:                    $   20.00
+E1TOTAL:                      $   20.00
+E0==========================================
+a1
+k
+ORD-000100
+
+ORD-000100
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

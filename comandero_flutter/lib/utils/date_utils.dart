@@ -49,10 +49,10 @@ class AppDateUtils {
         } else if (fechaLimpia.contains('+') || 
                    (fechaLimpia.length > 19 && fechaLimpia.substring(19).contains('-'))) {
           // Tiene offset de zona horaria explícito (ej: +00:00 o -06:00)
-          final parsed = DateTime.parse(fechaLimpia);
+          // IMPORTANTE: DateTime.parse() convierte automáticamente a UTC internamente,
+          // por lo que debemos extraer los componentes de la cadena original
           
           // Verificar si el offset es de CDMX (-06:00 o -05:00)
-          // Si es así, la fecha ya está en CDMX, solo ajustar a nuestra representación
           final offsetMatch = RegExp(r'([+-])(\d{2}):(\d{2})$').firstMatch(fechaLimpia);
           if (offsetMatch != null) {
             final offsetSign = offsetMatch.group(1);
@@ -60,25 +60,46 @@ class AppDateUtils {
             
             // CDMX es UTC-6 (horario estándar) o UTC-5 (horario de verano)
             if (offsetSign == '-' && (offsetHours == 6 || offsetHours == 5)) {
-              // La fecha ya está en CDMX, mantenerla pero ajustar a nuestra representación
-              // Crear DateTime local con los valores de la fecha parseada
-              parsedDate = DateTime(
-                parsed.year,
-                parsed.month,
-                parsed.day,
-                parsed.hour,
-                parsed.minute,
-                parsed.second,
-                parsed.millisecond,
-              );
+              // La fecha ya está en CDMX, extraer componentes de la cadena original
+              // NO usar DateTime.parse() porque convierte a UTC
+              final dateTimeMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?').firstMatch(fechaLimpia);
+              if (dateTimeMatch != null) {
+                final year = int.parse(dateTimeMatch.group(1)!);
+                final month = int.parse(dateTimeMatch.group(2)!);
+                final day = int.parse(dateTimeMatch.group(3)!);
+                final hour = int.parse(dateTimeMatch.group(4)!);
+                final minute = int.parse(dateTimeMatch.group(5)!);
+                final second = int.parse(dateTimeMatch.group(6)!);
+                final millisStr = dateTimeMatch.group(7);
+                final millis = millisStr != null 
+                    ? int.parse(millisStr.padRight(3, '0').substring(0, 3))
+                    : 0;
+                
+                // Crear DateTime local con los valores originales (ya en CDMX)
+                parsedDate = DateTime(year, month, day, hour, minute, second, millis);
+              } else {
+                // Fallback: usar DateTime.parse y luego extraer como local
+                final parsed = DateTime.parse(fechaLimpia);
+                parsedDate = DateTime(
+                  parsed.year,
+                  parsed.month,
+                  parsed.day,
+                  parsed.hour,
+                  parsed.minute,
+                  parsed.second,
+                  parsed.millisecond,
+                );
+              }
             } else {
               // Es otra zona horaria, convertir a CDMX
               // Primero convertir a UTC y luego a CDMX
+              final parsed = DateTime.parse(fechaLimpia);
               final utcDate = parsed.toUtc();
               parsedDate = _utcToCdmx(utcDate);
             }
           } else {
             // No se pudo determinar el offset, asumir UTC y convertir a CDMX
+            final parsed = DateTime.parse(fechaLimpia);
             final utcDate = parsed.toUtc();
             parsedDate = _utcToCdmx(utcDate);
           }

@@ -9,6 +9,8 @@ class ProductModel {
   final bool hot;
   final List<String>? extras;
   final Map<String, dynamic>? customizations;
+  final List<ProductSize> sizes;
+  final bool hasSizes;
 
   ProductModel({
     required this.id,
@@ -21,9 +23,15 @@ class ProductModel {
     this.hot = false,
     this.extras,
     this.customizations,
+    this.sizes = const [],
+    this.hasSizes = false,
   });
 
   factory ProductModel.fromJson(Map<String, dynamic> json) {
+    final sizes = (json['sizes'] as List<dynamic>?)
+            ?.map((s) => ProductSize.fromJson(s as Map<String, dynamic>))
+            .toList() ??
+        [];
     return ProductModel(
       id: json['id'],
       name: json['name'],
@@ -35,6 +43,8 @@ class ProductModel {
       hot: json['hot'] ?? false,
       extras: json['extras'] != null ? List<String>.from(json['extras']) : null,
       customizations: json['customizations'],
+      sizes: sizes,
+      hasSizes: sizes.isNotEmpty || (json['hasSizes'] as bool? ?? false),
     );
   }
 
@@ -50,6 +60,8 @@ class ProductModel {
       'hot': hot,
       'extras': extras,
       'customizations': customizations,
+      'sizes': sizes.map((s) => s.toJson()).toList(),
+      'hasSizes': hasSizes,
     };
   }
 
@@ -64,6 +76,8 @@ class ProductModel {
     bool? hot,
     List<String>? extras,
     Map<String, dynamic>? customizations,
+    List<ProductSize>? sizes,
+    bool? hasSizes,
   }) {
     return ProductModel(
       id: id ?? this.id,
@@ -76,7 +90,37 @@ class ProductModel {
       hot: hot ?? this.hot,
       extras: extras ?? this.extras,
       customizations: customizations ?? this.customizations,
+      sizes: sizes ?? this.sizes,
+      hasSizes: hasSizes ?? this.hasSizes,
     );
+  }
+}
+
+class ProductSize {
+  final int? id;
+  final String name;
+  final double price;
+
+  ProductSize({
+    this.id,
+    required this.name,
+    required this.price,
+  });
+
+  factory ProductSize.fromJson(Map<String, dynamic> json) {
+    return ProductSize(
+      id: (json['id'] as num?)?.toInt(),
+      name: (json['name'] ?? json['nombre'] ?? json['etiqueta'] ?? '').toString(),
+      price: (json['price'] ?? json['precio'] ?? 0).toDouble(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'price': price,
+    };
   }
 }
 

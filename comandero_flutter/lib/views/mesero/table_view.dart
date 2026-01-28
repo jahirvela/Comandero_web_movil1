@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
+import '../../models/product_model.dart';
 import '../../models/table_model.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/date_utils.dart' as date_utils;
+import '../../services/comandas_service.dart';
 import 'alert_to_kitchen_modal.dart';
 
 class TableView extends StatelessWidget {
@@ -22,6 +24,15 @@ class TableView extends StatelessWidget {
           });
           return const Center(child: CircularProgressIndicator());
         }
+        
+        // Si esta mesa está en modo dividido, redirigir a DividedAccountView
+        if (controller.isDividedAccountMode) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            controller.setCurrentView('divided_account');
+          });
+          return const Center(child: CircularProgressIndicator());
+        }
+        
         final cart = controller.getCurrentCart();
 
         return LayoutBuilder(
@@ -44,6 +55,15 @@ class TableView extends StatelessWidget {
         );
       },
     );
+  }
+
+  double _getUnitPrice(CartItem item) {
+    final customPrice =
+        item.customizations['sizePrice'] ?? item.customizations['unitPrice'];
+    if (customPrice is num) {
+      return customPrice.toDouble();
+    }
+    return item.product.price;
   }
 
   Widget _buildDesktopLayout(
@@ -114,7 +134,13 @@ class TableView extends StatelessWidget {
         const SizedBox(height: 24),
 
         // Consumo de mesa
-        _buildConsumptionCard(context, controller, table, cart, isTablet),
+        _buildConsumptionCard(
+          context,
+          controller,
+          table,
+          cart.cast<CartItem>(),
+          isTablet,
+        ),
         const SizedBox(height: 24),
 
         // Acciones
@@ -281,7 +307,7 @@ class TableView extends StatelessWidget {
     BuildContext context,
     MeseroController controller,
     TableModel table,
-    List cart,
+    List<CartItem> cart,
     bool isTablet,
   ) {
     final total = controller.calculateTotal();
@@ -376,7 +402,7 @@ class TableView extends StatelessWidget {
     );
   }
 
-  Widget _buildCartItems(List cart, bool isTablet) {
+  Widget _buildCartItems(List<CartItem> cart, bool isTablet) {
     return Column(
       children: [
         ...cart.take(3).map((item) => _buildCartItem(item, isTablet)),
@@ -396,14 +422,15 @@ class TableView extends StatelessWidget {
     );
   }
 
-  Widget _buildCartItem(dynamic item, bool isTablet) {
+  Widget _buildCartItem(CartItem item, bool isTablet) {
     // Calcular precio total del item incluyendo extras y salsas
-    final quantity = (item.customizations?['quantity'] as num?)?.toInt() ?? 1;
-    double unitPrice = item.product?.price ?? item.price ?? 0.0;
+    final quantity = (item.customizations['quantity'] as num?)?.toInt() ?? 1;
+    double unitPrice = _getUnitPrice(item);
+    final sizeLabel = item.customizations['size'] as String?;
 
     // Agregar precio de extras
     final extraPrices =
-        item.customizations?['extraPrices'] as List<dynamic>? ?? [];
+        item.customizations['extraPrices'] as List<dynamic>? ?? [];
     for (var priceEntry in extraPrices) {
       if (priceEntry is Map) {
         final precio = (priceEntry['price'] as num?)?.toDouble() ?? 0.0;
@@ -413,7 +440,7 @@ class TableView extends StatelessWidget {
 
     // Agregar precio de salsa
     final saucePrice =
-        (item.customizations?['saucePrice'] as num?)?.toDouble() ?? 0.0;
+        (item.customizations['saucePrice'] as num?)?.toDouble() ?? 0.0;
     if (saucePrice > 0) {
       unitPrice += saucePrice;
     }
@@ -438,14 +465,14 @@ class TableView extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      item.product?.name ?? item.name ?? 'Producto',
+                      item.product.name,
                       style: TextStyle(
                         fontSize: isTablet ? 16.0 : 14.0,
                         fontWeight: FontWeight.w500,
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    if (item.product?.hot == true) ...[
+                    if (item.product.hot == true) ...[
                       const SizedBox(width: 8),
                       Icon(
                         Icons.local_fire_department,
@@ -455,7 +482,7 @@ class TableView extends StatelessWidget {
                     ],
                   ],
                 ),
-                if (item.customizations?.isNotEmpty == true) ...[
+                if (item.customizations.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
                     'Cantidad: $quantity',
@@ -464,6 +491,16 @@ class TableView extends StatelessWidget {
                       color: AppColors.textSecondary,
                     ),
                   ),
+                  if (sizeLabel != null && sizeLabel.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      'Tamaño: $sizeLabel',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 10.0,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -526,7 +563,10 @@ class TableView extends StatelessWidget {
           width: double.infinity,
           height: isTablet ? 56.0 : 48.0,
           child: ElevatedButton.icon(
-            onPressed: () => controller.setCurrentView('menu'),
+            onPressed: () {
+              // Ir directo al menú para agregar pedido
+              controller.setCurrentView('menu');
+            },
             icon: const Icon(Icons.add),
             label: Text(
               'Agregar pedido',
@@ -535,6 +575,33 @@ class TableView extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Botón Dividir Cuenta
+        SizedBox(
+          width: double.infinity,
+          height: isTablet ? 48.0 : 44.0,
+          child: OutlinedButton.icon(
+            onPressed: () {
+              // Activar modo dividido y navegar a la vista de cuenta dividida
+              controller.setDividedAccountMode(true);
+              controller.setCurrentView('divided_account');
+            },
+            icon: const Icon(Icons.people),
+            label: Text(
+              'Dividir Cuenta',
+              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.info,
+              side: BorderSide(
+                color: AppColors.info.withValues(alpha: 0.3),
+              ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -628,6 +695,8 @@ class TableView extends StatelessWidget {
 
     if (!shouldClose) return;
 
+    // Resetear el modo dividido si estaba activo
+    controller.resetDividedAccountModeForTable(table.id.toString());
     controller.closeTable(table.id);
     controller.setCurrentView('floor');
 
@@ -656,11 +725,10 @@ class TableView extends StatelessWidget {
 
         // Cargar historial desde backend al mostrar la vista
         // Esto asegura que siempre tengamos datos actualizados
-        if (orderHistory.isEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            ctrl.loadTableOrderHistory(table.id);
-          });
-        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          // Siempre recargar para asegurar datos actualizados
+          ctrl.loadTableOrderHistory(table.id);
+        });
 
         // El controller ya filtra las órdenes pagadas/canceladas/cerradas
         // Solo normalizar para mostrar
@@ -784,6 +852,31 @@ class TableView extends StatelessWidget {
                               ),
                             ),
                           ),
+                          SizedBox(
+                            width: isTablet ? 160 : 150,
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                // Resetear la bandera de limpiado antes de recargar
+                                ctrl.resetHistoryClearedFlag(table.id);
+                                await ctrl.forceReloadTableHistory(table.id);
+                              },
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: Text(
+                                'Recargar historial',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 14.0 : 12.0,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.info,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isTablet ? 12.0 : 8.0,
+                                  vertical: isTablet ? 12.0 : 8.0,
+                                ),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -858,13 +951,44 @@ class TableView extends StatelessWidget {
     bool isTablet,
     TableModel table,
   ) {
-    return ListView.builder(
-      padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
-      itemCount: orderHistory.length,
-      itemBuilder: (context, index) {
-        final order = orderHistory[index];
-        return _buildOrderHistoryItem(context, order, isTablet, table);
-      },
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
+            itemCount: orderHistory.length,
+            itemBuilder: (context, index) {
+              final order = orderHistory[index];
+              return _buildOrderHistoryItem(context, order, isTablet, table);
+            },
+          ),
+        ),
+        // Botón de recargar historial siempre visible
+        Padding(
+          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+          child: ElevatedButton.icon(
+            onPressed: () async {
+              final ctrl = Provider.of<MeseroController>(
+                context,
+                listen: false,
+              );
+              // Resetear la bandera de limpiado antes de recargar
+              ctrl.resetHistoryClearedFlag(table.id);
+              await ctrl.forceReloadTableHistory(table.id);
+            },
+            icon: const Icon(Icons.refresh),
+            label: const Text('Recargar historial'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.info,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: isTablet ? 16.0 : 12.0,
+                vertical: isTablet ? 12.0 : 10.0,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -974,23 +1098,75 @@ class TableView extends StatelessWidget {
               ),
             ],
           ),
-          if (_canSendAlertForStatus(order['status'])) ...[
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
-                onPressed: () => _showAlertModalForOrder(context, table, order),
-                icon: const Icon(Icons.warning_amber_rounded),
-                label: const Text('Enviar alerta'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.warning,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 16.0 : 12.0,
-                    vertical: isTablet ? 10.0 : 8.0,
+          if (order['estimatedTime'] != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  Icons.schedule,
+                  size: isTablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Tiempo de salida: ${order['estimatedTime']} min',
+                  style: TextStyle(
+                    fontSize: isTablet ? 12.0 : 10.0,
+                    color: AppColors.textSecondary,
                   ),
                 ),
-              ),
+              ],
+            ),
+          ],
+          // Botones de acción
+          if (_canSendAlertForStatus(order['status']) || order['ordenId'] != null) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: [
+                // Botón de reimpresión de comanda
+                if (order['ordenId'] != null)
+                  OutlinedButton.icon(
+                    onPressed: () => _reimprimirComanda(context, order['ordenId'] as int, isTablet),
+                    icon: const Icon(Icons.print_outlined, size: 16),
+                    label: Text(
+                      'Reimprimir comanda',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 10.0,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.info,
+                      side: BorderSide(color: AppColors.info),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isTablet ? 12.0 : 10.0,
+                        vertical: isTablet ? 8.0 : 6.0,
+                      ),
+                    ),
+                  ),
+                // Botón de enviar alerta
+                if (_canSendAlertForStatus(order['status']))
+                  ElevatedButton.icon(
+                    onPressed: () => _showAlertModalForOrder(context, table, order),
+                    icon: const Icon(Icons.warning_amber_rounded, size: 16),
+                    label: Text(
+                      'Enviar alerta',
+                      style: TextStyle(
+                        fontSize: isTablet ? 12.0 : 10.0,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.warning,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isTablet ? 12.0 : 10.0,
+                        vertical: isTablet ? 8.0 : 6.0,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ],
         ],
@@ -1015,6 +1191,94 @@ class TableView extends StatelessWidget {
       tableNumber: table.number.toString(),
       orderId: orderId,
     );
+  }
+
+  void _reimprimirComanda(
+    BuildContext context,
+    int ordenId,
+    bool isTablet,
+  ) async {
+    // Mostrar diálogo de confirmación
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Reimprimir comanda',
+          style: TextStyle(
+            fontSize: isTablet ? 20.0 : 18.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          '¿Deseas reimprimir la comanda de la orden ORD-${ordenId.toString().padLeft(6, '0')}?',
+          style: TextStyle(
+            fontSize: isTablet ? 14.0 : 12.0,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.info,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Reimprimir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    // Mostrar indicador de carga
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (loadingContext) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      final comandasService = ComandasService();
+      final resultado = await comandasService.reimprimirComanda(ordenId);
+
+      if (!context.mounted) return;
+      Navigator.of(context).pop(); // Cerrar loading
+
+      if (resultado['exito'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(resultado['mensaje'] as String? ?? 'Comanda reimpresa exitosamente'),
+            backgroundColor: AppColors.success,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(resultado['mensaje'] as String? ?? 'Error al reimprimir comanda'),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.of(context).pop(); // Cerrar loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al reimprimir comanda: $e'),
+          backgroundColor: AppColors.error,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Widget _buildRestaurantInfo(bool isTablet) {
@@ -1345,11 +1609,31 @@ class TableView extends StatelessWidget {
     // Tomar TODAS las órdenes activas para agrupar el consumo completo
     final allOrders = ordenesNoPagadas;
 
+    // Verificar si alguna orden es cuenta dividida
+    final isDividedAccount = allOrders.any((order) => 
+      order['isDividedAccount'] == true && 
+      order['personAssignments'] != null
+    );
+
     // Calcular consumo total de todas las órdenes abiertas
     double totalConsumo = 0.0;
     final allItems = <Map<String, dynamic>>[];
+    final Map<String, List<Map<String, dynamic>>> itemsByPerson = {}; // Para cuenta dividida
+    final Map<String, String> personNamesMap = {}; // Para cuenta dividida
 
     for (var order in allOrders) {
+      // Si es cuenta dividida, obtener nombres de personas
+      if (order['isDividedAccount'] == true && order['personNames'] != null) {
+        final names = order['personNames'] as Map<String, dynamic>?;
+        if (names != null) {
+          names.forEach((key, value) {
+            personNamesMap[key] = value.toString();
+            if (!itemsByPerson.containsKey(key)) {
+              itemsByPerson[key] = [];
+            }
+          });
+        }
+      }
       final ordenId = order['ordenId'] as int?;
       if (ordenId != null) {
         try {
@@ -1361,31 +1645,68 @@ class TableView extends StatelessWidget {
               final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
               final precioUnitario =
                   (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
-              
+
               // CRÍTICO: Calcular totalLinea siempre como cantidad × precioUnitario
               // Si totalLinea viene del backend como 0 o incorrecto, recalcular
-              final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+              final totalLineaBackend =
+                  (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
               final totalLineaCalculado = precioUnitario * cantidad;
-              
+
               // Usar el cálculo si el backend viene con 0 o si el calculado es diferente (tolerancia de 0.01)
-              final totalLinea = (totalLineaBackend <= 0.01 || (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
+              final totalLinea =
+                  (totalLineaBackend <= 0.01 ||
+                      (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
                   ? totalLineaCalculado
                   : totalLineaBackend;
-              
+
               totalConsumo += totalLinea;
 
-              allItems.add({
+              final itemData = {
                 'nombre': item['productoNombre'] as String? ?? 'Producto',
+                'tamano': item['productoTamanoEtiqueta'] as String?,
                 'cantidad': cantidad,
                 'precioUnitario': precioUnitario,
-                'subtotal': totalLinea, // Asegurar que siempre tenga el valor calculado correctamente
+                'subtotal':
+                    totalLinea, // Asegurar que siempre tenga el valor calculado correctamente
                 'extras': item['modificadores'] as List<dynamic>? ?? [],
                 'nota': item['nota'] as String?,
                 'ordenId':
                     ordenId, // Agregar ID de orden para identificar agrupación
                 'ordenNumero':
                     'ORD-${ordenId.toString().padLeft(6, '0')}', // Formato visible
-              });
+              };
+              
+              // Si es cuenta dividida, asignar a la persona correspondiente
+              if (isDividedAccount && order['personAssignments'] != null) {
+                final personAssignments =
+                    order['personAssignments'] as Map<String, dynamic>?;
+                final itemKey = '${itemData['nombre']}|${cantidad}';
+                String? assignedPersonId;
+                
+                // Buscar a qué persona pertenece este item
+                personAssignments?.forEach((personId, items) {
+                  if (items is List && items.contains(itemKey)) {
+                    assignedPersonId = personId;
+                  }
+                });
+                
+                if (assignedPersonId != null) {
+                  final key = assignedPersonId!;
+                  if (!itemsByPerson.containsKey(key)) {
+                    itemsByPerson[key] = [];
+                  }
+                  itemsByPerson[key]!.add(itemData);
+                } else {
+                  // Item sin asignar
+                  if (!itemsByPerson.containsKey('unassigned')) {
+                    itemsByPerson['unassigned'] = [];
+                  }
+                  itemsByPerson['unassigned']!.add(itemData);
+                }
+              } else {
+                // Cuenta general, agregar a lista plana
+                allItems.add(itemData);
+              }
             }
           }
         } catch (e) {
@@ -1410,6 +1731,7 @@ class TableView extends StatelessWidget {
 
               allItems.add({
                 'nombre': nombre,
+                'tamano': null,
                 'cantidad': qty,
                 'precioUnitario': precioEstimado,
                 'subtotal': subtotal,
@@ -1431,7 +1753,7 @@ class TableView extends StatelessWidget {
         final quantity = (item.customizations['quantity'] as int?) ?? 1;
 
         // Calcular precio unitario incluyendo extras y salsas
-        double unitPrice = item.product.price;
+        double unitPrice = _getUnitPrice(item);
 
         // Agregar precio de extras
         final extraPrices =
@@ -1459,6 +1781,7 @@ class TableView extends StatelessWidget {
 
         allItems.add({
           'nombre': item.product.name,
+          'tamano': item.customizations['size'] as String?,
           'cantidad': quantity,
           'precioUnitario': unitPrice,
           'subtotal': subtotal,
@@ -1539,7 +1862,139 @@ class TableView extends StatelessWidget {
                   child: Column(
                     children: [
                       // Tabla de consumo - sin scroll, todo visible
-                      if (allItems.isNotEmpty) ...[
+                      // Si es cuenta dividida, mostrar agrupado por persona
+                      if (isDividedAccount && itemsByPerson.isNotEmpty) ...[
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: itemsByPerson.entries.map((entry) {
+                                final personId = entry.key;
+                                final personItems = entry.value;
+                                final personName = personId == 'unassigned' 
+                                    ? 'Sin asignar' 
+                                    : (personNamesMap[personId] ?? 'Persona');
+                                final personSubtotal = personItems.fold<double>(
+                                  0.0,
+                                  (sum, item) {
+                                    final subtotalValue =
+                                        (item['subtotal'] as num?)?.toDouble() ??
+                                            0.0;
+                                    return sum + subtotalValue;
+                                  },
+                                );
+                                
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      // Header de la persona
+                                      Container(
+                                        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary.withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.only(
+                                            topLeft: Radius.circular(12),
+                                            topRight: Radius.circular(12),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.person,
+                                                  color: AppColors.primary,
+                                                  size: isTablet ? 20.0 : 18.0,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  personName,
+                                                  style: TextStyle(
+                                                    fontSize: isTablet ? 18.0 : 16.0,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: AppColors.textPrimary,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            Text(
+                                              'Subtotal: \$${personSubtotal.toStringAsFixed(2)}',
+                                              style: TextStyle(
+                                                fontSize: isTablet ? 16.0 : 14.0,
+                                                fontWeight: FontWeight.w600,
+                                                color: AppColors.primary,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      // Items de la persona
+                                      DataTable(
+                                        columnSpacing: isTablet ? 12.0 : 8.0,
+                                        columns: [
+                                          DataColumn(
+                                            label: Text(
+                                              'Cant.',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isTablet ? 12.0 : 10.0,
+                                              ),
+                                            ),
+                                          ),
+                                          DataColumn(
+                                            label: Text(
+                                              'Producto',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isTablet ? 12.0 : 10.0,
+                                              ),
+                                            ),
+                                          ),
+                                          DataColumn(
+                                            label: Text(
+                                              'Subtotal',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isTablet ? 12.0 : 10.0,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                        rows: personItems.map((item) {
+                                          final quantity = item['cantidad'] as int? ?? 1;
+                                          final nombre = item['nombre'] as String? ?? 'Producto';
+                                          final tamano = item['tamano'] as String? ?? '';
+                                          final subtotal = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+                                          
+                                          return DataRow(
+                                            cells: [
+                                              DataCell(Text('$quantity')),
+                                              DataCell(Text(
+                                                tamano.isNotEmpty ? '$nombre ($tamano)' : nombre,
+                                                style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                                              )),
+                                              DataCell(Text(
+                                                '\$${subtotal.toStringAsFixed(2)}',
+                                                style: TextStyle(
+                                                  fontSize: isTablet ? 12.0 : 10.0,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              )),
+                                            ],
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
+                      ] else if (allItems.isNotEmpty) ...[
                         Expanded(
                           child: SingleChildScrollView(
                             child: DataTable(
@@ -1608,6 +2063,8 @@ class TableView extends StatelessWidget {
                                 final quantity = item['cantidad'] as int? ?? 1;
                                 final nombre =
                                     item['nombre'] as String? ?? 'Producto';
+                                final tamano =
+                                    item['tamano'] as String? ?? '';
                                 final extras =
                                     item['extras'] as List<dynamic>? ?? [];
                                 final nota = item['nota'] as String?;
@@ -1615,14 +2072,20 @@ class TableView extends StatelessWidget {
                                     (item['precioUnitario'] as num?)
                                         ?.toDouble() ??
                                     0.0;
-                                
+
                                 // CRÍTICO: Recalcular subtotal siempre como cantidad × precioUnitario
                                 // Si el subtotal viene como 0 o incorrecto, usar el cálculo
-                                final subtotalBackend = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+                                final subtotalBackend =
+                                    (item['subtotal'] as num?)?.toDouble() ??
+                                    0.0;
                                 final subtotalCalculado = unitPrice * quantity;
-                                
+
                                 // Usar el cálculo si el backend viene con 0 o si hay diferencia significativa
-                                final subtotal = (subtotalBackend <= 0.01 || (subtotalCalculado - subtotalBackend).abs() > 0.01)
+                                final subtotal =
+                                    (subtotalBackend <= 0.01 ||
+                                        (subtotalCalculado - subtotalBackend)
+                                                .abs() >
+                                            0.01)
                                     ? subtotalCalculado
                                     : subtotalBackend;
 
@@ -1690,7 +2153,9 @@ class TableView extends StatelessWidget {
                                     ),
                                     DataCell(
                                       Text(
-                                        nombre,
+                                        tamano.isNotEmpty
+                                            ? '$nombre ($tamano)'
+                                            : nombre,
                                         style: TextStyle(
                                           fontSize: isTablet ? 13.0 : 11.0,
                                         ),
@@ -1936,4 +2401,5 @@ class TableView extends StatelessWidget {
       ),
     );
   }
+
 }

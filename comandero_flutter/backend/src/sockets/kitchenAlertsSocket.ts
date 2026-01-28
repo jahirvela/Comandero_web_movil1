@@ -14,6 +14,7 @@
 import type { Server, Socket } from 'socket.io';
 import { logger } from '../config/logger.js';
 import { nowMxISO } from '../config/time.js';
+import { getSocketRooms } from '../realtime/socket.js';
 import type { KitchenAlertPayload, AlertType, StationType } from '../types/kitchenAlert.js';
 import { obtenerOrdenBasePorId } from '../modules/ordenes/ordenes.repository.js';
 import { obtenerItemsOrden } from '../modules/ordenes/ordenes.repository.js';
@@ -93,8 +94,16 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
     priority?: string; // 'Normal' o 'Urgente'
   }) => {
     try {
+      // Normalizar roles para evitar problemas con mayúsculas/acentos
+      const normalizedRoles = user.roles.map((role) =>
+        role
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+      );
+
       // Validar que el usuario es mesero o capitán
-      if (!user.roles.includes('mesero') && !user.roles.includes('capitan')) {
+      if (!normalizedRoles.includes('mesero') && !normalizedRoles.includes('capitan')) {
         logger.warn(
           { socketId: socket.id, userId: user.id, roles: user.roles },
           'KitchenAlerts: Intento de crear alerta por usuario no autorizado (debe ser mesero o capitán)'
@@ -116,7 +125,7 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
       }
 
       // Determinar el rol del emisor (mesero o capitan) - debe definirse antes de usarse
-      const userRole = user.roles.includes('capitan') ? 'capitan' : 'mesero';
+      const userRole = normalizedRoles.includes('capitan') ? 'capitan' : 'mesero';
 
       logger.info(
         { socketId: socket.id, userId: user.id, orderId: data.orderId, type: data.type, role: userRole },
@@ -218,6 +227,7 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
       const alertPayload: KitchenAlertPayload = {
         orderId: data.orderId,
         tableId: tableId,
+        mesaCodigo: mesaCodigo ?? undefined,
         station: station,
         type: data.type,
         message: data.message.trim(),
@@ -239,6 +249,7 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
           type: alertPayload.type,
           createdByUsername: user.username,
           createdByRole: userRole,
+          mesaCodigo: mesaCodigo ?? undefined,
         };
         
         // Mapear el tipo de alerta al formato de BD
@@ -339,6 +350,32 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
         );
       }
 
+      // Emitir también a administradores (vista de cocina en admin)
+      const adminRoom = getSocketRooms.role('administrador');
+      io.to(adminRoom).emit('kitchen:alert:new', alertPayload);
+      logger.info(
+        {
+          socketId: socket.id,
+          userId: user.id,
+          orderId: alertPayload.orderId,
+          room: adminRoom,
+        },
+        'KitchenAlerts: Alerta emitida a administradores'
+      );
+
+      // Emitir también a meseros (para que vean alertas enviadas a cocina)
+      const meseroRoom = getSocketRooms.role('mesero');
+      io.to(meseroRoom).emit('kitchen:alert:new', alertPayload);
+      logger.info(
+        {
+          socketId: socket.id,
+          userId: user.id,
+          orderId: alertPayload.orderId,
+          room: meseroRoom,
+        },
+        'KitchenAlerts: Alerta emitida a meseros'
+      );
+
       // Enviar ACK al mesero que creó la alerta
       socket.emit('kitchen:alert:created', alertPayload);
 
@@ -403,8 +440,14 @@ export function joinKitchenRooms(socket: Socket) {
     return;
   }
 
-  // Si el usuario es cocinero, unirlo a la room general de cocina
-  if (user.roles.includes('cocinero')) {
+  // Si el usuario es cocinero o administrador, unirlo a la room general de cocina
+  const normalizedRoles = user.roles.map((role) =>
+    role
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+  );
+  if (normalizedRoles.includes('cocinero') || normalizedRoles.includes('administrador')) {
     socket.join('room:kitchen:all');
     
     // Verificar que se unió correctamente
@@ -418,29 +461,31 @@ export function joinKitchenRooms(socket: Socket) {
         rooms: rooms,
         joinedToKitchenAll: rooms.includes('room:kitchen:all')
       },
-      'KitchenAlerts: Cocinero unido a room:kitchen:all'
+      'KitchenAlerts: Usuario unido a room:kitchen:all'
     );
 
-    // Si el cocinero tiene estaciones asignadas en el handshake, unirlo también a esas rooms
-    const station = socket.handshake.auth?.station as string | undefined;
-    if (station && ['tacos', 'consomes', 'bebidas'].includes(station)) {
-      socket.join(`room:kitchen:${station}`);
-      const roomsAfterStation = Array.from(socket.rooms);
-      logger.info(
-        { 
-          socketId: socket.id, 
-          userId: user.id,
-          station,
-          rooms: roomsAfterStation,
-          joinedToStation: roomsAfterStation.includes(`room:kitchen:${station}`)
-        },
-        `KitchenAlerts: Cocinero unido a room:kitchen:${station}`
-      );
+    // Solo cocineros pueden unirse a estaciones específicas
+    if (normalizedRoles.includes('cocinero')) {
+      const station = socket.handshake.auth?.station as string | undefined;
+      if (station && ['tacos', 'consomes', 'bebidas'].includes(station)) {
+        socket.join(`room:kitchen:${station}`);
+        const roomsAfterStation = Array.from(socket.rooms);
+        logger.info(
+          {
+            socketId: socket.id,
+            userId: user.id,
+            station,
+            rooms: roomsAfterStation,
+            joinedToStation: roomsAfterStation.includes(`room:kitchen:${station}`),
+          },
+          `KitchenAlerts: Cocinero unido a room:kitchen:${station}`
+        );
+      }
     }
   } else {
     logger.info(
       { socketId: socket.id, userId: user.id, roles: user.roles },
-      'KitchenAlerts: Usuario no es cocinero, no se unirá a rooms de cocina'
+      'KitchenAlerts: Usuario no es cocinero ni administrador, no se unirá a rooms de cocina'
     );
   }
 }

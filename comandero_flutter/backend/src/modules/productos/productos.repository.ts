@@ -28,6 +28,7 @@ interface ProductoTamanoRow extends RowDataPacket {
 interface ProductoIngredienteRow extends RowDataPacket {
   id: number;
   producto_id: number;
+  producto_tamano_id?: number | null;
   inventario_item_id: number | null;
   categoria: string | null;
   nombre: string;
@@ -35,7 +36,7 @@ interface ProductoIngredienteRow extends RowDataPacket {
   cantidad_por_porcion: number;
   descontar_automaticamente: number;
   es_personalizado: number;
-  es_opcional: number;
+  es_opcional?: number;
   creado_en: Date;
   actualizado_en: Date;
 }
@@ -48,6 +49,7 @@ type ProductoTamano = {
 
 type ProductoIngrediente = {
   id: number;
+  productoTamanoId: number | null;
   inventarioItemId: number | null;
   categoria: string | null;
   nombre: string;
@@ -69,6 +71,7 @@ const mapTamanoRows = (rows: ProductoTamanoRow[]) => {
 const mapIngredienteRows = (rows: ProductoIngredienteRow[]) => {
   return rows.map<ProductoIngrediente>((row) => ({
     id: row.id,
+    productoTamanoId: row.producto_tamano_id ?? null,
     inventarioItemId: row.inventario_item_id,
     categoria: row.categoria,
     nombre: row.nombre,
@@ -78,6 +81,31 @@ const mapIngredienteRows = (rows: ProductoIngredienteRow[]) => {
     esPersonalizado: Boolean(row.es_personalizado),
     esOpcional: Boolean(row.es_opcional ?? 0)
   }));
+};
+
+const obtenerColumnasProductoIngrediente = async (
+  conn: Pick<typeof pool, 'query'>
+) => {
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `
+      SELECT COLUMN_NAME
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'producto_ingrediente'
+        AND COLUMN_NAME IN ('es_opcional', 'producto_tamano_id')
+      `
+    );
+    const columnas = new Set(
+      rows.map((row) => (row.COLUMN_NAME as string).toLowerCase())
+    );
+    return {
+      hasEsOpcional: columnas.has('es_opcional'),
+      hasProductoTamanoId: columnas.has('producto_tamano_id')
+    };
+  } catch (error) {
+    return { hasEsOpcional: false, hasProductoTamanoId: false };
+  }
 };
 
 const obtenerTamanosPorProductoIds = async (productoIds: number[]) => {
@@ -162,7 +190,16 @@ export const obtenerIngredientesPorProductoIds = async (productoIds: number[]) =
   }
 
   try {
+    const { hasEsOpcional, hasProductoTamanoId } =
+      await obtenerColumnasProductoIngrediente(pool);
     const placeholders = productoIds.map(() => '?').join(', ');
+    const columnasExtra = [
+      hasEsOpcional ? 'pi.es_opcional' : null,
+      hasProductoTamanoId ? 'pi.producto_tamano_id' : null
+    ]
+      .filter(Boolean)
+      .join(', ');
+    const columnasExtraSql = columnasExtra ? `, ${columnasExtra}` : '';
     const [rows] = await pool.query<ProductoIngredienteRow[]>(
       `
       SELECT
@@ -174,8 +211,7 @@ export const obtenerIngredientesPorProductoIds = async (productoIds: number[]) =
         pi.unidad,
         pi.cantidad_por_porcion,
         pi.descontar_automaticamente,
-        pi.es_personalizado,
-        COALESCE(pi.es_opcional, 0) as es_opcional,
+        pi.es_personalizado${columnasExtraSql},
         pi.creado_en,
         pi.actualizado_en
       FROM producto_ingrediente pi
@@ -189,6 +225,7 @@ export const obtenerIngredientesPorProductoIds = async (productoIds: number[]) =
       const list = map.get(row.producto_id) ?? [];
       list.push({
         id: row.id,
+        productoTamanoId: row.producto_tamano_id ?? null,
         inventarioItemId: row.inventario_item_id,
         categoria: row.categoria,
         nombre: row.nombre,
@@ -229,6 +266,15 @@ const obtenerIngredientesPorProducto = async (productoId: number) => {
   }
 
   try {
+    const { hasEsOpcional, hasProductoTamanoId } =
+      await obtenerColumnasProductoIngrediente(pool);
+    const columnasExtra = [
+      hasEsOpcional ? 'pi.es_opcional' : null,
+      hasProductoTamanoId ? 'pi.producto_tamano_id' : null
+    ]
+      .filter(Boolean)
+      .join(', ');
+    const columnasExtraSql = columnasExtra ? `, ${columnasExtra}` : '';
     const [rows] = await pool.query<ProductoIngredienteRow[]>(
       `
       SELECT
@@ -240,8 +286,7 @@ const obtenerIngredientesPorProducto = async (productoId: number) => {
         pi.unidad,
         pi.cantidad_por_porcion,
         pi.descontar_automaticamente,
-        pi.es_personalizado,
-        COALESCE(pi.es_opcional, 0) as es_opcional,
+        pi.es_personalizado${columnasExtraSql},
         pi.creado_en,
         pi.actualizado_en
       FROM producto_ingrediente pi
@@ -303,6 +348,7 @@ const insertarIngredientesProducto = async (
   conn: PoolConnection,
   productoId: number,
   ingredientes: Array<{
+    productoTamanoId?: number | null;
     inventarioItemId?: number | null;
     categoria?: string | null;
     nombre: string;
@@ -336,6 +382,9 @@ const insertarIngredientesProducto = async (
     tableExists = false;
   }
 
+  const { hasEsOpcional, hasProductoTamanoId } =
+    await obtenerColumnasProductoIngrediente(conn);
+
   for (const ingrediente of ingredientes) {
     try {
       let inventarioItemId = ingrediente.inventarioItemId;
@@ -352,7 +401,6 @@ const insertarIngredientesProducto = async (
       // Solo intentar insertar en producto_ingrediente si la tabla existe
       if (tableExists) {
         try {
-          // Intentar insertar con es_opcional primero
           const [insertResult] = await conn.execute<ResultSetHeader>(
             `
             INSERT INTO producto_ingrediente (
@@ -363,8 +411,9 @@ const insertarIngredientesProducto = async (
               unidad,
               cantidad_por_porcion,
               descontar_automaticamente,
-              es_personalizado,
-              es_opcional
+              es_personalizado
+              ${hasEsOpcional ? ', es_opcional' : ''}
+              ${hasProductoTamanoId ? ', producto_tamano_id' : ''}
             )
             VALUES (
               :productoId,
@@ -374,8 +423,9 @@ const insertarIngredientesProducto = async (
               :unidad,
               :cantidadPorPorcion,
               :descontarAutomaticamente,
-              :esPersonalizado,
-              :esOpcional
+              :esPersonalizado
+              ${hasEsOpcional ? ', :esOpcional' : ''}
+              ${hasProductoTamanoId ? ', :productoTamanoId' : ''}
             )
             `,
             {
@@ -387,53 +437,14 @@ const insertarIngredientesProducto = async (
               cantidadPorPorcion: ingrediente.cantidadPorPorcion,
               descontarAutomaticamente: ingrediente.descontarAutomaticamente ? 1 : 0,
               esPersonalizado: ingrediente.esPersonalizado ? 1 : 0,
-              esOpcional: (ingrediente.esOpcional ?? false) ? 1 : 0
+              esOpcional: (ingrediente.esOpcional ?? false) ? 1 : 0,
+              productoTamanoId: ingrediente.productoTamanoId ?? null
             }
           );
           
           console.log(`✅ Ingrediente guardado en BD: ${ingrediente.nombre} (Producto ID: ${productoId}, Inventario ID: ${inventarioItemId ?? 'N/A'}, Ingrediente ID: ${insertResult.insertId})`);
         } catch (insertError: any) {
-          // Si falla porque la columna es_opcional no existe, intentar sin ella
-          if (insertError.code === 'ER_BAD_FIELD_ERROR' && insertError.message?.includes('es_opcional')) {
-            console.warn('Columna es_opcional no existe. Intentando insertar sin ella...');
-            const [insertResult] = await conn.execute<ResultSetHeader>(
-              `
-              INSERT INTO producto_ingrediente (
-                producto_id,
-                inventario_item_id,
-                categoria,
-                nombre,
-                unidad,
-                cantidad_por_porcion,
-                descontar_automaticamente,
-                es_personalizado
-              )
-              VALUES (
-                :productoId,
-                :inventarioItemId,
-                :categoria,
-                :nombre,
-                :unidad,
-                :cantidadPorPorcion,
-                :descontarAutomaticamente,
-                :esPersonalizado
-              )
-              `,
-              {
-                productoId,
-                inventarioItemId: inventarioItemId ?? null,
-                categoria: ingrediente.categoria ?? null,
-                nombre: ingrediente.nombre.trim(),
-                unidad: ingrediente.unidad.trim(),
-                cantidadPorPorcion: ingrediente.cantidadPorPorcion,
-                descontarAutomaticamente: ingrediente.descontarAutomaticamente ? 1 : 0,
-                esPersonalizado: ingrediente.esPersonalizado ? 1 : 0
-              }
-            );
-            console.log(`✅ Ingrediente guardado en BD (sin es_opcional): ${ingrediente.nombre} (Producto ID: ${productoId}, Inventario ID: ${inventarioItemId ?? 'N/A'}, Ingrediente ID: ${insertResult.insertId})`);
-          } else {
-            throw insertError;
-          }
+          throw insertError;
         }
       } else {
         // Si la tabla no existe pero creamos un item en inventario, loguear que se creó en inventario
@@ -455,6 +466,7 @@ const reemplazarIngredientesProducto = async (
   conn: PoolConnection,
   productoId: number,
   ingredientes: Array<{
+    productoTamanoId?: number | null;
     inventarioItemId?: number | null;
     categoria?: string | null;
     nombre: string;

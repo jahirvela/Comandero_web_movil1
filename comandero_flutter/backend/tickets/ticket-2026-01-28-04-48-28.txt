@@ -1,0 +1,17 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000126
+Fecha: 27/01/26, 10:48 p.m.
+Mesa: 1
+Mesero: David Morales
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  3x  Taco de Barbacoa Suave
+  1x  Agua de Horchata (Grande)
+------------------------------------------
+a1
+ORD-000126
+27/01/26, 10:48 p.m.
+a0i

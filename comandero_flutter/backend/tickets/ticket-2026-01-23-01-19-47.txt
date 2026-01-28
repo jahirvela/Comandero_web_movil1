@@ -1,0 +1,24 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000096
+Fecha: 22/01/26, 7:14 p.m.
+Mesa: 3
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  2  Alitas Mango Habanero ...    60.00
+------------------------------------------
+Subtotal:                    $   60.00
+E1TOTAL:                      $   60.00
+E0==========================================
+a1
+k
+ORD-000096
+
+ORD-000096
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

@@ -702,6 +702,8 @@ class _PaymentProcessingViewState extends State<PaymentProcessingView> {
         return Icons.money;
       case 'card':
         return Icons.credit_card;
+      case 'transfer':
+        return Icons.swap_vert;
       case 'mixed':
         return Icons.swap_horiz;
       default:

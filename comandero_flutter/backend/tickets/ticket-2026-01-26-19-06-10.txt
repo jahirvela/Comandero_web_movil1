@@ -1,0 +1,18 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000107
+Fecha: 26/01/26, 1:06 p.m.
+Mesa: 3
+Mesero: David Morales
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  1x  Consome (Chico)
+  1x  Consome (Mediano)
+  1x  Alitas Mango Habanero (medianas ...
+------------------------------------------
+a1
+ORD-000107
+26/01/26, 1:06 p.m.
+a0i

@@ -16,7 +16,8 @@ import {
   obtenerEstadosOrdenServicio
 } from './ordenes.service.js';
 import { obtenerEstadoOrdenPorNombre } from './ordenes.repository.js';
-import { nowMx, utcToMx } from '../../config/time.js';
+import { DateTime } from 'luxon';
+import { APP_TIMEZONE, nowMx, utcToMx } from '../../config/time.js';
 
 export const listarOrdenesController = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -193,10 +194,9 @@ export const listarOrdenesCocinaController = async (req: Request, res: Response,
     const todasLasOrdenes = await obtenerOrdenes({});
     
     // Filtrar órdenes que estén en estados relevantes para cocina
-    // ADICIONALMENTE: Filtrar por nombre de estado y fecha
-    // Usamos zona horaria CDMX para determinar "hoy"
-    const ahoraMx = nowMx();
-    const inicioHoyMx = ahoraMx.startOf('day');
+    // ADICIONALMENTE: Filtrar por nombre de estado.
+    // Nota: no filtramos por fecha porque el desfase de zona horaria
+    // puede ocultar órdenes recién creadas.
     
     const ordenesCocina = todasLasOrdenes.filter((orden) => {
       const estadoNombreLower = (orden.estadoNombre || '').toLowerCase();
@@ -207,18 +207,11 @@ export const listarOrdenesCocinaController = async (req: Request, res: Response,
                            estadoNombreLower.includes('pagada') ||
                            estadoNombreLower.includes('cancelada');
       
-      // Verificar si es de hoy (usando zona horaria CDMX)
-      let esDeHoy = true;
-      if (orden.creadoEn) {
-        const fechaOrdenMx = utcToMx(orden.creadoEn);
-        esDeHoy = fechaOrdenMx ? fechaOrdenMx >= inicioHoyMx : true;
-      }
-      
-      // Debe estar en estados permitidos Y no tener nombre de estado "listo" Y ser de hoy
-      const incluir = estadosCocina.includes(orden.estadoOrdenId) && !esEstadoListo && esDeHoy;
+      // Debe estar en estados permitidos Y no tener nombre de estado "listo"
+      const incluir = estadosCocina.includes(orden.estadoOrdenId) && !esEstadoListo;
       
       if (!incluir) {
-        console.log(`Orden ${orden.id} excluida - Estado: "${orden.estadoNombre}" (ID: ${orden.estadoOrdenId}), DeHoy: ${esDeHoy}`);
+        console.log(`Orden ${orden.id} excluida - Estado: "${orden.estadoNombre}" (ID: ${orden.estadoOrdenId})`);
       }
       
       return incluir;

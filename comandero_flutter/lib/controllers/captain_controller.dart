@@ -152,7 +152,24 @@ class CaptainController extends ChangeNotifier {
 
   CaptainController() {
     _initializeData();
-    _setupSocketListeners();
+    // Configurar Socket.IO después de un delay para asegurar que esté conectado
+    Future.delayed(const Duration(milliseconds: 2000), () {
+      final socketService = SocketService();
+      if (socketService.isConnected) {
+        _setupSocketListeners();
+        print('✅ Capitán: Listeners de Socket.IO configurados');
+      } else {
+        print('⚠️ Capitán: Socket.IO no está conectado aún, intentando conectar...');
+        socketService.connect().then((_) {
+          Future.delayed(const Duration(milliseconds: 500), () {
+            _setupSocketListeners();
+            print('✅ Capitán: Listeners de Socket.IO configurados después de conectar');
+          });
+        }).catchError((e) {
+          print('❌ Capitán: Error al conectar Socket.IO: $e');
+        });
+      }
+    });
   }
 
   @override
@@ -164,6 +181,27 @@ class CaptainController extends ChangeNotifier {
   // Configurar listeners de Socket.IO
   void _setupSocketListeners() {
     final socketService = SocketService();
+    
+    // Verificar que Socket.IO esté conectado antes de configurar listeners
+    if (!socketService.isConnected) {
+      print('⚠️ Capitán: Socket.IO no está conectado, esperando conexión...');
+      // Esperar hasta 5 segundos para que se conecte
+      int attempts = 0;
+      while (attempts < 10 && !socketService.isConnected) {
+        Future.delayed(const Duration(milliseconds: 500), () {});
+        attempts++;
+      }
+      if (!socketService.isConnected) {
+        print('❌ Capitán: Socket.IO no se conectó después de esperar, intentando reconectar...');
+        socketService.connect().catchError((e) {
+          print('❌ Capitán: Error al reconectar Socket.IO: $e');
+        });
+        return; // Los listeners se configurarán cuando se conecte
+      }
+    }
+    
+    print('✅ Capitán: Socket.IO está conectado, configurando listeners...');
+    print('📡 Capitán: URL de Socket.IO: ${ApiConfig.socketUrl}');
     
     // Cargar alertas pendientes desde BD al iniciar
     _loadPendingAlerts();

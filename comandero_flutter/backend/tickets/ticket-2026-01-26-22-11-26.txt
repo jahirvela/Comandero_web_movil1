@@ -1,0 +1,17 @@
+a1E1d1*** COMANDA ***
+d0E0==========================================
+a0Folio: ORD-000111
+Fecha: 26/01/26, 4:11 p.m.
+Mesa: 3
+Mesero: David Morales
+Tiempo estimado: 6 min
+------------------------------------------
+E1CANT  PRODUCTO
+E0------------------------------------------
+  3x  Alitas Mango Habanero (medianas ...
+  1x  Agua de Horchata (Grande)
+------------------------------------------
+a1
+ORD-000111
+26/01/26, 4:11 p.m.
+a0i

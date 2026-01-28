@@ -60,7 +60,9 @@ export const crearNuevoProducto = async (input: CrearProductoInput) => {
         unidad: ingrediente.unidad.trim(),
         cantidadPorPorcion: ingrediente.cantidadPorPorcion,
         descontarAutomaticamente: ingrediente.descontarAutomaticamente ?? true,
-        esPersonalizado: ingrediente.esPersonalizado ?? false
+        esPersonalizado: ingrediente.esPersonalizado ?? false,
+        esOpcional: ingrediente.esOpcional ?? false,
+        productoTamanoId: ingrediente.tamanoId ?? null
       }))
     });
     return obtenerProducto(id);
@@ -114,7 +116,9 @@ export const actualizarProductoExistente = async (id: number, input: ActualizarP
       unidad: ingrediente.unidad,
       cantidadPorPorcion: ingrediente.cantidadPorPorcion,
       descontarAutomaticamente: ingrediente.descontarAutomaticamente ?? true,
-      esPersonalizado: ingrediente.esPersonalizado ?? false
+      esPersonalizado: ingrediente.esPersonalizado ?? false,
+      esOpcional: ingrediente.esOpcional ?? false,
+      productoTamanoId: ingrediente.tamanoId ?? null
     }))
   });
   return obtenerProducto(id);

@@ -106,8 +106,7 @@ export const listarOrdenes = async ({
       m.codigo AS mesa_codigo,
       eo.nombre AS estado_nombre,
       u.nombre AS creado_por_nombre,
-      u.username AS creado_por_username,
-      o.tiempo_estimado_preparacion
+      u.username AS creado_por_username
     FROM orden o
     LEFT JOIN mesa m ON m.id = o.mesa_id
     JOIN estado_orden eo ON eo.id = o.estado_orden_id
@@ -135,7 +134,7 @@ export const listarOrdenes = async ({
     creadoPorUsuarioId: row.creado_por_usuario_id,
     creadoPorNombre: (row as any).creado_por_nombre,
     creadoPorUsuarioNombre: (row as any).creado_por_nombre ?? (row as any).creado_por_username,
-    tiempoEstimadoPreparacion: (row as any).tiempo_estimado_preparacion ? Number((row as any).tiempo_estimado_preparacion) : null,
+    tiempoEstimadoPreparacion: (row as any).tiempo_estimado_preparacion ?? null,
     cerradoPorUsuarioId: row.cerrado_por_usuario_id,
     creadoEn: utcToMxISO(row.creado_en) ?? '',
     actualizadoEn: utcToMxISO(row.actualizado_en) ?? ''
@@ -151,8 +150,7 @@ export const obtenerOrdenBasePorId = async (id: number) => {
       eo.nombre AS estado_nombre,
       c.telefono AS cliente_telefono,
       u.nombre AS creado_por_nombre,
-      u.username AS creado_por_username,
-      o.tiempo_estimado_preparacion
+      u.username AS creado_por_username
     FROM orden o
     LEFT JOIN mesa m ON m.id = o.mesa_id
     JOIN estado_orden eo ON eo.id = o.estado_orden_id
@@ -184,7 +182,7 @@ export const obtenerOrdenBasePorId = async (id: number) => {
     creadoPorNombre: row.creado_por_nombre,
     creadoPorUsuarioNombre: row.creado_por_nombre ?? row.creado_por_username,
     cerradoPorUsuarioId: row.cerrado_por_usuario_id,
-    tiempoEstimadoPreparacion: row.tiempo_estimado_preparacion ? Number(row.tiempo_estimado_preparacion) : null,
+    tiempoEstimadoPreparacion: (row as any).tiempo_estimado_preparacion ?? null,
     creadoEn: utcToMxISO(row.creado_en) ?? '',
     actualizadoEn: utcToMxISO(row.actualizado_en) ?? ''
   };

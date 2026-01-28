@@ -43,3 +43,38 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Backend Node.js
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/dist/
+backend/build/
+backend/*.log
+backend/npm-debug.log*
+backend/yarn-debug.log*
+backend/yarn-error.log*
+
+# Base de datos - NO incluir archivos binarios ni bases de datos vivas
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+backend/backups/*.gz
+backend/backups/*.sql.gz
+backend/backups/*.meta.json
+# Solo incluir comandero.sql (script completo)
+!backend/backups/comandero.sql
+
+# Archivos temporales
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+desktop.ini

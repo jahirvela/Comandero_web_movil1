@@ -1,0 +1,25 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000111
+Fecha: 26/01/26, 4:11 p.m.
+Mesa: 3
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  3  Alitas Mango Habanero ...    90.00
+  1  Agua de Horchata (Grande)    30.00
+------------------------------------------
+Subtotal:                    $  120.00
+E1TOTAL:                      $  120.00
+E0==========================================
+a1
+k
+ORD-000111
+
+ORD-000111
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

@@ -88,7 +88,8 @@ const handleConnection = (socket: Socket) => {
   // Rooms por rol
   if (Array.isArray(user.roles)) {
     for (const role of user.roles) {
-      socket.join(`${SOCKET_ROOM_ROLE_PREFIX}${role}`);
+      const normalizedRole = typeof role === 'string' ? role.toLowerCase() : String(role);
+      socket.join(`${SOCKET_ROOM_ROLE_PREFIX}${normalizedRole}`);
     }
   }
 

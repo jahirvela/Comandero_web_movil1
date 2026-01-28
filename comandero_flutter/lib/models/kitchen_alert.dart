@@ -79,6 +79,7 @@ class KitchenAlert {
   final int? id;                  // ID de la alerta en BD (opcional)
   final int orderId;              // ID de la orden
   final int? tableId;             // ID de la mesa (null si es para llevar)
+  final String? mesaCodigo;       // Código visible de la mesa (ej: "1")
   final StationType station;      // Estación de cocina
   final AlertType type;           // Tipo de alerta
   final String message;           // Mensaje descriptivo
@@ -92,6 +93,7 @@ class KitchenAlert {
     this.id,
     required this.orderId,
     this.tableId,
+    this.mesaCodigo,
     required this.station,
     required this.type,
     required this.message,
@@ -107,6 +109,7 @@ class KitchenAlert {
       id: json['id'] as int?,
       orderId: json['orderId'] as int,
       tableId: json['tableId'] as int?,
+      mesaCodigo: json['mesaCodigo'] as String?,
       station: StationType.fromString(json['station'] as String? ?? 'general') ?? StationType.general,
       type: AlertType.fromString(json['type'] as String? ?? 'NEW_ORDER') ?? AlertType.NEW_ORDER,
       message: json['message'] as String,
@@ -125,6 +128,7 @@ class KitchenAlert {
       if (id != null) 'id': id,
       'orderId': orderId,
       if (tableId != null) 'tableId': tableId,
+      if (mesaCodigo != null) 'mesaCodigo': mesaCodigo,
       'station': station.name,
       'type': type.name,
       'message': message,
@@ -140,6 +144,7 @@ class KitchenAlert {
     int? id,
     int? orderId,
     int? tableId,
+    String? mesaCodigo,
     StationType? station,
     AlertType? type,
     String? message,
@@ -153,6 +158,7 @@ class KitchenAlert {
       id: id ?? this.id,
       orderId: orderId ?? this.orderId,
       tableId: tableId ?? this.tableId,
+      mesaCodigo: mesaCodigo ?? this.mesaCodigo,
       station: station ?? this.station,
       type: type ?? this.type,
       message: message ?? this.message,

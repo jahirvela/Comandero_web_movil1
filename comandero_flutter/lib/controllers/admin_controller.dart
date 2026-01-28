@@ -13,6 +13,8 @@ import '../services/socket_service.dart';
 import '../services/tickets_service.dart';
 import '../services/cierres_service.dart';
 import '../services/ordenes_service.dart';
+import '../services/pagos_service.dart';
+import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
 import 'package:pdf/pdf.dart';
@@ -36,6 +38,7 @@ class AdminController extends ChangeNotifier {
   final TicketsService _ticketsService = TicketsService();
   final CierresService _cierresService = CierresService();
   final OrdenesService _ordenesService = OrdenesService();
+  final PagosService _pagosService = PagosService();
 
   String _normalizeInventoryCategory(String? value) {
     final raw = value?.trim() ?? '';
@@ -56,6 +59,7 @@ class AdminController extends ChangeNotifier {
       'descontarAutomaticamente': ingredient.autoDeduct,
       'esPersonalizado': ingredient.isCustom,
       'esOpcional': ingredient.isOptional,
+      if (ingredient.sizeId != null) 'tamanoId': ingredient.sizeId,
     };
   }
 
@@ -685,6 +689,10 @@ class AdminController extends ChangeNotifier {
         print('⚠️ Error al cargar consumo del día: $e');
         return null;
       }),
+      loadPayments().catchError((e) {
+        print('⚠️ Error al cargar pagos: $e');
+        return null;
+      }),
     ], eagerError: false); // No fallar si una operación falla
 
     print('✅ AdminController: Carga de datos completada');
@@ -693,7 +701,24 @@ class AdminController extends ChangeNotifier {
   void _initializeData() {
     // Cargar datos desde el backend en lugar de usar datos de ejemplo
     loadAllData();
-    _setupSocketListeners();
+    // Configurar Socket.IO después de un delay para asegurar que esté conectado
+    Future.delayed(const Duration(milliseconds: 2000), () {
+      final socketService = SocketService();
+      if (socketService.isConnected) {
+        _setupSocketListeners();
+        print('✅ Admin: Listeners de Socket.IO configurados');
+      } else {
+        print('⚠️ Admin: Socket.IO no está conectado aún, intentando conectar...');
+        socketService.connect().then((_) {
+          Future.delayed(const Duration(milliseconds: 500), () {
+            _setupSocketListeners();
+            print('✅ Admin: Listeners de Socket.IO configurados después de conectar');
+          });
+        }).catchError((e) {
+          print('❌ Admin: Error al conectar Socket.IO: $e');
+        });
+      }
+    });
   }
 
   // Timer para debounce de actualizaciones (optimizado para producción)
@@ -731,6 +756,27 @@ class AdminController extends ChangeNotifier {
   // Configurar listeners de Socket.IO para recibir todas las actualizaciones
   void _setupSocketListeners() {
     final socketService = SocketService();
+    
+    // Verificar que Socket.IO esté conectado antes de configurar listeners
+    if (!socketService.isConnected) {
+      print('⚠️ Admin: Socket.IO no está conectado, esperando conexión...');
+      // Esperar hasta 5 segundos para que se conecte
+      int attempts = 0;
+      while (attempts < 10 && !socketService.isConnected) {
+        Future.delayed(const Duration(milliseconds: 500), () {});
+        attempts++;
+      }
+      if (!socketService.isConnected) {
+        print('❌ Admin: Socket.IO no se conectó después de esperar, intentando reconectar...');
+        socketService.connect().catchError((e) {
+          print('❌ Admin: Error al reconectar Socket.IO: $e');
+        });
+        return; // Los listeners se configurarán cuando se conecte
+      }
+    }
+    
+    print('✅ Admin: Socket.IO está conectado, configurando listeners...');
+    print('📡 Admin: URL de Socket.IO: ${ApiConfig.socketUrl}');
 
     // Escuchar nuevas órdenes creadas
     socketService.onOrderCreated((dynamic data) {
@@ -1102,6 +1148,9 @@ class AdminController extends ChangeNotifier {
   double get todayCardSales {
     return todayPayments.fold(0.0, (sum, payment) {
       if (payment.type == payment_models.PaymentType.card) {
+        return sum + payment.totalAmount;
+      }
+      if (payment.type == payment_models.PaymentType.transfer) {
         return sum + payment.totalAmount;
       }
       if (payment.type == payment_models.PaymentType.mixed) {
@@ -1635,6 +1684,17 @@ class AdminController extends ChangeNotifier {
             },
           );
       print('✅ AdminController: ${_cashClosures.length} cierres cargados');
+      // Debug: mostrar aperturas encontradas
+      final apertura = getTodayCashOpening();
+      if (apertura != null) {
+        print('📋 AdminController: Apertura encontrada - ID: ${apertura.id}, Fecha: ${apertura.fecha}, Efectivo Inicial: ${apertura.efectivoInicial}');
+      } else {
+        print('⚠️ AdminController: No se encontró apertura de caja para hoy');
+        print('📋 AdminController: Total de cierres cargados: ${_cashClosures.length}');
+        if (_cashClosures.isNotEmpty) {
+          print('📋 AdminController: Primer cierre - Fecha: ${_cashClosures.first.fecha}, Efectivo Inicial: ${_cashClosures.first.efectivoInicial}, Total Neto: ${_cashClosures.first.totalNeto}');
+        }
+      }
       if (_cashClosures.isNotEmpty) {
         print(
           '📋 AdminController: Primer cierre cargado - ID: ${_cashClosures.first.id}, Usuario: ${_cashClosures.first.usuario}, Fecha: ${_cashClosures.first.fecha}, Total: ${_cashClosures.first.totalNeto}',
@@ -1653,23 +1713,40 @@ class AdminController extends ChangeNotifier {
 
   // Obtener cierres de caja filtrados
   // Obtener la apertura de caja del día actual
-  // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo) y numeroOrdenes = 0
+  // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo)
+  // Nota: No usamos pedidosParaLlevar porque se mapea incorrectamente desde el backend (usa numeroOrdenes)
   CashCloseModel? getTodayCashOpening() {
-    final hoy = DateTime.now();
+    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
+    final hoy = date_utils.AppDateUtils.now();
+    print('🔍 Admin.getTodayCashOpening: Buscando apertura para hoy ${hoy.year}-${hoy.month}-${hoy.day} (hora: ${hoy.hour}:${hoy.minute})');
+    print('🔍 Admin.getTodayCashOpening: Total de cierres cargados: ${_cashClosures.length}');
+    
+    // Buscar aperturas del día de hoy o del día anterior (para manejar zonas horarias)
+    // Una apertura es válida si fue creada hoy o si fue creada ayer después de las 6pm
+    final inicioHoy = DateTime(hoy.year, hoy.month, hoy.day);
+    final ayer = hoy.subtract(const Duration(days: 1));
+    final inicioAyer18h = DateTime(ayer.year, ayer.month, ayer.day, 18); // 6pm de ayer
+    
     final aperturas = _cashClosures.where((cierre) {
-      // Verificar que sea del día de hoy
+      // Verificar que sea del día de hoy (comparar año, mes y día)
       final esHoy =
           cierre.fecha.year == hoy.year &&
           cierre.fecha.month == hoy.month &&
           cierre.fecha.day == hoy.day;
+      
+      // También considerar como "hoy" si fue creado ayer después de las 6pm
+      // (esto maneja el caso de zonas horarias y cierres nocturnos)
+      final esAyerNoche = cierre.fecha.isAfter(inicioAyer18h) && cierre.fecha.isBefore(inicioHoy);
 
       // Verificar que sea una apertura: tiene efectivo inicial y no tiene ventas significativas
+      // No usamos pedidosParaLlevar porque se mapea con numeroOrdenes del backend
       final esApertura =
           cierre.efectivoInicial > 0 &&
-          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0) &&
-          cierre.pedidosParaLlevar == 0;
+          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0);
 
-      return esHoy && esApertura;
+      print('🔍 Admin.getTodayCashOpening: Cierre ${cierre.id} - Fecha: ${cierre.fecha.year}-${cierre.fecha.month}-${cierre.fecha.day} ${cierre.fecha.hour}:${cierre.fecha.minute}, esHoy: $esHoy, esAyerNoche: $esAyerNoche, efectivoInicial: ${cierre.efectivoInicial}, totalNeto: ${cierre.totalNeto}, esApertura: $esApertura');
+
+      return (esHoy || esAyerNoche) && esApertura;
     }).toList();
 
     // Retornar la más reciente (última apertura del día)
@@ -1684,7 +1761,8 @@ class AdminController extends ChangeNotifier {
     final apertura = getTodayCashOpening();
     if (apertura == null) return false; // No hay apertura, caja cerrada
 
-    final hoy = DateTime.now();
+    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
+    final hoy = date_utils.AppDateUtils.now();
     // Buscar cierres de caja del día con ventas significativas (totalNeto > 0)
     // que sean más recientes que la apertura
     final cierresConVentas = _cashClosures.where((cierre) {
@@ -1712,6 +1790,96 @@ class AdminController extends ChangeNotifier {
 
     // Si no hay cierres con ventas, la caja está abierta
     return true;
+  }
+
+  // Cargar pagos desde el backend
+  Future<void> loadPayments({bool silent = false, bool force = false}) async {
+    try {
+      print('🔄 AdminController: Iniciando carga de pagos...');
+      
+      final pagosData = await _pagosService.getPagos();
+      
+      // Mapear pagos del backend al PaymentModel
+      final payments = <payment_models.PaymentModel>[];
+      
+      for (final pagoData in pagosData) {
+        try {
+          // Obtener información de la orden para obtener mesa y billId
+          final ordenId = pagoData['ordenId'] as int?;
+          String? billId;
+          int? tableNumber;
+          String cashierName = 'Sistema';
+          
+          if (ordenId != null) {
+            try {
+              final orden = await _ordenesService.getOrden(ordenId);
+              if (orden != null) {
+                tableNumber = orden['mesaId'] as int?;
+                billId = 'BILL-${ordenId.toString().padLeft(3, '0')}';
+                final empleadoId = orden['empleadoId'] as int?;
+                if (empleadoId != null) {
+                  // Intentar obtener nombre del empleado
+                  final usuarios = _users;
+                  final usuario = usuarios.firstWhere(
+                    (u) => u.id == empleadoId.toString(),
+                    orElse: () => AdminUser(
+                      id: empleadoId.toString(),
+                      name: 'Usuario',
+                      username: 'usuario',
+                      password: '',
+                      roles: [],
+                      isActive: true,
+                      createdAt: DateTime.now(),
+                    ),
+                  );
+                  cashierName = usuario.name;
+                }
+              }
+            } catch (e) {
+              print('⚠️ Error al obtener orden $ordenId: $e');
+            }
+          }
+          
+          // Determinar tipo de pago basado en formaPagoNombre
+          final formaPagoNombre = (pagoData['formaPagoNombre'] as String? ?? '').toLowerCase();
+          String paymentType = 'cash';
+          if (formaPagoNombre.contains('tarjeta') || formaPagoNombre.contains('card')) {
+            paymentType = 'card';
+          } else if (formaPagoNombre.contains('mixto') || formaPagoNombre.contains('mixed')) {
+            paymentType = 'mixed';
+          }
+          
+          // Crear PaymentModel
+          final payment = payment_models.PaymentModel(
+            id: pagoData['id'].toString(),
+            type: paymentType,
+            totalAmount: (pagoData['monto'] as num?)?.toDouble() ?? 0.0,
+            billId: billId ?? 'BILL-${pagoData['id'].toString().padLeft(3, '0')}',
+            tableNumber: tableNumber,
+            timestamp: date_utils.AppDateUtils.parseToLocal(pagoData['fechaPago'] ?? pagoData['creadoEn']),
+            cashierName: cashierName,
+            notes: pagoData['referencia'] as String?,
+            voucherPrinted: (pagoData['estado'] as String?)?.toLowerCase() == 'aplicado',
+          );
+          
+          payments.add(payment);
+        } catch (e) {
+          print('⚠️ Error al mapear pago ${pagoData['id']}: $e');
+        }
+      }
+      
+      // Actualizar el repositorio con los pagos reales
+      _paymentRepository.addPayments(payments);
+      
+      print('✅ AdminController: ${payments.length} pagos cargados desde el backend');
+      
+      if (!silent) {
+        notifyListeners();
+      }
+    } catch (e) {
+      print('❌ AdminController: Error al cargar pagos: $e');
+      rethrow;
+    }
   }
 
   List<CashCloseModel> get filteredCashClosures {
@@ -2457,6 +2625,29 @@ class AdminController extends ChangeNotifier {
     }
   }
 
+  Future<void> deleteUserPermanently(String userId) async {
+    try {
+      final id = int.tryParse(userId);
+      if (id == null) {
+        throw Exception('ID de usuario inválido: $userId');
+      }
+      await _usuariosService.eliminarUsuarioPermanente(id);
+      await loadUsers();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setUserActive(String userId, bool isActive) async {
+    try {
+      final user = _users.firstWhere((u) => u.id == userId);
+      final updatedUser = user.copyWith(isActive: isActive);
+      await updateUser(updatedUser);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   Future<void> toggleUserStatus(String userId) async {
     try {
       final user = _users.firstWhere((u) => u.id == userId);
@@ -2953,6 +3144,10 @@ class AdminController extends ChangeNotifier {
 
     final ingredientes = ingredientesData?.map((raw) {
       final ingredienteMap = Map<String, dynamic>.from(raw as Map);
+      final rawSizeId =
+          ingredienteMap['tamanoId'] ??
+          ingredienteMap['productoTamanoId'] ??
+          ingredienteMap['producto_tamano_id'];
       final quantity = _parseDouble(
         ingredienteMap['cantidadPorPorcion'] ??
             ingredienteMap['cantidad_por_porcion'] ??
@@ -2990,6 +3185,7 @@ class AdminController extends ChangeNotifier {
         isOptional: isOptional,
         category: _normalizeInventoryCategory(categoriaEntrada.toString()),
         inventoryItemId: inventoryItemId,
+        sizeId: rawSizeId is num ? rawSizeId.toInt() : int.tryParse('$rawSizeId'),
       );
     }).toList();
 

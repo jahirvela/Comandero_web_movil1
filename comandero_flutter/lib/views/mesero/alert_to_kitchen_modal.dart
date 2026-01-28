@@ -383,6 +383,9 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
 
       // Usar el NUEVO servicio de alertas de cocina (Socket.IO directo)
       final socketService = SocketService();
+      if (!socketService.isConnected) {
+        await socketService.connect();
+      }
       final kitchenAlertsService = KitchenAlertsService(socketService);
       
       // Configurar listeners ANTES de enviar la alerta

@@ -24,3 +24,6 @@ export const forbidden = (message = 'Acceso prohibido') =>
 export const notFound = (message = 'Recurso no encontrado') =>
   new HttpError(404, message, { code: 'not_found' });
 
+export const conflict = (message: string, details?: unknown) =>
+  new HttpError(409, message, { code: 'conflict', details });
+

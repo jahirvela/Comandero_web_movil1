@@ -129,7 +129,7 @@ export const crearNuevaOrden = async (input: CrearOrdenInput, usuarioId?: number
   });
 
   const orden = await obtenerOrdenDetalle(ordenId);
-  emitOrderCreated(orden);
+  await emitOrderCreated(orden);
   return orden;
 };
 

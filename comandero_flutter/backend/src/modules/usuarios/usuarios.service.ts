@@ -3,6 +3,7 @@ import {
   actualizarUsuario,
   crearUsuario,
   eliminarUsuario,
+  eliminarUsuarioPermanente,
   listarUsuarios,
   obtenerRolesDisponibles,
   obtenerUsuarioPorId
@@ -89,6 +90,14 @@ export const eliminarUsuarioExistente = async (id: number) => {
     throw notFound('Usuario no encontrado');
   }
   await eliminarUsuario(id);
+};
+
+export const eliminarUsuarioPermanenteExistente = async (id: number) => {
+  const existe = await obtenerUsuarioPorId(id);
+  if (!existe) {
+    throw notFound('Usuario no encontrado');
+  }
+  await eliminarUsuarioPermanente(id);
 };
 
 export const asignarRoles = async (id: number, input: AsignarRolesInput) => {

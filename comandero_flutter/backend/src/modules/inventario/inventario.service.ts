@@ -182,9 +182,17 @@ export const descontarInventarioPorReceta = async (
     for (const item of items) {
       const ingredientes = ingredientesMap.get(item.productoId) || [];
       const cantidadProducto = item.cantidad;
+      const itemTamanoId = item.productoTamanoId ?? null;
       
       // Procesar cada ingrediente de la receta
       for (const ingrediente of ingredientes) {
+        // Si el ingrediente está ligado a un tamaño, solo aplica a ese tamaño
+        if (
+          ingrediente.productoTamanoId != null &&
+          ingrediente.productoTamanoId !== itemTamanoId
+        ) {
+          continue;
+        }
         // Solo descontar si tiene autoDeduct activado y tiene inventarioItemId
         // Nota: Se descuentan TODOS los ingredientes con autoDeduct, incluso los opcionales,
         // ya que el inventario es estimado y es más práctico descontar todo automáticamente

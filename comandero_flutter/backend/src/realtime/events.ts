@@ -64,7 +64,7 @@ export const emitBillSent = (bill: any) => {
   io.to(getSocketRooms.role('capitan')).emit('cuenta.enviada', bill);
 };
 
-export const emitOrderCreated = (orden: OrdenDetalle) => {
+export const emitOrderCreated = async (orden: OrdenDetalle) => {
   const io = getIO();
   // Emitir a todos (incluye administrador)
   io.emit('pedido.creado', orden);
@@ -75,6 +75,35 @@ export const emitOrderCreated = (orden: OrdenDetalle) => {
   }
   io.to(getSocketRooms.role('cocinero')).emit('pedido.creado', orden);
   io.to(getSocketRooms.role('administrador')).emit('pedido.creado', orden);
+  // También emitir a la sala general de cocina como fallback
+  io.to('room:kitchen:all').emit('pedido.creado', orden);
+
+  // Impresión automática de comanda (asíncrono, no bloquea)
+  // Solo imprimir si la orden está en estado relevante para cocina
+  const estadoNombre = (orden as any).estadoNombre?.toLowerCase() || '';
+  const esRelevanteParaCocina = 
+    !estadoNombre.includes('pagada') &&
+    !estadoNombre.includes('cancelada') &&
+    !estadoNombre.includes('cerrada') &&
+    !estadoNombre.includes('listo') &&
+    !estadoNombre.includes('ready') &&
+    !estadoNombre.includes('completada') &&
+    !estadoNombre.includes('finalizada');
+
+  if (esRelevanteParaCocina) {
+    // Ejecutar impresión automática de forma asíncrona (no bloquea)
+    // Usar setImmediate para ejecutar después de que se complete el evento
+    setImmediate(async () => {
+      try {
+        const { imprimirComandaAutomatica } = await import('../modules/comandas/comandas.service.js');
+        await imprimirComandaAutomatica(orden.id);
+      } catch (error: any) {
+        // Log error pero no fallar la creación de la orden
+        const { logger } = await import('../config/logger.js');
+        logger.error({ err: error, ordenId: orden.id }, 'Error en impresión automática de comanda');
+      }
+    });
+  }
 };
 
 export const emitOrderUpdated = async (

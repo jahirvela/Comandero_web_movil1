@@ -181,33 +181,82 @@ class UsuariosService {
 
   /// Mapear nombres de roles del frontend a IDs del backend
   Future<List<int>> mapearRolesAIds(List<String> roleNames) async {
-    final roles = await obtenerRoles();
-    final roleMap = {for (var r in roles) r.nombre: r.id};
-
-    final ids = <int>[];
-    for (final roleName in roleNames) {
-      // Intentar mapeo directo primero
-      final backendRoleName = _roleNameMapping[roleName.toLowerCase()] ?? roleName;
-      final id = roleMap[backendRoleName];
-      if (id != null) {
-        ids.add(id);
-      } else {
-        // Si no hay mapeo, buscar por nombre exacto
-        final found = roles.firstWhere(
-          (r) => r.nombre.toLowerCase() == roleName.toLowerCase(),
-          orElse: () {
-            final foundByContains = roles.firstWhere(
-              (r) => r.nombre.toLowerCase().contains(roleName.toLowerCase()) ||
-                  roleName.toLowerCase().contains(r.nombre.toLowerCase()),
-              orElse: () => throw Exception('Rol no encontrado: $roleName'),
-            );
-            return foundByContains;
-          },
-        );
-        ids.add(found.id);
-      }
+    if (roleNames.isEmpty) {
+      return [];
     }
-    return ids;
+
+    try {
+      final roles = await obtenerRoles();
+      
+      if (roles.isEmpty) {
+        throw Exception('No se encontraron roles en el sistema. Asegúrate de que haya roles configurados en la base de datos.');
+      }
+
+      // Crear mapas para búsqueda flexible (por nombre exacto, minúsculas, y mapeo)
+      final roleMapExact = {for (var r in roles) r.nombre: r.id};
+      final roleMapLower = {for (var r in roles) r.nombre.toLowerCase(): r.id};
+
+      final ids = <int>[];
+      final errores = <String>[];
+
+      for (final roleName in roleNames) {
+        if (roleName.isEmpty) continue;
+
+        final roleNameLower = roleName.toLowerCase().trim();
+        int? id;
+
+        // 1. Intentar mapeo usando el diccionario de mapeo
+        final backendRoleName = _roleNameMapping[roleNameLower];
+        if (backendRoleName != null) {
+          id = roleMapExact[backendRoleName];
+        }
+
+        // 2. Si no funcionó, buscar por nombre exacto (case-insensitive)
+        if (id == null) {
+          id = roleMapLower[roleNameLower];
+        }
+
+        // 3. Si aún no funciona, buscar por coincidencia parcial
+        if (id == null) {
+          try {
+            final found = roles.firstWhere(
+              (r) {
+                final rNombreLower = r.nombre.toLowerCase();
+                return rNombreLower == roleNameLower ||
+                    rNombreLower.contains(roleNameLower) ||
+                    roleNameLower.contains(rNombreLower);
+              },
+              orElse: () => throw Exception('No encontrado'),
+            );
+            id = found.id;
+          } catch (e) {
+            errores.add(roleName);
+          }
+        }
+
+        if (id != null) {
+          ids.add(id);
+        } else {
+          errores.add(roleName);
+        }
+      }
+
+      if (errores.isNotEmpty) {
+        final rolesDisponibles = roles.map((r) => r.nombre).join(', ');
+        throw Exception(
+          'Roles no encontrados: ${errores.join(', ')}. '
+          'Roles disponibles en el sistema: $rolesDisponibles'
+        );
+      }
+
+      return ids;
+    } catch (e) {
+      // Re-lanzar el error con más contexto
+      if (e.toString().contains('Error al obtener roles')) {
+        rethrow;
+      }
+      throw Exception('Error al mapear roles a IDs: $e');
+    }
   }
 
   /// Listar todos los usuarios
@@ -299,14 +348,34 @@ class UsuariosService {
     bool activo = true,
   }) async {
     try {
+      // Validar que se hayan proporcionado roles
+      if (roles.isEmpty) {
+        throw Exception('Debe seleccionar al menos un rol para el usuario');
+      }
+
+      // Validar nombre y username
+      if (nombre.trim().isEmpty) {
+        throw Exception('El nombre no puede estar vacío');
+      }
+      if (username.trim().isEmpty) {
+        throw Exception('El nombre de usuario no puede estar vacío');
+      }
+      if (password.length < 6) {
+        throw Exception('La contraseña debe tener al menos 6 caracteres');
+      }
+
       // Mapear roles a IDs
       final roleIds = await mapearRolesAIds(roles);
 
+      if (roleIds.isEmpty) {
+        throw Exception('No se pudieron mapear los roles seleccionados. Verifica que los roles existan en el sistema.');
+      }
+
       final body = {
-        'nombre': nombre,
-        'username': username,
+        'nombre': nombre.trim(),
+        'username': username.trim().toLowerCase(),
         'password': password,
-        if (telefono != null && telefono.isNotEmpty) 'telefono': telefono,
+        if (telefono != null && telefono.trim().isNotEmpty) 'telefono': telefono.trim(),
         'activo': activo,
         'roles': roleIds,
       };
@@ -315,16 +384,19 @@ class UsuariosService {
       
       // Verificar status code
       if (response.statusCode != 201) {
-        final errorMsg = response.data?['message'] ?? response.data?['error'] ?? 'Error desconocido';
+        final errorMsg = response.data?['message'] ?? 
+                        response.data?['error'] ?? 
+                        response.data?.toString() ?? 
+                        'Error desconocido';
         throw Exception('Error del servidor (${response.statusCode}): $errorMsg');
       }
       
       final data = response.data['data'];
       if (data == null) {
-        throw Exception('El backend no retornó el usuario creado');
+        throw Exception('El backend no retornó el usuario creado. Respuesta: ${response.data}');
       }
       if (data is! Map) {
-        throw Exception('El backend retornó un formato de datos inválido para el usuario creado');
+        throw Exception('El backend retornó un formato de datos inválido para el usuario creado. Tipo: ${data.runtimeType}');
       }
       return UsuarioBackend.fromJson(data as Map<String, dynamic>).toAdminUser();
     } on DioException catch (e) {
@@ -333,31 +405,54 @@ class UsuariosService {
           e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.receiveTimeout ||
           e.type == DioExceptionType.sendTimeout) {
-        throw Exception('No se pudo conectar al servidor. Verifica que el backend esté corriendo en http://localhost:3000');
+        throw Exception('No se pudo conectar al servidor. Verifica que el backend esté corriendo.');
       }
       // Manejar errores de respuesta del servidor
       if (e.response != null) {
         final statusCode = e.response!.statusCode;
-        final errorMsg = e.response!.data?['message'] ?? 
-                        e.response!.data?['error'] ?? 
+        final errorData = e.response!.data;
+        final errorMsg = errorData?['message'] ?? 
+                        errorData?['error'] ?? 
+                        errorData?.toString() ?? 
                         'Error del servidor';
+        
+        // Mensajes más específicos según el código de error
         if (statusCode == 400) {
+          // Error de validación de Zod
+          if (errorMsg.toString().contains('nombre') && errorMsg.toString().contains('min')) {
+            throw Exception('El nombre debe tener al menos 3 caracteres');
+          } else if (errorMsg.toString().contains('username') && errorMsg.toString().contains('min')) {
+            throw Exception('El nombre de usuario debe tener al menos 3 caracteres');
+          } else if (errorMsg.toString().contains('password') && errorMsg.toString().contains('min')) {
+            throw Exception('La contraseña debe tener al menos 6 caracteres');
+          } else if (errorMsg.toString().contains('Roles inválidos')) {
+            throw Exception('Uno o más roles seleccionados no son válidos. Verifica que los roles existan en el sistema.');
+          }
           throw Exception('Datos inválidos: $errorMsg');
         } else if (statusCode == 401) {
           throw Exception('No autorizado. Por favor, inicia sesión nuevamente.');
         } else if (statusCode == 403) {
           throw Exception('No tienes permisos para crear usuarios.');
         } else if (statusCode == 409) {
-          throw Exception('El nombre de usuario ya existe.');
+          throw Exception('El nombre de usuario "$username" ya existe. Por favor, elige otro.');
         } else {
           throw Exception('Error del servidor ($statusCode): $errorMsg');
         }
       }
-      throw Exception('Error de conexión: ${e.message}');
+      throw Exception('Error de conexión: ${e.message ?? "Error desconocido"}');
     } catch (e) {
       // Si ya es una Exception con mensaje claro, re-lanzarla
-      if (e is Exception && !e.toString().contains('Exception: Exception:')) {
-        rethrow;
+      if (e is Exception) {
+        final errorStr = e.toString();
+        // Evitar duplicar "Exception: Exception:"
+        if (!errorStr.contains('Exception: Exception:')) {
+          rethrow;
+        }
+        // Extraer el mensaje real si está duplicado
+        final match = RegExp(r'Exception:\s*(.+?)(?:Exception:|$)').firstMatch(errorStr);
+        if (match != null) {
+          throw Exception(match.group(1)?.trim() ?? 'Error al crear usuario');
+        }
       }
       throw Exception('Error al crear usuario: $e');
     }
@@ -441,6 +536,42 @@ class UsuariosService {
       if (e.response != null) {
         final statusCode = e.response!.statusCode;
         final errorMsg = e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error del servidor';
+        if (statusCode == 404) {
+          throw Exception('Usuario no encontrado');
+        } else if (statusCode == 403) {
+          throw Exception('No tienes permisos para eliminar usuarios.');
+        }
+        throw Exception('Error del servidor ($statusCode): $errorMsg');
+      }
+      throw Exception('Error de conexión: ${e.message}');
+    } catch (e) {
+      if (e is Exception && !e.toString().contains('Exception: Exception:')) {
+        rethrow;
+      }
+      throw Exception('Error al eliminar usuario: $e');
+    }
+  }
+
+  /// Eliminar un usuario de forma permanente
+  Future<void> eliminarUsuarioPermanente(int id) async {
+    try {
+      final response = await _api.delete('/usuarios/$id/permanente');
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        final errorMsg = response.data?['message'] ??
+            response.data?['error'] ??
+            'Error desconocido';
+        throw Exception('Error del servidor (${response.statusCode}): $errorMsg');
+      }
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout) {
+        throw Exception('No se pudo conectar al servidor. Verifica que el backend esté corriendo.');
+      }
+      if (e.response != null) {
+        final statusCode = e.response!.statusCode;
+        final errorMsg =
+            e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error del servidor';
         if (statusCode == 404) {
           throw Exception('Usuario no encontrado');
         } else if (statusCode == 403) {

@@ -13,6 +13,7 @@ import 'table_view.dart';
 import 'menu_view.dart';
 import 'cart_view.dart';
 import 'takeaway_view.dart';
+import 'divided_account_view.dart';
 
 class MeseroApp extends StatelessWidget {
   const MeseroApp({super.key});
@@ -52,6 +53,8 @@ class MeseroApp extends StatelessWidget {
       ],
       child: Consumer2<MeseroController, AuthController>(
         builder: (context, meseroController, authController, child) {
+          // Asegurar que el controller conozca el usuario logueado (sin notify)
+          meseroController.setLoggedUserName(authController.userName);
           return LayoutBuilder(
             builder: (context, constraints) {
               final isTablet = constraints.maxWidth > 600;
@@ -380,6 +383,8 @@ class MeseroApp extends StatelessWidget {
             return const MenuView();
           case 'cart':
             return const CartView();
+          case 'divided_account':
+            return const DividedAccountView();
           default:
             return const FloorView();
         }

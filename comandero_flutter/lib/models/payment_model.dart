@@ -3,7 +3,7 @@ import '../utils/date_utils.dart' as date_utils;
 
 class PaymentModel {
   final String id;
-  final String type; // 'cash', 'card', 'mixed'
+  final String type; // 'cash', 'card', 'mixed', 'transfer'
   final double totalAmount;
   final double? cashReceived;
   final double? tipAmount;
@@ -11,7 +11,12 @@ class PaymentModel {
   final double? cashApplied;
   final double? change;
   final String? notes;
+  final String? reference;
+  final String? bankName;
   final int? tableNumber;
+  // Metadata para historial (no depender del BillRepository después de cobrar)
+  final int? ordenId;
+  final String? waiterName;
   final String billId;
   final DateTime timestamp;
   final String cashierName;
@@ -35,7 +40,11 @@ class PaymentModel {
     this.cashApplied,
     this.change,
     this.notes,
+    this.reference,
+    this.bankName,
     this.tableNumber,
+    this.ordenId,
+    this.waiterName,
     required this.billId,
     required this.timestamp,
     required this.cashierName,
@@ -60,7 +69,11 @@ class PaymentModel {
       cashApplied: json['cashApplied']?.toDouble(),
       change: json['change']?.toDouble(),
       notes: json['notes'],
+      reference: json['reference'],
+      bankName: json['bankName'],
       tableNumber: json['tableNumber'],
+      ordenId: (json['ordenId'] as num?)?.toInt(),
+      waiterName: json['waiterName'],
       billId: json['billId'],
       timestamp: date_utils.AppDateUtils.parseToLocal(json['timestamp']),
       cashierName: json['cashierName'],
@@ -88,7 +101,11 @@ class PaymentModel {
       'cashApplied': cashApplied,
       'change': change,
       'notes': notes,
+      'reference': reference,
+      'bankName': bankName,
       'tableNumber': tableNumber,
+      'ordenId': ordenId,
+      'waiterName': waiterName,
       'billId': billId,
       'timestamp': timestamp.toIso8601String(),
       'cashierName': cashierName,
@@ -113,7 +130,11 @@ class PaymentModel {
     double? cashApplied,
     double? change,
     String? notes,
+    String? reference,
+    String? bankName,
     int? tableNumber,
+    int? ordenId,
+    String? waiterName,
     String? billId,
     DateTime? timestamp,
     String? cashierName,
@@ -136,7 +157,11 @@ class PaymentModel {
       cashApplied: cashApplied ?? this.cashApplied,
       change: change ?? this.change,
       notes: notes ?? this.notes,
+      reference: reference ?? this.reference,
+      bankName: bankName ?? this.bankName,
       tableNumber: tableNumber ?? this.tableNumber,
+      ordenId: ordenId ?? this.ordenId,
+      waiterName: waiterName ?? this.waiterName,
       billId: billId ?? this.billId,
       timestamp: timestamp ?? this.timestamp,
       cashierName: cashierName ?? this.cashierName,
@@ -178,6 +203,9 @@ class BillModel {
   final String? paymentMethod; // Método de pago (ej: 'Efectivo', 'Tarjeta', etc.)
   final double? tipAmount; // Propina del pago
   final String? paymentNotes; // Notas del pago (referencia del pago)
+  // Campos para cuenta dividida por persona
+  final bool isDividedAccount; // Si es true, la cuenta está dividida por persona
+  final List<PersonAccount>? personAccounts; // Lista de personas con sus productos (solo si isDividedAccount = true)
 
   BillModel({
     required this.id,
@@ -205,6 +233,8 @@ class BillModel {
     this.paymentMethod,
     this.tipAmount,
     this.paymentNotes,
+    this.isDividedAccount = false,
+    this.personAccounts,
   });
 
   /// Calcula el total real sumando precio * cantidad de cada item
@@ -388,6 +418,12 @@ class BillModel {
       paymentMethod: json['paymentMethod'] as String?,
       tipAmount: json['tipAmount']?.toDouble(),
       paymentNotes: json['paymentNotes'] as String?,
+      isDividedAccount: json['isDividedAccount'] as bool? ?? false,
+      personAccounts: json['personAccounts'] != null
+          ? (json['personAccounts'] as List)
+              .map((pa) => PersonAccount.fromJson(pa))
+              .toList()
+          : null,
     );
   }
 
@@ -418,6 +454,9 @@ class BillModel {
       'paymentMethod': paymentMethod,
       'tipAmount': tipAmount,
       'paymentNotes': paymentNotes,
+      'isDividedAccount': isDividedAccount,
+      if (personAccounts != null)
+        'personAccounts': personAccounts!.map((pa) => pa.toJson()).toList(),
     };
   }
 
@@ -447,6 +486,8 @@ class BillModel {
     String? paymentMethod,
     double? tipAmount,
     String? paymentNotes,
+    bool? isDividedAccount,
+    List<PersonAccount>? personAccounts,
   }) {
     return BillModel(
       id: id ?? this.id,
@@ -474,6 +515,8 @@ class BillModel {
       paymentMethod: paymentMethod ?? this.paymentMethod,
       tipAmount: tipAmount ?? this.tipAmount,
       paymentNotes: paymentNotes ?? this.paymentNotes,
+      isDividedAccount: isDividedAccount ?? this.isDividedAccount,
+      personAccounts: personAccounts ?? this.personAccounts,
     );
   }
 }
@@ -483,12 +526,14 @@ class BillItem {
   final int quantity;
   final double price;
   final double total;
+  final String? personId; // Para cuenta dividida: ID de la persona a la que pertenece este item
 
   BillItem({
     required this.name,
     required this.quantity,
     required this.price,
     required this.total,
+    this.personId,
   });
 
   factory BillItem.fromJson(Map<String, dynamic> json) {
@@ -497,11 +542,101 @@ class BillItem {
       quantity: json['quantity'],
       price: json['price'].toDouble(),
       total: json['total'].toDouble(),
+      personId: json['personId'],
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {'name': name, 'quantity': quantity, 'price': price, 'total': total};
+    return {
+      'name': name,
+      'quantity': quantity,
+      'price': price,
+      'total': total,
+      if (personId != null) 'personId': personId,
+    };
+  }
+
+  BillItem copyWith({
+    String? name,
+    int? quantity,
+    double? price,
+    double? total,
+    String? personId,
+  }) {
+    return BillItem(
+      name: name ?? this.name,
+      quantity: quantity ?? this.quantity,
+      price: price ?? this.price,
+      total: total ?? this.total,
+      personId: personId ?? this.personId,
+    );
+  }
+}
+
+/// Representa una persona en una cuenta dividida con sus productos asignados
+class PersonAccount {
+  final String id; // ID único de la persona (ej: "person_1", "person_2")
+  final String name; // Nombre de la persona (ej: "Persona 1", "Juan", etc.)
+  final List<BillItem> items; // Productos asignados a esta persona
+  final double subtotal; // Subtotal de esta persona
+  final double tax; // Impuestos de esta persona
+  final double discount; // Descuento de esta persona
+  final double total; // Total de esta persona
+
+  PersonAccount({
+    required this.id,
+    required this.name,
+    required this.items,
+    this.subtotal = 0.0,
+    this.tax = 0.0,
+    this.discount = 0.0,
+    this.total = 0.0,
+  });
+
+  factory PersonAccount.fromJson(Map<String, dynamic> json) {
+    return PersonAccount(
+      id: json['id'],
+      name: json['name'],
+      items: (json['items'] as List)
+          .map((item) => BillItem.fromJson(item))
+          .toList(),
+      subtotal: (json['subtotal'] as num?)?.toDouble() ?? 0.0,
+      tax: (json['tax'] as num?)?.toDouble() ?? 0.0,
+      discount: (json['discount'] as num?)?.toDouble() ?? 0.0,
+      total: (json['total'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'items': items.map((item) => item.toJson()).toList(),
+      'subtotal': subtotal,
+      'tax': tax,
+      'discount': discount,
+      'total': total,
+    };
+  }
+
+  PersonAccount copyWith({
+    String? id,
+    String? name,
+    List<BillItem>? items,
+    double? subtotal,
+    double? tax,
+    double? discount,
+    double? total,
+  }) {
+    return PersonAccount(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      items: items ?? this.items,
+      subtotal: subtotal ?? this.subtotal,
+      tax: tax ?? this.tax,
+      discount: discount ?? this.discount,
+      total: total ?? this.total,
+    );
   }
 }
 
@@ -513,6 +648,7 @@ class PaymentType {
   static const String cash = 'cash';
   static const String card = 'card';
   static const String mixed = 'mixed';
+  static const String transfer = 'transfer';
 
   static String getTypeText(String type) {
     switch (type) {
@@ -522,6 +658,8 @@ class PaymentType {
         return 'Tarjeta';
       case mixed:
         return 'Mixto';
+      case transfer:
+        return 'Transferencia';
       default:
         return 'Desconocido';
     }

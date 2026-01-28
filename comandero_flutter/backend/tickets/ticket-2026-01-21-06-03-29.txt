@@ -1,0 +1,24 @@
+a1E1d1Comandix Restaurant
+d0E0==========================================
+a0Folio: ORD-000087
+Fecha: 21/01/26, 12:02 a.m.
+Mesa: 1
+Cajero: Cajero
+------------------------------------------
+E1CANT  DESCRIPCION              TOTAL
+E0------------------------------------------
+  1  Alitas Mango Habanero ...    30.00
+------------------------------------------
+Subtotal:                    $   30.00
+E1TOTAL:                      $   30.00
+E0==========================================
+a1
+k
+ORD-000087
+
+ORD-000087
+a0a1
+¡Gracias por su preferencia!
+Vuelva pronto
+
+a0i

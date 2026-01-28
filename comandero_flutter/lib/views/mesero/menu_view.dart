@@ -60,6 +60,15 @@ class _MenuViewState extends State<MenuView> {
   // Convertir ProductModel a Map para compatibilidad con el código existente
   List<Map<String, dynamic>> get menuItems {
     return products.map((product) {
+      final sizes = product.sizes
+          .map(
+            (s) => {
+              'id': s.id,
+              'name': s.name,
+              'price': s.price,
+            },
+          )
+          .toList();
       return {
         'id': product.id,
         'name': product.name,
@@ -69,8 +78,8 @@ class _MenuViewState extends State<MenuView> {
         'image': product.image,
         'hot': product.hot,
         'available': product.available,
-        'hasSizes': false, // Se puede mejorar después si hay tamaños
-        'sizes': null,
+        'hasSizes': product.hasSizes,
+        'sizes': sizes,
       };
     }).toList();
   }
@@ -603,6 +612,9 @@ class _MenuViewState extends State<MenuView> {
         'sauce': result['sauce'] as String?,
         'saucePrice': (result['saucePrice'] as num?)?.toDouble() ?? 0.0, // Precio de la salsa
         'size': result['size'] as String?,
+        'sizeId': result['sizeId'] as int?,
+        'sizePrice': (result['sizePrice'] as num?)?.toDouble(),
+        'unitPrice': (result['unitPrice'] as num?)?.toDouble(),
         'temperature': result['temperature'] as String?,
         'kitchenNotes': result['kitchenNotes'] as String? ?? '',
         'extras': result['extras'] as List<dynamic>? ?? [],
@@ -623,6 +635,9 @@ class _MenuViewState extends State<MenuView> {
       // Navegar a la vista correcta según el modo
       if (controller.isTakeawayMode) {
         controller.setCurrentView('cart');
+      } else if (controller.isDividedAccountMode) {
+        // Si está en modo dividida, regresar a la vista de cuenta dividida
+        controller.setCurrentView('divided_account');
       } else {
         controller.setCurrentView('table');
       }

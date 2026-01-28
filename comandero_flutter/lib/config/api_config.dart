@@ -321,8 +321,9 @@ class ApiConfig {
         return 'http://$_cachedLocalIp:3000/api';
       }
 
-      // Por defecto, usar 10.0.2.2 (emulador) - se actualizará cuando se detecte la IP real
-      return 'http://10.0.2.2:3000/api';
+      // Por defecto, usar IP del servidor para pruebas locales
+      // TODO: Cambiar esto por detección automática o configuración manual en producción
+      return 'http://192.168.0.198:3000/api';
     }
   }
 
@@ -378,14 +379,24 @@ class ApiConfig {
       return 'http://localhost:3000';
     } else {
       // Usar la misma lógica que baseUrl pero sin /api
+      // Prioridad 1: IP guardada manualmente por el usuario (más confiable)
       final manualIp = _manualLocalIp;
-      if (manualIp != null) {
+      if (manualIp != null && manualIp.isNotEmpty) {
         return 'http://$manualIp:3000';
       }
+      
+      // Prioridad 2: IP del servidor detectada automáticamente
+      if (_serverIpFromBackend != null) {
+        return 'http://$_serverIpFromBackend:3000';
+      }
+      
+      // Prioridad 3: IP local detectada del dispositivo
       if (_cachedLocalIp != null) {
         return 'http://$_cachedLocalIp:3000';
       }
-      return 'http://10.0.2.2:3000';
+      
+      // Por defecto, usar IP del servidor para pruebas locales
+      return 'http://192.168.0.198:3000';
     }
   }
 
