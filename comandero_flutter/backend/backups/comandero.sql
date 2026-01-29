@@ -5,7 +5,7 @@
 -- Incluye estructura y datos iniciales necesarios
 -- ============================================
 -- Fecha de creación: 2025-01-26
--- Versión: 1.0
+-- Versión: 1.1
 -- ============================================
 
 -- Crear base de datos si no existe
@@ -24,14 +24,19 @@ CREATE TABLE IF NOT EXISTS usuario (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   nombre VARCHAR(160) NOT NULL,
   username VARCHAR(80) NOT NULL,
+  telefono VARCHAR(40) NULL,
   password_hash VARCHAR(255) NOT NULL,
   password VARCHAR(255) NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
+  ultimo_acceso TIMESTAMP NULL,
   password_actualizada_en TIMESTAMP NULL,
+  password_actualizada_por_usuario_id BIGINT UNSIGNED NULL,
   creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY ux_usuario_username (username)
+  UNIQUE KEY ux_usuario_username (username),
+  KEY ix_usuario_activo (activo),
+  KEY ix_usuario_ultimo_acceso (ultimo_acceso)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================
@@ -468,10 +473,15 @@ CREATE TABLE IF NOT EXISTS caja_cierre (
   creado_por_usuario_id BIGINT UNSIGNED NULL,
   creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   notas VARCHAR(255) NULL,
+  estado VARCHAR(20) NOT NULL DEFAULT 'pending',
+  revisado_por_usuario_id BIGINT UNSIGNED NULL,
+  revisado_en TIMESTAMP NULL,
+  comentario_revision TEXT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY ux_caja_fecha (fecha),
   KEY ix_caja_usuario (creado_por_usuario_id),
   KEY ix_caja_fecha (fecha),
+  KEY ix_caja_revisado_por (revisado_por_usuario_id),
   CONSTRAINT fk_caja_usuario FOREIGN KEY (creado_por_usuario_id) REFERENCES usuario(id) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -594,11 +604,14 @@ CREATE TABLE IF NOT EXISTS alerta (
   mensaje VARCHAR(255) NOT NULL,
   metadata JSON NULL,
   leida TINYINT(1) NOT NULL DEFAULT 0,
+  leido_por_usuario_id BIGINT UNSIGNED NULL,
+  leido_en TIMESTAMP NULL,
   creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY ix_alerta_destino (usuario_destino_id, leida, creado_en),
   KEY ix_alerta_mesa (mesa_id),
   KEY ix_alerta_orden (orden_id),
+  KEY ix_alerta_leido_por (leido_por_usuario_id),
   CONSTRAINT fk_alerta_origen FOREIGN KEY (usuario_origen_id) REFERENCES usuario(id) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_alerta_destino FOREIGN KEY (usuario_destino_id) REFERENCES usuario(id) ON UPDATE CASCADE ON DELETE SET NULL,
   CONSTRAINT fk_alerta_mesa FOREIGN KEY (mesa_id) REFERENCES mesa(id) ON UPDATE CASCADE ON DELETE SET NULL,
@@ -675,6 +688,15 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- Agregar columna password a usuario si no existe
 ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password VARCHAR(255) NULL AFTER password_hash;
 
+-- Agregar columna telefono a usuario si no existe
+ALTER TABLE usuario ADD COLUMN IF NOT EXISTS telefono VARCHAR(40) NULL AFTER username;
+
+-- Agregar columna ultimo_acceso a usuario si no existe
+ALTER TABLE usuario ADD COLUMN IF NOT EXISTS ultimo_acceso TIMESTAMP NULL AFTER activo;
+
+-- Agregar columna password_actualizada_por_usuario_id a usuario si no existe
+ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_actualizada_por_usuario_id BIGINT UNSIGNED NULL AFTER password_actualizada_en;
+
 -- Agregar columna tiempo_estimado_preparacion a orden si no existe
 ALTER TABLE orden ADD COLUMN IF NOT EXISTS tiempo_estimado_preparacion INT UNSIGNED NULL AFTER propina_sugerida;
 
@@ -683,6 +705,16 @@ ALTER TABLE orden ADD COLUMN IF NOT EXISTS cliente_telefono VARCHAR(40) NULL AFT
 
 -- Agregar columna metadata a alerta si no existe
 ALTER TABLE alerta ADD COLUMN IF NOT EXISTS metadata JSON NULL AFTER mensaje;
+
+-- Agregar campos de lectura a alerta si no existen
+ALTER TABLE alerta ADD COLUMN IF NOT EXISTS leido_por_usuario_id BIGINT UNSIGNED NULL AFTER leida;
+ALTER TABLE alerta ADD COLUMN IF NOT EXISTS leido_en TIMESTAMP NULL AFTER leido_por_usuario_id;
+
+-- Agregar campos de revisión a caja_cierre si no existen (para módulo de cierres)
+ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS estado VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER notas;
+ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS revisado_por_usuario_id BIGINT UNSIGNED NULL AFTER estado;
+ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS revisado_en TIMESTAMP NULL AFTER revisado_por_usuario_id;
+ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS comentario_revision TEXT NULL AFTER revisado_en;
 
 -- Agregar constraint único a caja_cierre.fecha si no existe
 ALTER TABLE caja_cierre ADD UNIQUE KEY IF NOT EXISTS ux_caja_fecha (fecha);
@@ -708,33 +740,41 @@ INSERT IGNORE INTO permiso (nombre, descripcion) VALUES
   ('gestionar_usuarios', 'Puede gestionar usuarios y roles');
 
 -- Estados de mesa
-INSERT IGNORE INTO estado_mesa (id, nombre, descripcion) VALUES
-  (1, 'LIBRE', 'Disponible para asignar'),
-  (2, 'OCUPADA', 'Con comensales'),
-  (3, 'RESERVADA', 'Asignada por reserva'),
-  (4, 'EN_LIMPIEZA', 'En servicio de limpieza');
+INSERT IGNORE INTO estado_mesa (nombre, descripcion) VALUES
+  ('LIBRE', 'Disponible para asignar'),
+  ('OCUPADA', 'Con comensales'),
+  ('RESERVADA', 'Asignada por reserva'),
+  ('EN_LIMPIEZA', 'En servicio de limpieza');
 
 -- Estados de orden
-INSERT IGNORE INTO estado_orden (id, nombre, descripcion) VALUES
-  (1, 'abierta', 'Orden abierta en proceso'),
-  (2, 'en_preparacion', 'En preparación por cocina'),
-  (3, 'listo', 'Pedido listo para servir'),
-  (4, 'listo_para_recoger', 'Pedido para llevar listo'),
-  (5, 'pagada', 'Pagada y cerrada'),
-  (6, 'cancelada', 'Cancelada');
+INSERT IGNORE INTO estado_orden (nombre, descripcion) VALUES
+  ('abierta', 'Orden abierta en proceso'),
+  ('en_preparacion', 'En preparación por cocina'),
+  ('listo', 'Pedido listo para servir'),
+  ('listo_para_recoger', 'Pedido para llevar listo'),
+  ('pagada', 'Pagada y cerrada'),
+  ('cerrada', 'Cerrada / finalizada'),
+  ('cancelada', 'Cancelada');
 
 -- Formas de pago
-INSERT IGNORE INTO forma_pago (id, nombre, descripcion) VALUES
-  (1, 'efectivo', 'Pago en efectivo'),
-  (2, 'tarjeta_debito', 'Tarjeta de débito'),
-  (3, 'tarjeta_credito', 'Tarjeta de crédito'),
-  (4, 'transferencia', 'Transferencia bancaria');
+INSERT IGNORE INTO forma_pago (nombre, descripcion) VALUES
+  ('efectivo', 'Pago en efectivo'),
+  ('tarjeta_debito', 'Tarjeta de débito'),
+  ('tarjeta_credito', 'Tarjeta de crédito'),
+  ('transferencia', 'Transferencia bancaria');
+
+-- Asignación inicial de permisos a roles (para que el CRUD de roles funcione con datos base)
+INSERT IGNORE INTO rol_permiso (rol_id, permiso_id)
+SELECT 1, p.id FROM permiso p;
+
+INSERT IGNORE INTO rol_permiso (rol_id, permiso_id)
+SELECT 2, p.id FROM permiso p WHERE p.nombre IN ('ver_caja', 'cerrar_caja');
 
 -- Usuario administrador por defecto
 -- NOTA: La contraseña debe ser configurada después de crear el usuario
 -- Usar el script crear-usuario-admin.js para generar el hash correcto
-INSERT IGNORE INTO usuario (id, nombre, username, password_hash, activo, password_actualizada_en, creado_en, actualizado_en) VALUES
-  (1, 'Administrador', 'admin', '$2b$10$rQZ8KJ9XvYqH8L5N3M2P1eK7J9XvYqH8L5N3M2P1eK7J9XvYqH8L5N3M2P1e', 1, NOW(), NOW(), NOW());
+INSERT IGNORE INTO usuario (id, nombre, username, telefono, password_hash, password, activo, password_actualizada_en, creado_en, actualizado_en) VALUES
+  (1, 'Administrador', 'admin', '555-0001', '$2b$10$rQZ8KJ9XvYqH8L5N3M2P1eK7J9XvYqH8L5N3M2P1eK7J9XvYqH8L5N3M2P1e', 'Demo1234', 1, NOW(), NOW(), NOW());
 
 -- Asignar rol de administrador al usuario admin
 INSERT IGNORE INTO usuario_rol (usuario_id, rol_id) VALUES (1, 1);

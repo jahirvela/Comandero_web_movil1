@@ -51,19 +51,35 @@ Este repositorio contiene únicamente la carpeta `comandero_flutter` que incluye
    # DB_NAME=comandero
    ```
 
-4. **Configurar el Frontend**
+4. **Crear usuarios demo y credenciales (recomendado)**
+
+   El script SQL crea la estructura + catálogos base (estados, formas de pago, roles, etc.).
+   Para que el login funcione “listo” en otra laptop (porque `password_hash` debe ser bcrypt),
+   ejecuta uno de estos scripts:
+
+   ```bash
+   cd comandero_flutter/backend
+
+   # Opción A: crear/actualizar admin (usuario: admin / pass: Demo1234)
+   npm run create-admin
+
+   # Opción B: crear usuarios demo por rol (admin, cajero1, capitan1, mesero1, cocinero1)
+   npx tsx scripts/seed-users.ts
+   ```
+
+5. **Configurar el Frontend**
    ```bash
    cd comandero_flutter
    flutter pub get
    ```
 
-5. **Iniciar el Backend**
+6. **Iniciar el Backend**
    ```bash
    cd backend
    npm run dev
    ```
 
-6. **Ejecutar la Aplicación Flutter**
+7. **Ejecutar la Aplicación Flutter**
    ```bash
    flutter run
    ```
@@ -84,7 +100,7 @@ Este script incluye:
 
 **Usuario Administrador:**
 - Username: `admin`
-- Password: (configurar después de importar la BD usando el script `crear-usuario-admin.js`)
+- Password: `Demo1234` (después de ejecutar `npm run create-admin` o `npx tsx scripts/seed-users.ts`)
 
 ## 📝 Notas Importantes
 
