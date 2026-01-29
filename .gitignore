@@ -5,6 +5,9 @@
 !README.md
 !setup-git-repo.ps1
 
+# Ignorar explícitamente "Codigos en react" (por si acaso ya estaba rastreado)
+Codigos en react/
+
 # Archivos del sistema
 .DS_Store
 Thumbs.db
