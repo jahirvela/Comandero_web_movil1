@@ -682,42 +682,6 @@ CREATE TABLE IF NOT EXISTS bitacora_impresion (
 
 SET FOREIGN_KEY_CHECKS = 1;
 
--- ============================================
--- ETAPA 12: Agregar columnas adicionales si no existen
--- ============================================
--- Agregar columna password a usuario si no existe
-ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password VARCHAR(255) NULL AFTER password_hash;
-
--- Agregar columna telefono a usuario si no existe
-ALTER TABLE usuario ADD COLUMN IF NOT EXISTS telefono VARCHAR(40) NULL AFTER username;
-
--- Agregar columna ultimo_acceso a usuario si no existe
-ALTER TABLE usuario ADD COLUMN IF NOT EXISTS ultimo_acceso TIMESTAMP NULL AFTER activo;
-
--- Agregar columna password_actualizada_por_usuario_id a usuario si no existe
-ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_actualizada_por_usuario_id BIGINT UNSIGNED NULL AFTER password_actualizada_en;
-
--- Agregar columna tiempo_estimado_preparacion a orden si no existe
-ALTER TABLE orden ADD COLUMN IF NOT EXISTS tiempo_estimado_preparacion INT UNSIGNED NULL AFTER propina_sugerida;
-
--- Agregar columna cliente_telefono a orden si no existe
-ALTER TABLE orden ADD COLUMN IF NOT EXISTS cliente_telefono VARCHAR(40) NULL AFTER cliente_nombre;
-
--- Agregar columna metadata a alerta si no existe
-ALTER TABLE alerta ADD COLUMN IF NOT EXISTS metadata JSON NULL AFTER mensaje;
-
--- Agregar campos de lectura a alerta si no existen
-ALTER TABLE alerta ADD COLUMN IF NOT EXISTS leido_por_usuario_id BIGINT UNSIGNED NULL AFTER leida;
-ALTER TABLE alerta ADD COLUMN IF NOT EXISTS leido_en TIMESTAMP NULL AFTER leido_por_usuario_id;
-
--- Agregar campos de revisión a caja_cierre si no existen (para módulo de cierres)
-ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS estado VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER notas;
-ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS revisado_por_usuario_id BIGINT UNSIGNED NULL AFTER estado;
-ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS revisado_en TIMESTAMP NULL AFTER revisado_por_usuario_id;
-ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS comentario_revision TEXT NULL AFTER revisado_en;
-
--- Agregar constraint único a caja_cierre.fecha si no existe
-ALTER TABLE caja_cierre ADD UNIQUE KEY IF NOT EXISTS ux_caja_fecha (fecha);
 
 -- ============================================
 -- ETAPA 13: Datos iniciales (Seeds)
