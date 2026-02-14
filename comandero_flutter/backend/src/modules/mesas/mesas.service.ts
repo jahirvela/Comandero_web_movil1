@@ -32,7 +32,7 @@ export const crearNuevaMesa = async (input: CrearMesaInput) => {
   const existente = await obtenerMesaPorCodigoIncluyendoInactivos(input.codigo);
   if (existente) {
     if (existente.activo) {
-      throw conflict(`Ya existe una mesa con el número ${input.codigo}`);
+      throw conflict(`Ya existe una mesa con ese código o nombre (${input.codigo})`);
     }
     // Reactivar mesa existente inactiva reutilizando el código
     await actualizarMesa(existente.id, {

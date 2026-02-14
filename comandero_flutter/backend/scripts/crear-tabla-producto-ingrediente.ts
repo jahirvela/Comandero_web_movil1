@@ -133,7 +133,6 @@ async function crearTablaProductoIngrediente() {
     if (connection) {
       connection.release();
     }
-    await pool.end();
   }
 }
 

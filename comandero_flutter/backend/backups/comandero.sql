@@ -720,6 +720,39 @@ ALTER TABLE caja_cierre ADD COLUMN IF NOT EXISTS comentario_revision TEXT NULL A
 ALTER TABLE caja_cierre ADD UNIQUE KEY IF NOT EXISTS ux_caja_fecha (fecha);
 
 -- ============================================
+-- ETAPA 12b: Tablas de configuración e impresoras
+-- ============================================
+CREATE TABLE IF NOT EXISTS configuracion (
+  id TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  iva_habilitado TINYINT(1) NOT NULL DEFAULT 0,
+  actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO configuracion (id, iva_habilitado)
+SELECT 1, 0 FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM configuracion WHERE id = 1);
+
+CREATE TABLE IF NOT EXISTS impresora (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(100) NOT NULL,
+  tipo ENUM('usb','tcp','bluetooth','simulation') NOT NULL DEFAULT 'usb',
+  device VARCHAR(255) NULL,
+  host VARCHAR(255) NULL,
+  port INT UNSIGNED NULL,
+  paper_width TINYINT UNSIGNED NOT NULL DEFAULT 80,
+  imprime_ticket TINYINT(1) NOT NULL DEFAULT 1,
+  imprime_comanda TINYINT(1) NOT NULL DEFAULT 0,
+  orden SMALLINT NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  marca_modelo VARCHAR(120) NULL,
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY ix_impresora_activo (activo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
 -- ETAPA 13: Datos iniciales (Seeds)
 -- ============================================
 
@@ -770,11 +803,9 @@ SELECT 1, p.id FROM permiso p;
 INSERT IGNORE INTO rol_permiso (rol_id, permiso_id)
 SELECT 2, p.id FROM permiso p WHERE p.nombre IN ('ver_caja', 'cerrar_caja');
 
--- Usuario administrador por defecto
--- NOTA: La contraseña debe ser configurada después de crear el usuario
--- Usar el script crear-usuario-admin.js para generar el hash correcto
+-- Usuario administrador por defecto (contraseña: Demo1234)
 INSERT IGNORE INTO usuario (id, nombre, username, telefono, password_hash, password, activo, password_actualizada_en, creado_en, actualizado_en) VALUES
-  (1, 'Administrador', 'admin', '555-0001', '$2b$10$rQZ8KJ9XvYqH8L5N3M2P1eK7J9XvYqH8L5N3M2P1eK7J9XvYqH8L5N3M2P1e', 'Demo1234', 1, NOW(), NOW(), NOW());
+  (1, 'Administrador', 'admin', '555-0001', '$2b$10$iQvlAwdWmMI5dH3TZzIvee20rcQMjv9Me4l4FIAwGZY9yg6543WaK', 'Demo1234', 1, NOW(), NOW(), NOW());
 
 -- Asignar rol de administrador al usuario admin
 INSERT IGNORE INTO usuario_rol (usuario_id, rol_id) VALUES (1, 1);

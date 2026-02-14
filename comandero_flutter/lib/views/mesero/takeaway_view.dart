@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
+import '../../services/comandas_service.dart';
 import '../../utils/app_colors.dart';
 import 'alert_to_kitchen_modal.dart';
 
@@ -298,7 +299,7 @@ class _TakeawayViewState extends State<TakeawayView> {
             ),
             const SizedBox(height: 8),
             
-            // Items/Productos
+            // Items/Productos (lista completa, sin truncar)
             if (items.isNotEmpty) ...[
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -308,7 +309,7 @@ class _TakeawayViewState extends State<TakeawayView> {
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: items.take(3).map<Widget>((item) {
+                      children: items.map<Widget>((item) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
@@ -319,17 +320,7 @@ class _TakeawayViewState extends State<TakeawayView> {
                             ),
                           ),
                         );
-                      }).toList()..addAll([
-                        if (items.length > 3)
-                          Text(
-                            '... y ${items.length - 3} más',
-                            style: TextStyle(
-                              fontSize: isTablet ? 12.0 : 10.0,
-                              color: AppColors.textSecondary,
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                      ]),
+                      }).toList(),
                     ),
                   ),
                 ],
@@ -352,12 +343,30 @@ class _TakeawayViewState extends State<TakeawayView> {
               ],
             ),
             
-            // Botones de acción
-            if (_canShowActions(rawStatus)) ...[
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
+            // Botones de acción: Reimprimir comanda (cocina) + Enviar alerta y Cerrar cuenta (si aplica)
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                // Reimprimir comanda (cocina) para esta orden
+                OutlinedButton.icon(
+                  onPressed: () => _reimprimirComanda(context, order, isTablet),
+                  icon: Icon(Icons.receipt_long, size: isTablet ? 18.0 : 16.0),
+                  label: Text(
+                    'Reimprimir comanda',
+                    style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: BorderSide(color: AppColors.primary),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 14.0 : 10.0,
+                      vertical: isTablet ? 10.0 : 8.0,
+                    ),
+                  ),
+                ),
+                if (_canShowActions(rawStatus)) ...[
+                  const SizedBox(width: 8),
                   // Botón de Enviar Alerta
                   ElevatedButton.icon(
                     onPressed: () => _showAlertModalForOrder(context, order),
@@ -394,12 +403,81 @@ class _TakeawayViewState extends State<TakeawayView> {
                     ),
                   ),
                 ],
-              ),
-            ],
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _reimprimirComanda(
+    BuildContext context,
+    Map<String, dynamic> order,
+    bool isTablet,
+  ) async {
+    final ordenId = order['ordenId'] as int?;
+    if (ordenId == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo identificar la orden para reimprimir comanda'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    final orderIdStr = order['id'] as String? ?? 'ORD-${ordenId.toString().padLeft(6, '0')}';
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reimprimir comanda'),
+        content: Text(
+          '¿Reimprimir la comanda (cocina) de la orden $orderIdStr?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reimprimir'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    try {
+      final comandasService = ComandasService();
+      final result = await comandasService.reimprimirComanda(ordenId);
+      if (!context.mounted) return;
+      if (result['exito'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['mensaje'] as String? ?? 'Comanda enviada a imprimir'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['mensaje'] as String? ?? 'Error al reimprimir comanda'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al reimprimir comanda: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   bool _canShowActions(String status) {
@@ -574,6 +652,7 @@ class _TakeawayViewState extends State<TakeawayView> {
     // IMPORTANTE: Obtener TODAS las órdenes activas del mismo cliente
     // Esto permite mostrar todas las órdenes que se cobrarán juntas
     double totalConsumo = 0.0;
+    double totalImpuesto = 0.0;
     final allItems = <Map<String, dynamic>>[];
     final allOrderIds = <int>[];
 
@@ -640,6 +719,7 @@ class _TakeawayViewState extends State<TakeawayView> {
                 'ordenId': ordenIdActual, // Para identificar de qué orden viene cada item
               });
             }
+            totalImpuesto += (ordenDetalle['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
           }
         }
       }
@@ -650,7 +730,11 @@ class _TakeawayViewState extends State<TakeawayView> {
     // Cerrar indicador de carga
     if (context.mounted) Navigator.of(context).pop();
 
-    final total = totalConsumo;
+    final ivaHabilitado = await controller.getIvaHabilitado();
+    final impuesto = ivaHabilitado
+        ? (totalImpuesto > 0 ? totalImpuesto : totalConsumo * 0.16)
+        : 0.0;
+    final total = totalConsumo + impuesto;
     final tieneMultiplesOrdenes = allOrderIds.length > 1;
 
     if (!context.mounted) return;
@@ -871,31 +955,81 @@ class _TakeawayViewState extends State<TakeawayView> {
 
                       const SizedBox(height: 24),
 
-                      // Total
+                      // Totales (Subtotal, IVA si aplica, Total)
                       Container(
                         padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
                         decoration: BoxDecoration(
                           color: AppColors.secondary.withValues(alpha: 0.3),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        child: Column(
                           children: [
-                            Text(
-                              'Total a pagar:',
-                              style: TextStyle(
-                                fontSize: isTablet ? 18.0 : 16.0,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.textPrimary,
-                              ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Subtotal:',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  '\$${totalConsumo.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              '\$${total.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                fontSize: isTablet ? 22.0 : 18.0,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.success,
+                            if (ivaHabilitado) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'IVA (16%):',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${impuesto.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ],
                               ),
+                              const SizedBox(height: 8),
+                            ],
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Total a pagar:',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  '\$${total.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 22.0 : 18.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.success,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),

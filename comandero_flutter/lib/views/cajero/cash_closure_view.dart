@@ -470,9 +470,9 @@ class _CashClosureViewState extends State<CashClosureView> {
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: selectedDate ?? DateTime.now(),
+      initialDate: selectedDate ?? date_utils.AppDateUtils.nowCdmx(),
       firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      lastDate: date_utils.AppDateUtils.nowCdmx().add(const Duration(days: 365)),
       locale: const Locale('es', 'ES'),
       builder: (context, child) {
         return Theme(
@@ -524,7 +524,7 @@ class _CashClosureViewState extends State<CashClosureView> {
             periodMatch = closureDate.isAtSameMomentAs(selectedDateOnly);
           } else {
             // Filtro por período predefinido
-            final now = DateTime.now();
+            final now = date_utils.AppDateUtils.nowCdmx();
             final closureDate = DateTime(
               closure.fecha.year,
               closure.fecha.month,

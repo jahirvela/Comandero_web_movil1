@@ -37,7 +37,7 @@ class _CashManagementViewState extends State<CashManagementView> {
       final pagosService = PagosService();
       
       // Obtener cierres de caja del día
-      final hoy = DateTime.now();
+      final hoy = date_utils.AppDateUtils.nowCdmx();
       final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
       final finDia = DateTime(hoy.year, hoy.month, hoy.day, 23, 59, 59);
       

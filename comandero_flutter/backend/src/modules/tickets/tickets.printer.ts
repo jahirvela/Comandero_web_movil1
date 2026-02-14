@@ -1,22 +1,41 @@
 import { getEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
+import type { PrinterConfigEntry } from '../../config/printers.config.js';
+import { getCharsPerLine, getPrintersConfigSync, getTicketColumnWidths, type PaperWidth } from '../../config/printers.config.js';
 import type { TicketData } from './tickets.repository.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { nowMx, formatMxLocale } from '../../config/time.js';
 
 /**
- * Librería elegida: escpos (v3.0.0-alpha.6)
- * 
- * Razones:
- * 1. Soporte completo para comandos ESC/POS (estándar POS-80)
- * 2. Soporte para múltiples interfaces: USB, TCP/IP, archivo
- * 3. Soporte para códigos de barras (Code128, EAN, etc.)
- * 4. Activamente mantenida
- * 5. Compatible con impresoras térmicas comunes
+ * Convierte string UTF-16 a buffer CP850 para impresoras térmicas (México/LATAM).
+ * Sin dependencias externas. Mapea acentos, ñ y signos españoles.
+ */
+function stringToCp850(s: string): Buffer {
+  // Unicode -> CP850 (tabla oficial: ¡=0xAD, ¿=0xA8; acentos y ñ)
+  const map: Record<number, number> = {
+    0xa1: 0xad, 0xbf: 0xa8, 0xc1: 0xb5, 0xc9: 0x90, 0xcd: 0xd6, 0xd1: 0xa5, 0xd3: 0xe0, 0xda: 0xe9, 0xdc: 0x9a,
+    0xe1: 0xa0, 0xe9: 0x82, 0xed: 0xa1, 0xf1: 0xa4, 0xf3: 0xa2, 0xfa: 0xa3, 0xfc: 0x81,
+  };
+  const out = Buffer.allocUnsafe(s.length);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c <= 0x7f) out[i] = c;
+    else if (c in map) out[i] = map[c] as number;
+    else if (c <= 0xff) out[i] = c;
+    else out[i] = 0x3f;
+  }
+  return out;
+}
+
+/**
+ * Impresión térmica ESC/POS (compatible con cualquier impresora térmica:
+ * 58mm, 80mm, USB, red, etc. Ej: ZKP5803, POS-80, Epson TM-T20)
+ *
+ * Soporta: simulación (archivo), archivo, TCP, USB.
  */
 
-interface Printer {
+export interface Printer {
   print(content: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -91,9 +110,8 @@ class NetworkPrinter implements Printer {
       const device = new escposNetwork.Network(this.host, this.port);
       await device.open();
 
-      // El contenido viene con comandos ESC/POS como string, convertir a buffer
-      // Usar latin1 para preservar los bytes de los comandos ESC/POS
-      const buffer = Buffer.from(content, 'latin1');
+      // Convertir a CP850 para que acentos y ñ impriman bien en impresoras térmicas (red/USB/Bluetooth)
+      const buffer = stringToCp850(content);
       await device.write(buffer);
       
       await device.close();
@@ -120,76 +138,59 @@ class USBPrinter implements Printer {
   }
 
   async print(content: string): Promise<void> {
-    try {
-      // En Windows, si el dispositivo es un nombre de impresora, usar la API nativa
-      // En Linux/Mac, usar escpos-usb directamente
-      if (this.platform === 'win32') {
-        // En Windows, intentar usar el nombre de la impresora directamente
-        // Si el dispositivo parece un nombre de impresora (no una ruta), usar node-printer o similar
-        // Por ahora, intentar con escpos-usb y si falla, usar alternativa
-        
-        try {
-          // Intentar con escpos-usb primero
-          const escposUsb = await import('escpos-usb');
-          const usbDevice = new escposUsb.USB();
-          await usbDevice.open(this.device);
-          
-          // El contenido viene con comandos ESC/POS como string, convertir a buffer
-          const buffer = Buffer.from(content, 'latin1'); // Usar latin1 para preservar bytes ESC/POS
-          await usbDevice.write(buffer);
-          await usbDevice.close();
-          
-          logger.info({ device: this.device, platform: this.platform }, 'Ticket enviado a impresora USB (escpos-usb)');
-        } catch (escposError: any) {
-          // Si escpos-usb falla, intentar método alternativo para Windows
-          logger.warn({ err: escposError, device: this.device }, 'escpos-usb falló, intentando método alternativo para Windows');
-          
-          // Para Windows: usar el nombre de la impresora directamente
-          // Esto requiere que la impresora esté instalada en Windows
-          const { exec } = await import('child_process');
-          const { promisify } = await import('util');
-          const execAsync = promisify(exec);
-          
-          // Guardar contenido temporalmente y enviarlo a la impresora por nombre
-          const { tmpdir } = await import('os');
-          const tempFile = path.join(tmpdir(), `ticket-${Date.now()}.txt`);
-          await fs.writeFile(tempFile, content, 'latin1');
-          
-          // Usar comando de Windows para imprimir
-          // Si el dispositivo es un nombre de impresora, usarlo directamente
-          // Si es un path como LPT1, COM1, etc., usarlo también
-          const printCommand = this.device.includes('\\') || this.device.includes(':')
-            ? `copy /b "${tempFile}" "${this.device}"` // Para LPT1, COM1, etc.
-            : `print /d:"${this.device}" "${tempFile}"`; // Para nombre de impresora
-          
-          try {
-            await execAsync(printCommand, { timeout: 5000 });
-            logger.info({ device: this.device, method: 'windows-native' }, 'Ticket enviado a impresora USB (método Windows nativo)');
-          } catch (printError: any) {
-            // Eliminar archivo temporal
-            await fs.unlink(tempFile).catch(() => {});
-            throw new Error(`No se pudo imprimir en Windows. Verifica que la impresora "${this.device}" esté instalada y disponible. Error: ${printError.message}`);
-          }
-          
-          // Eliminar archivo temporal después de un breve delay
-          setTimeout(() => fs.unlink(tempFile).catch(() => {}), 2000);
-        }
-      } else {
-        // Linux/Mac: usar escpos-usb directamente
-        const escposUsb = await import('escpos-usb');
-        const usbDevice = new escposUsb.USB();
-        await usbDevice.open(this.device);
-        
-        // El contenido viene con comandos ESC/POS como string, convertir a buffer
-        const buffer = Buffer.from(content, 'latin1'); // Usar latin1 para preservar bytes ESC/POS
-        await usbDevice.write(buffer);
-        await usbDevice.close();
-        
-        logger.info({ device: this.device, platform: this.platform }, 'Ticket enviado a impresora USB (escpos-usb)');
+    // En Windows: enviar datos RAW (ESC/POS) con script PowerShell + API Win32.
+    // El comando "print /d:nombre" envia como documento y el driver no pasa los bytes raw.
+    if (this.platform === 'win32') {
+      if (!this.device) {
+        throw new Error('En Windows se requiere PRINTER_DEVICE con el nombre exacto de la impresora (ej. ZKTECO).');
       }
-    } catch (error: any) {
-      logger.error({ err: error, device: this.device, platform: this.platform }, 'Error al imprimir en USB');
-      throw new Error(`No se pudo conectar a la impresora USB en ${this.device}: ${error.message}`);
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const { tmpdir } = await import('os');
+      const tempFile = path.join(tmpdir(), `ticket-${nowMx().toMillis()}.bin`);
+      const buffer = stringToCp850(content);
+      await fs.writeFile(tempFile, buffer);
+      const scriptPath = path.join(process.cwd(), 'scripts', 'print-raw-windows.ps1');
+      try {
+        await execFileAsync(
+          'powershell',
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-PrinterName', this.device, '-FilePath', tempFile],
+          { timeout: 15000, windowsHide: true }
+        );
+        logger.info({ device: this.device, method: 'windows-raw' }, 'Ticket enviado a impresora (RAW)');
+      } catch (e: any) {
+        await fs.unlink(tempFile).catch(() => {});
+        const msg = e.stderr?.trim() || e.message || String(e);
+        throw new Error(`No se pudo imprimir en "${this.device}". ${msg}`);
+      }
+      setTimeout(() => fs.unlink(tempFile).catch(() => {}), 3000);
+      return;
+    }
+    // Linux/Mac: usar escpos-usb. CP850 para acentos y ñ como en Windows.
+    const buffer = stringToCp850(content);
+    const escposUsbMod = await import('escpos-usb');
+    const USB = (escposUsbMod as any).default ?? (escposUsbMod as any).USB;
+    if (typeof USB !== 'function') {
+      throw new Error('escpos-usb: USB no es un constructor.');
+    }
+    const devices = USB.findPrinter();
+    if (!devices || devices.length === 0) {
+      throw new Error('No se encontró ninguna impresora USB térmica. Conecta la impresora y verifica que esté encendida.');
+    }
+    const usbDevice = new USB(devices[0]);
+    await new Promise<void>((resolve, reject) => {
+      usbDevice.open((err: Error | null) => (err ? reject(err) : resolve()));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        usbDevice.write(buffer, (err: Error | null) => (err ? reject(err) : resolve()));
+      });
+      logger.info({ device: this.device, platform: this.platform }, 'Ticket enviado a impresora USB (escpos-usb)');
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        usbDevice.close((err: Error | null) => (err ? reject(err) : resolve()));
+      });
     }
   }
 
@@ -198,192 +199,250 @@ class USBPrinter implements Printer {
   }
 }
 
-export const createPrinter = (): Printer => {
+/**
+ * Crea una instancia de impresora a partir de una entrada de configuración.
+ * Usado cuando hay varias impresoras (config/printers.json) o por tipo de documento.
+ */
+export const createPrinterFromConfig = (config: PrinterConfigEntry): Printer => {
   const env = getEnv();
-
-  if (env.PRINTER_TYPE === 'simulation') {
-    return new SimulationPrinter(env.PRINTER_SIMULATION_PATH);
+  if (config.type === 'simulation') {
+    const path = config.device ?? env.PRINTER_SIMULATION_PATH;
+    return new SimulationPrinter(path);
   }
-
-  if (env.PRINTER_INTERFACE === 'file') {
-    if (!env.PRINTER_DEVICE) {
-      throw new Error('PRINTER_DEVICE es requerido para interfaz de archivo');
-    }
-    return new FilePrinter(env.PRINTER_DEVICE);
+  if (config.type === 'file') {
+    if (!config.device) throw new Error(`Impresora ${config.id}: device es requerido para type=file`);
+    return new FilePrinter(config.device);
   }
-
-  if (env.PRINTER_INTERFACE === 'tcp') {
-    if (!env.PRINTER_HOST || !env.PRINTER_PORT) {
-      throw new Error('PRINTER_HOST y PRINTER_PORT son requeridos para impresora de red');
-    }
-    return new NetworkPrinter(env.PRINTER_HOST, env.PRINTER_PORT);
+  if (config.type === 'tcp') {
+    if (!config.host || !config.port) throw new Error(`Impresora ${config.id}: host y port requeridos para type=tcp`);
+    return new NetworkPrinter(config.host, config.port);
   }
-
-  if (env.PRINTER_INTERFACE === 'usb') {
-    if (!env.PRINTER_DEVICE) {
-      throw new Error('PRINTER_DEVICE es requerido para impresora USB');
-    }
-    return new USBPrinter(env.PRINTER_DEVICE);
+  if (config.type === 'usb') {
+    if (!config.device) throw new Error(`Impresora ${config.id}: device es requerido para type=usb (nombre o puerto)`);
+    return new USBPrinter(config.device);
   }
+  throw new Error(`Impresora ${config.id}: tipo inválido ${(config as { type: string }).type}`);
+};
 
-  throw new Error(`Configuración de impresora inválida: ${env.PRINTER_INTERFACE}`);
+/** Comando ESC/POS estándar para abrir cajón de dinero (pin 2). Compatible con la mayoría de impresoras térmicas. */
+export const COMANDO_APERTURA_CAJON_ESC_POS = '\x1B\x70\x00\x19\x19';
+
+/**
+ * Envía la señal de apertura de cajón a la impresora indicada.
+ * No lanza error; los fallos se registran en log.
+ */
+export async function enviarAperturaCajon(config: PrinterConfigEntry): Promise<void> {
+  const printer = createPrinterFromConfig(config);
+  try {
+    await printer.print(COMANDO_APERTURA_CAJON_ESC_POS);
+    logger.info({ printerId: config.id }, 'Señal de apertura de cajón enviada');
+  } catch (err) {
+    logger.warn({ err, printerId: config.id }, 'Error al enviar apertura de cajón');
+  } finally {
+    await printer.close();
+  }
+}
+
+/**
+ * Crea la impresora por defecto (una sola, desde .env o primera del config).
+ * Mantiene compatibilidad con el flujo que usa una única impresora.
+ */
+export const createPrinter = (): Printer => {
+  const configs = getPrintersConfigSync();
+  const first = configs[0];
+  if (!first) throw new Error('No hay ninguna impresora configurada');
+  return createPrinterFromConfig(first);
 };
 
 /**
- * Genera el contenido del ticket en formato texto plano compatible con POS-80
+ * Genera el contenido del ticket en formato ESC/POS (cualquier impresora térmica).
+ * @param paperWidth 57, 58, 72 u 80 mm. Por defecto 80.
  */
-export const generarContenidoTicket = (data: TicketData, incluirCodigoBarras: boolean = true): string => {
+export const generarContenidoTicket = (
+  data: TicketData,
+  incluirCodigoBarras: boolean = true,
+  paperWidth: PaperWidth = 80
+): string => {
   const { orden, cajero, items, restaurante } = data;
+  const w = getCharsPerLine(paperWidth);
+  const { totalColLen, descColLen, labelLen: ticketLabelLen } = getTicketColumnWidths(paperWidth);
+  const moneda = 'MXN ';
 
   let contenido = '';
 
-  // Comandos ESC/POS para centrar y formato
   const ESC = '\x1B';
-  const centrar = `${ESC}a1`; // Centrar texto
-  const izquierda = `${ESC}a0`; // Alinear izquierda
-  const negrita = `${ESC}E1`; // Negrita ON
-  const negritaOff = `${ESC}E0`; // Negrita OFF
-  const dobleAltura = `${ESC}d1`; // Doble altura
-  const alturaNormal = `${ESC}d0`; // Altura normal
-  const cortar = `${ESC}i`; // Cortar papel
+  const init = `${ESC}@`; // Inicializar impresora (limpia buffer y evita encabezados extra)
+  const centrar = `${ESC}a1`;
+  const izquierda = `${ESC}a0`;
+  const negrita = `${ESC}E1`;
+  const negritaOff = `${ESC}E0`;
+  const cortar = `${ESC}i`;
+  const imprimirYAvanzar = (n: number) => `${ESC}d${String.fromCharCode(n)}`;
+  // Normalizar texto: un solo espacio entre palabras para que no se junten
+  const norm = (s: string) => (s || '').normalize('NFC').replace(/\s+/g, ' ').trim();
 
-  // Encabezado del restaurante
+  // Encabezado: nombre del restaurante (por defecto "Restaurante"), bien estructurado y visible
+  const nombreRestaurante = (norm(restaurante.nombre) || 'Restaurante').trim() || 'Restaurante';
+  contenido += init;
   contenido += centrar;
   contenido += negrita;
-  contenido += dobleAltura;
-  contenido += `${restaurante.nombre}\n`;
-  contenido += alturaNormal;
+  contenido += `${nombreRestaurante}\n`;
   contenido += negritaOff;
-
-  if (restaurante.direccion) {
-    contenido += `${restaurante.direccion}\n`;
-  }
-  if (restaurante.telefono) {
-    contenido += `Tel: ${restaurante.telefono}\n`;
-  }
-  if (restaurante.rfc) {
-    contenido += `RFC: ${restaurante.rfc}\n`;
-  }
-
-  contenido += `${'='.repeat(42)}\n`;
+  if (restaurante.direccion) contenido += `${norm(restaurante.direccion)}\n`;
+  if (restaurante.telefono) contenido += `Tel: ${norm(restaurante.telefono)}\n`;
+  if (restaurante.rfc) contenido += `RFC: ${norm(restaurante.rfc)}\n`;
+  contenido += '\n';
+  contenido += `${'='.repeat(w)}\n`;
+  contenido += centrar;
+  contenido += negrita;
+  contenido += 'TICKET DE COBRO\n';
+  contenido += negritaOff;
+  contenido += `${'='.repeat(w)}\n`;
   contenido += izquierda;
+  contenido += '\n';
 
-  // Datos del ticket - usar formato CDMX
-  contenido += `Folio: ${orden.folio}\n`;
-  contenido += `Fecha: ${formatMxLocale(orden.fecha, { dateStyle: 'short', timeStyle: 'short' })}\n`;
+  // Helper: partir texto en líneas por ancho (para nombres largos en cualquier ancho de papel)
+  const wrap = (text: string, maxLen: number): string[] => {
+    if (maxLen < 1) return [];
+    const t = (text || '').trim();
+    if (!t) return [];
+    const lines: string[] = [];
+    let rest = t;
+    while (rest.length > 0) {
+      if (rest.length <= maxLen) {
+        lines.push(rest);
+        break;
+      }
+      const chunk = rest.substring(0, maxLen);
+      const lastSpace = chunk.lastIndexOf(' ');
+      const cut = lastSpace > 0 ? lastSpace : maxLen;
+      lines.push(rest.substring(0, cut).trim());
+      rest = rest.substring(cut).trim();
+    }
+    return lines;
+  };
 
-  // Determinar si es pedido para llevar
-  const isTakeaway = !orden.mesaCodigo && orden.clienteNombre;
+  // Para llevar = sin mesa. Bloque compacto, sin espacios en blanco grandes.
+  const isTakeaway = !orden.mesaCodigo;
 
   if (isTakeaway) {
-    // Mostrar claramente que es PARA LLEVAR
+    contenido += `${'-'.repeat(w)}\n`;
     contenido += centrar;
     contenido += negrita;
-    contenido += dobleAltura;
-    contenido += '*** PARA LLEVAR ***\n';
-    contenido += alturaNormal;
+    contenido += 'PARA LLEVAR\n';
     contenido += negritaOff;
     contenido += izquierda;
-  } else if (orden.mesaCodigo) {
-    contenido += `Mesa: ${orden.mesaCodigo}\n`;
+    const nombreCliente = norm(orden.clienteNombre || '') || 'Cliente';
+    const prefix = 'Cliente: ';
+    const descColLenTakeaway = w - prefix.length;
+    const lineasCliente = wrap(nombreCliente, descColLenTakeaway);
+    for (let i = 0; i < lineasCliente.length; i++) {
+      contenido += i === 0 ? `${prefix}${lineasCliente[i]}\n` : `${' '.repeat(prefix.length)}${lineasCliente[i]}\n`;
+    }
+    contenido += `${'-'.repeat(w)}\n`;
   }
 
-  if (orden.clienteNombre) {
-    contenido += `Cliente: ${orden.clienteNombre}\n`;
+  // Datos del ticket - fecha/hora de impresión en CDMX
+  contenido += `Folio: ${norm(orden.folio)}\n`;
+  contenido += `Fecha: ${formatMxLocale(nowMx(), { dateStyle: 'short', timeStyle: 'short' })}\n`;
+
+  // Mesa (y opcionalmente cuenta dividida: "Cuenta de: [nombre]") — compacto, sin huecos
+  if (!isTakeaway && orden.mesaCodigo) {
+    contenido += `Mesa: ${norm(orden.mesaCodigo)}\n`;
+  }
+  if (!isTakeaway && orden.clienteNombre) {
+    const nombreCuenta = norm(orden.clienteNombre);
+    const prefixCuenta = 'Cuenta de: ';
+    const anchoCuenta = w - prefixCuenta.length;
+    const lineasCuenta = wrap(nombreCuenta, anchoCuenta);
+    for (let i = 0; i < lineasCuenta.length; i++) {
+      contenido += i === 0 ? `${prefixCuenta}${lineasCuenta[i]}\n` : `${' '.repeat(prefixCuenta.length)}${lineasCuenta[i]}\n`;
+    }
+  }
+  if (cajero) contenido += `Impreso por: ${norm(cajero.nombre)}\n`;
+  if (data.metodoPago) {
+    const prefixMetodo = 'Método de pago: ';
+    const valorMetodo = norm(data.metodoPago);
+    const anchoValor = w - prefixMetodo.length;
+    const lineasMetodo = wrap(valorMetodo, anchoValor);
+    for (let i = 0; i < lineasMetodo.length; i++) {
+      contenido += i === 0 ? `${prefixMetodo}${lineasMetodo[i]}\n` : `${' '.repeat(prefixMetodo.length)}${lineasMetodo[i]}\n`;
+    }
   }
 
-  if (orden.clienteTelefono) {
-    contenido += `Tel: ${orden.clienteTelefono}\n`;
-  }
-
-  if (cajero) {
-    contenido += `Cajero: ${cajero.nombre}\n`;
-  }
-
-  contenido += `${'-'.repeat(42)}\n`;
-
-  // Items de la orden
+  contenido += `${'-'.repeat(w)}\n`;
   contenido += negrita;
-  contenido += 'CANT  DESCRIPCION              TOTAL\n';
+  contenido += `CANT  DESCRIPCION${' '.repeat(Math.max(1, descColLen - 11))} TOTAL MXN\n`;
   contenido += negritaOff;
-  contenido += `${'-'.repeat(42)}\n`;
+  contenido += `${'-'.repeat(w)}\n`;
+
+  const colCantWidth = 6;
+  const prefCant = (c: string) => c + ' '.repeat(Math.max(0, colCantWidth - c.length));
+  const prefCont = ' '.repeat(colCantWidth);
 
   for (const item of items) {
-    const descripcion = item.productoTamanoEtiqueta
-      ? `${item.productoNombre} (${item.productoTamanoEtiqueta})`
-      : item.productoNombre;
+    const nombre = norm(item.productoNombre) || 'Producto';
+    const tamano = item.productoTamanoEtiqueta ? norm(item.productoTamanoEtiqueta) : null;
+    const cantidad = String(item.cantidad).padStart(4);
+    const total = item.totalLinea.toFixed(2).padStart(totalColLen);
+    const lineasNombre = wrap(nombre, descColLen);
 
-    // Truncar descripción si es muy larga
-    const descripcionCorta = descripcion.length > 25 ? descripcion.substring(0, 22) + '...' : descripcion;
-    const cantidad = String(item.cantidad).padStart(3);
-    const total = item.totalLinea.toFixed(2).padStart(8);
+    if (tamano) {
+      // Con tamaño: nombre completo (wrap, sin truncar con "..."), luego tamaño debajo y total
+      for (let i = 0; i < lineasNombre.length; i++) {
+        const pref = i === 0 ? prefCant(cantidad) : prefCont;
+        contenido += `${pref}${lineasNombre[i]}\n`;
+      }
+      contenido += `${prefCont}${('Tam: ' + tamano).padEnd(descColLen)}${moneda}${total}\n`;
+    } else {
+      // Sin tamaño: nombre en varias líneas, total en la última
+      for (let i = 0; i < lineasNombre.length; i++) {
+        const pref = i === 0 ? prefCant(cantidad) : prefCont;
+        const isLast = i === lineasNombre.length - 1;
+        const totalStr = isLast ? `${' '.repeat(Math.max(0, descColLen - lineasNombre[i].length))}${moneda}${total}` : '';
+        contenido += `${pref}${lineasNombre[i]}${totalStr}\n`;
+      }
+    }
 
-    contenido += `${cantidad}  ${descripcionCorta.padEnd(25)} ${total}\n`;
-
-    // Mostrar modificadores si existen
+    // Modificadores (sin línea extra si no hay)
     if (item.modificadores.length > 0) {
       for (const mod of item.modificadores) {
-        const modNombre = `  + ${mod.nombre}`;
-        const modPrecio = mod.precioUnitario > 0 ? ` (+$${mod.precioUnitario.toFixed(2)})` : '';
+        const modNombre = `  + ${norm(mod.nombre)}`;
+        const modPrecio = mod.precioUnitario > 0 ? ` (+${moneda}${mod.precioUnitario.toFixed(2)})` : '';
         contenido += `${modNombre}${modPrecio}\n`;
       }
     }
 
-    // Mostrar nota si existe
-    if (item.nota) {
-      contenido += `  Nota: ${item.nota}\n`;
-    }
+    if (item.nota) contenido += `  Nota: ${norm(item.nota)}\n`;
   }
 
-  contenido += `${'-'.repeat(42)}\n`;
-
-  // Totales
-  contenido += `Subtotal:                    $${orden.subtotal.toFixed(2).padStart(8)}\n`;
-
+  // Garantizar al menos un espacio entre etiqueta y valor para que las palabras no se junten
+  const pad = (n: number) => ' '.repeat(Math.max(1, n));
+  contenido += `${'-'.repeat(w)}\n`;
+  contenido += `Subtotal:${pad(ticketLabelLen - 8)}${moneda}${orden.subtotal.toFixed(2).padStart(totalColLen)}\n`;
   if (orden.descuentoTotal > 0) {
-    contenido += `Descuento:                   $${orden.descuentoTotal.toFixed(2).padStart(8)}\n`;
+    contenido += `Descuento:${pad(ticketLabelLen - 9)}${moneda}${orden.descuentoTotal.toFixed(2).padStart(totalColLen)}\n`;
   }
-
-  if (orden.impuestoTotal > 0) {
-    contenido += `Impuesto:                   $${orden.impuestoTotal.toFixed(2).padStart(8)}\n`;
+  // IVA solo si el administrador lo tiene habilitado (se muestra la línea aunque sea 0.00)
+  if (data.ivaHabilitado) {
+    contenido += `IVA (16%):${pad(ticketLabelLen - 10)}${moneda}${orden.impuestoTotal.toFixed(2).padStart(totalColLen)}\n`;
   }
-
-  if (orden.propinaSugerida && orden.propinaSugerida > 0) {
-    contenido += `Propina sugerida:           $${orden.propinaSugerida.toFixed(2).padStart(8)}\n`;
-  }
-
   contenido += negrita;
-  contenido += `TOTAL:                      $${orden.total.toFixed(2).padStart(8)}\n`;
+  contenido += `TOTAL:${pad(ticketLabelLen - 5)}${moneda}${orden.total.toFixed(2).padStart(totalColLen)}\n`;
   contenido += negritaOff;
+  contenido += `${'='.repeat(w)}\n`;
 
-  contenido += `${'='.repeat(42)}\n`;
-
-  // Código de barras (Code128)
-  if (incluirCodigoBarras) {
-    contenido += centrar;
-    contenido += '\n';
-    // Comando ESC/POS para código de barras Code128
-    // ESC k m n d1...dk donde:
-    // - m = 4 (Code128)
-    // - n = longitud de los datos
-    // - d = datos del código de barras
-    const codigoLength = orden.folio.length;
-    contenido += `${ESC}k${String.fromCharCode(4)}${String.fromCharCode(codigoLength)}${orden.folio}`;
-    contenido += '\n\n'; // Espacio después del código
-    contenido += `${orden.folio}\n`; // Texto debajo del código
-    contenido += izquierda;
-  }
-
-  // Mensaje final
-  contenido += centrar;
-  contenido += '\n¡Gracias por su preferencia!\n';
-  contenido += 'Vuelva pronto\n\n';
+  // Cierre: compacto, sin espaciado extra
   contenido += izquierda;
-
-  // Cortar papel
+  const gracias = '¡Gracias por su preferencia!';
+  const vuelva = 'Vuelva pronto';
+  const espaciosGracias = ' '.repeat(Math.max(0, Math.floor((w - gracias.length) / 2)));
+  const espaciosVuelva = ' '.repeat(Math.max(0, Math.floor((w - vuelva.length) / 2)));
+  contenido += espaciosGracias + gracias + '\n';
+  contenido += espaciosVuelva + vuelva + '\n';
+  contenido += imprimirYAvanzar(3);
   contenido += cortar;
-  contenido += '\n'; // Avanzar papel
-
+  contenido += '\n';
   return contenido;
 };
 

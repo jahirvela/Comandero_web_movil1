@@ -17,6 +17,11 @@ import {
 import { emitPaymentCreated, emitPaymentAlert, emitTicketCreated, emitOrderUpdated } from '../../realtime/events.js';
 import { obtenerOrdenDetalle } from '../ordenes/ordenes.service.js';
 import { nowMxISO } from '../../config/time.js';
+import { obtenerConfiguracion } from '../configuracion/configuracion.repository.js';
+import { obtenerImpresoraPorId } from '../impresoras/impresoras.repository.js';
+import { enviarAperturaCajon } from '../tickets/tickets.printer.js';
+import type { PrinterConfigEntry } from '../../config/printers.config.js';
+import { normalizePaperWidth } from '../../config/printers.config.js';
 
 export const obtenerPagos = (ordenId?: number) => listarPagos(ordenId);
 
@@ -169,8 +174,52 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number) 
 
   // Retornar el pago principal (de la orden principal)
   const pagoPrincipal = pagosCreados.find(p => p.ordenId === input.ordenId);
-  return pagoPrincipal ? pagoPrincipal.pago : pagosCreados[0]?.pago;
+  const resultado = pagoPrincipal ? pagoPrincipal.pago : pagosCreados[0]?.pago;
+
+  // Abrir cajón de dinero si está configurado y el pago aplicado es efectivo o tarjeta según config
+  if ((input.estado ?? 'aplicado') === 'aplicado' && resultado) {
+    try {
+      await intentarAbrirCajonPorPago(resultado);
+    } catch (_) {
+      // No fallar el flujo de pago si el cajón falla
+    }
+  }
+
+  return resultado;
 };
+
+/**
+ * Si la configuración del cajón lo permite (habilitado, abrir en efectivo/tarjeta según forma de pago),
+ * envía la señal de apertura a la impresora asociada.
+ */
+async function intentarAbrirCajonPorPago(pago: { formaPagoNombre: string }): Promise<void> {
+  const config = await obtenerConfiguracion();
+  const cajon = config.cajon;
+  if (!cajon.habilitado || cajon.tipoConexion !== 'via_impresora' || !cajon.impresoraId) return;
+
+  const forma = (pago.formaPagoNombre || '').toLowerCase();
+  const esEfectivo = forma.includes('efectivo');
+  const esTarjeta = forma.includes('tarjeta');
+  if (esEfectivo && !cajon.abrirEnEfectivo) return;
+  if (esTarjeta && !cajon.abrirEnTarjeta) return;
+  if (!esEfectivo && !esTarjeta) return;
+
+  const impresora = await obtenerImpresoraPorId(cajon.impresoraId);
+  if (!impresora) return;
+
+  const type = impresora.tipo === 'tcp' ? 'tcp' : impresora.tipo === 'simulation' ? 'simulation' : 'usb';
+  const entry: PrinterConfigEntry = {
+    id: String(impresora.id),
+    name: impresora.nombre,
+    type,
+    documents: [],
+    paperWidth: normalizePaperWidth(impresora.paperWidth),
+    device: impresora.device ?? undefined,
+    host: impresora.host ?? undefined,
+    port: impresora.port ?? undefined,
+  };
+  await enviarAperturaCajon(entry);
+}
 
 export const obtenerFormasPago = () => listarFormasPago();
 

@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _passwordFocusNode = FocusNode();
   bool _isLoading = false;
   bool _obscurePassword = true;
 
@@ -26,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
+    _passwordFocusNode.dispose();
     super.dispose();
   }
 
@@ -233,7 +235,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Sistema de comandero para puesto de barbacoa',
+                          'Sistema de comandero para restaurante',
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.textSecondary,
@@ -320,6 +322,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         // Campo de usuario
                         TextFormField(
                           controller: _usernameController,
+                          textInputAction: TextInputAction.next,
+                          onFieldSubmitted: (_) {
+                            FocusScope.of(context).requestFocus(_passwordFocusNode);
+                          },
                           decoration: InputDecoration(
                             labelText: 'Nombre de usuario',
                             hintText: 'Ingresa tu nombre de usuario',
@@ -362,7 +368,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         // Campo de contraseña
                         TextFormField(
                           controller: _passwordController,
+                          focusNode: _passwordFocusNode,
                           obscureText: _obscurePassword,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) {
+                            if (!_isLoading) _handleLogin();
+                          },
                           decoration: InputDecoration(
                             labelText: 'Contraseña',
                             hintText: 'Ingresa tu contraseña',

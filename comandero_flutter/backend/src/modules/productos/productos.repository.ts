@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type { PoolConnection } from 'mysql2/promise';
 import { pool, withTransaction } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 
 interface ProductoRow extends RowDataPacket {
   id: number;
@@ -326,22 +327,62 @@ const insertarTamanosProducto = async (
   }
 };
 
+/**
+ * Actualiza los tamaños del producto preservando IDs cuando la etiqueta coincide,
+ * para no invalidar producto_tamano_id en producto_ingrediente (recetas por tamaño).
+ */
 const reemplazarTamanosProducto = async (
   conn: PoolConnection,
   productoId: number,
   tamanos: Array<{ nombre: string; precio: number }>
 ) => {
-  await conn.execute(
-    `
-    DELETE FROM producto_tamano
-    WHERE producto_id = :productoId
-    `,
+  const [existentes] = await conn.query<RowDataPacket[]>(
+    `SELECT id, etiqueta, precio FROM producto_tamano WHERE producto_id = :productoId`,
     { productoId }
   );
-
-  if (tamanos.length > 0) {
-    await insertarTamanosProducto(conn, productoId, tamanos);
+  const porEtiqueta = new Map<string, { id: number; precio: number }>();
+  for (const r of existentes) {
+    const etq = (r.etiqueta as string).trim().toLowerCase();
+    porEtiqueta.set(etq, { id: Number(r.id), precio: Number(r.precio) });
   }
+
+  const etiquetasNuevas = new Set<string>();
+  for (const tamano of tamanos) {
+    const etq = tamano.nombre.trim().toLowerCase();
+    etiquetasNuevas.add(etq);
+    const existente = porEtiqueta.get(etq);
+    if (existente) {
+      if (existente.precio !== tamano.precio) {
+        await conn.execute(
+          `UPDATE producto_tamano SET precio = :precio, actualizado_en = NOW() WHERE id = :id`,
+          { precio: tamano.precio, id: existente.id }
+        );
+      }
+    } else {
+      await conn.execute(
+        `INSERT INTO producto_tamano (producto_id, etiqueta, precio) VALUES (:productoId, :etiqueta, :precio)`,
+        { productoId, etiqueta: tamano.nombre.trim(), precio: tamano.precio }
+      );
+    }
+  }
+
+  for (const [etq, { id }] of porEtiqueta) {
+    if (!etiquetasNuevas.has(etq)) {
+      await conn.execute(`DELETE FROM producto_tamano WHERE id = :id`, { id });
+    }
+  }
+};
+
+/** IDs de producto_tamano válidos para un producto (para validar FK al guardar ingredientes). */
+const obtenerIdsTamanosValidos = async (
+  conn: PoolConnection,
+  productoId: number
+): Promise<Set<number>> => {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT id FROM producto_tamano WHERE producto_id = :productoId`,
+    { productoId }
+  );
+  return new Set(rows.map((r) => Number(r.id)));
 };
 
 const insertarIngredientesProducto = async (
@@ -385,6 +426,10 @@ const insertarIngredientesProducto = async (
   const { hasEsOpcional, hasProductoTamanoId } =
     await obtenerColumnasProductoIngrediente(conn);
 
+  const validTamanoIds = hasProductoTamanoId
+    ? await obtenerIdsTamanosValidos(conn, productoId)
+    : new Set<number>();
+
   for (const ingrediente of ingredientes) {
     try {
       let inventarioItemId = ingrediente.inventarioItemId;
@@ -396,6 +441,13 @@ const insertarIngredientesProducto = async (
         // Si no tiene inventarioItemId, simplemente lo omitimos (será null)
         console.warn(`⚠️ Ingrediente "${ingrediente.nombre}" no tiene inventarioItemId. Debe agregarse primero al inventario.`);
         inventarioItemId = null;
+      }
+
+      // Validar producto_tamano_id: debe existir en producto_tamano para este producto
+      let productoTamanoId: number | null = ingrediente.productoTamanoId ?? null;
+      if (hasProductoTamanoId && productoTamanoId != null && !validTamanoIds.has(productoTamanoId)) {
+        console.warn(`⚠️ producto_tamano_id ${productoTamanoId} no pertenece al producto ${productoId}; se guarda el ingrediente como receta general.`);
+        productoTamanoId = null;
       }
 
       // Solo intentar insertar en producto_ingrediente si la tabla existe
@@ -438,7 +490,7 @@ const insertarIngredientesProducto = async (
               descontarAutomaticamente: ingrediente.descontarAutomaticamente ? 1 : 0,
               esPersonalizado: ingrediente.esPersonalizado ? 1 : 0,
               esOpcional: (ingrediente.esOpcional ?? false) ? 1 : 0,
-              productoTamanoId: ingrediente.productoTamanoId ?? null
+              productoTamanoId
             }
           );
           
@@ -516,6 +568,10 @@ const reemplazarIngredientesProducto = async (
 };
 
 export const listarProductos = async (categoriaId?: number) => {
+  const whereClause = [
+    'p.disponible = 1',
+    ...(categoriaId ? ['p.categoria_id = :categoriaId'] : [])
+  ].join(' AND ');
   const [rows] = await pool.query<ProductoRow[]>(
     `
     SELECT
@@ -523,10 +579,10 @@ export const listarProductos = async (categoriaId?: number) => {
       c.nombre AS categoria_nombre
     FROM producto p
     JOIN categoria c ON c.id = p.categoria_id
-    ${categoriaId ? 'WHERE p.categoria_id = :categoriaId' : ''}
+    WHERE ${whereClause}
     ORDER BY c.nombre, p.nombre
     `,
-    categoriaId ? { categoriaId } : undefined
+    categoriaId ? { categoriaId } : {}
   );
 
   const productos = rows.map((row) => ({
@@ -539,8 +595,8 @@ export const listarProductos = async (categoriaId?: number) => {
     disponible: Boolean(row.disponible),
     sku: row.sku,
     inventariable: Boolean(row.inventariable),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
     tamanos: [],
     ingredientes: []
   }));
@@ -584,8 +640,8 @@ export const obtenerProductoPorId = async (id: number) => {
     disponible: Boolean(row.disponible),
     sku: row.sku,
     inventariable: Boolean(row.inventariable),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
     tamanos,
     ingredientes
   };
@@ -760,31 +816,21 @@ export const actualizarProducto = async (
   });
 };
 
+/**
+ * Elimina el producto (borrado real). orden_item guarda producto_nombre/producto_tamano_etiqueta
+ * y tiene FK ON DELETE SET NULL, así que tickets y reportes siguen mostrando el nombre.
+ */
 export const desactivarProducto = async (id: number) => {
   await withTransaction(async (conn) => {
     await conn.execute(
-      `
-      DELETE FROM producto_ingrediente
-      WHERE producto_id = :id
-      `,
-      { id }
+      `DELETE FROM producto_ingrediente WHERE producto_id = ?`,
+      [id]
     );
-
     await conn.execute(
-      `
-      DELETE FROM producto_tamano
-      WHERE producto_id = :id
-      `,
-      { id }
+      `DELETE FROM producto_tamano WHERE producto_id = ?`,
+      [id]
     );
-
-    await conn.execute(
-      `
-      DELETE FROM producto
-      WHERE id = :id
-      `,
-      { id }
-    );
+    await conn.execute(`DELETE FROM producto WHERE id = ?`, [id]);
   });
 };
 

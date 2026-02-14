@@ -63,9 +63,13 @@ export const reimprimirComanda = async (
     // Imprimir comanda (reimpresión)
     const resultado = await imprimirComanda(orden, true);
 
-    // Marcar como reimpresa solo si la impresión fue exitosa
+    // Marcar como reimpresa solo si la impresión fue exitosa (no fallar al cliente si solo falla el registro)
     if (resultado.exito) {
-      await marcarComandaImpresa(input.ordenId, usuarioId, true);
+      try {
+        await marcarComandaImpresa(input.ordenId, usuarioId, true);
+      } catch (err: any) {
+        logger.warn({ err, ordenId: input.ordenId }, 'Comanda impresa OK pero no se pudo marcar en BD');
+      }
     }
 
     logger.info(

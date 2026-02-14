@@ -1,9 +1,11 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool, withTransaction } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 
 interface InventarioItemRow extends RowDataPacket {
   id: number;
   nombre: string;
+  codigo_barras?: string | null;
   categoria: string | null;
   unidad: string;
   cantidad_actual: number;
@@ -12,6 +14,8 @@ interface InventarioItemRow extends RowDataPacket {
   costo_unitario: number | null;
   proveedor: string | null;
   activo: number;
+  contenido_por_pieza?: number | null;
+  unidad_contenido?: string | null;
   creado_en: Date;
   actualizado_en: Date;
 }
@@ -32,6 +36,8 @@ interface MovimientoRow extends RowDataPacket {
 }
 
 export const listarInsumos = async () => {
+  await ensureCodigoBarrasColumnExists();
+  await ensureContenidoPorPiezaColumnsExist();
   try {
     const [rows] = await pool.query<InventarioItemRow[]>(
       `
@@ -45,6 +51,7 @@ export const listarInsumos = async () => {
     return rows.map((row) => ({
       id: row.id,
       nombre: row.nombre,
+      codigoBarras: (row as InventarioItemRow).codigo_barras ?? null,
       categoria: row.categoria ?? '',
       unidad: row.unidad,
       cantidadActual: Number(row.cantidad_actual),
@@ -53,8 +60,10 @@ export const listarInsumos = async () => {
       costoUnitario: row.costo_unitario === null ? null : Number(row.costo_unitario),
       proveedor: row.proveedor ?? null,
       activo: Boolean(row.activo),
-      creadoEn: row.creado_en,
-      actualizadoEn: row.actualizado_en
+      contenidoPorPieza: (row as InventarioItemRow).contenido_por_pieza == null ? null : Number((row as InventarioItemRow).contenido_por_pieza),
+      unidadContenido: (row as InventarioItemRow).unidad_contenido ?? null,
+      creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+      actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
     }));
   } catch (error: any) {
     // Si la columna no existe, intentar sin ordenar por categoria
@@ -70,6 +79,7 @@ export const listarInsumos = async () => {
       return rows.map((row) => ({
         id: row.id,
         nombre: row.nombre,
+        codigoBarras: null,
         categoria: '',
         unidad: row.unidad,
         cantidadActual: Number(row.cantidad_actual),
@@ -78,8 +88,10 @@ export const listarInsumos = async () => {
         costoUnitario: row.costo_unitario === null ? null : Number(row.costo_unitario),
         proveedor: (row as any).proveedor ?? null,
         activo: Boolean(row.activo),
-        creadoEn: row.creado_en,
-        actualizadoEn: row.actualizado_en
+        contenidoPorPieza: (row as any).contenido_por_pieza == null ? null : Number((row as any).contenido_por_pieza),
+        unidadContenido: (row as any).unidad_contenido ?? null,
+        creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+        actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
       }));
     }
     throw error;
@@ -87,6 +99,7 @@ export const listarInsumos = async () => {
 };
 
 export const obtenerInsumoPorId = async (id: number) => {
+  await ensureContenidoPorPiezaColumnsExist();
   const [rows] = await pool.query<InventarioItemRow[]>(
     `
     SELECT *
@@ -100,6 +113,7 @@ export const obtenerInsumoPorId = async (id: number) => {
   return {
     id: row.id,
     nombre: row.nombre,
+    codigoBarras: (row as InventarioItemRow).codigo_barras ?? null,
     categoria: row.categoria ?? '',
     unidad: row.unidad,
     cantidadActual: Number(row.cantidad_actual),
@@ -108,8 +122,46 @@ export const obtenerInsumoPorId = async (id: number) => {
     costoUnitario: row.costo_unitario === null ? null : Number(row.costo_unitario),
     proveedor: row.proveedor ?? null,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    contenidoPorPieza: (row as InventarioItemRow).contenido_por_pieza == null ? null : Number((row as InventarioItemRow).contenido_por_pieza),
+    unidadContenido: (row as InventarioItemRow).unidad_contenido ?? null,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
+  };
+};
+
+/** Obtiene un ítem de inventario por su código de barras (único por línea de producto). */
+export const obtenerInsumoPorCodigoBarras = async (codigoBarras: string) => {
+  const codigo = String(codigoBarras).trim();
+  if (!codigo) return null;
+  await ensureCodigoBarrasColumnExists();
+  await ensureContenidoPorPiezaColumnsExist();
+  const [rows] = await pool.query<InventarioItemRow[]>(
+    `
+    SELECT *
+    FROM inventario_item
+    WHERE BINARY codigo_barras = :codigo AND activo = 1
+    LIMIT 1
+    `,
+    { codigo }
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    codigoBarras: (row as InventarioItemRow).codigo_barras ?? null,
+    categoria: row.categoria ?? '',
+    unidad: row.unidad,
+    cantidadActual: Number(row.cantidad_actual),
+    stockMinimo: Number(row.stock_minimo),
+    stockMaximo: row.stock_maximo === null ? null : Number(row.stock_maximo),
+    costoUnitario: row.costo_unitario === null ? null : Number(row.costo_unitario),
+    proveedor: row.proveedor ?? null,
+    activo: Boolean(row.activo),
+    contenidoPorPieza: (row as InventarioItemRow).contenido_por_pieza == null ? null : Number((row as InventarioItemRow).contenido_por_pieza),
+    unidadContenido: (row as InventarioItemRow).unidad_contenido ?? null,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   };
 };
 
@@ -200,8 +252,62 @@ const ensureStockMaximoColumnExists = async () => {
   }
 };
 
+const ensureCodigoBarrasColumnExists = async () => {
+  try {
+    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+      `
+      SELECT COLUMN_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'inventario_item'
+        AND COLUMN_NAME = 'codigo_barras'
+      `
+    );
+    if (columns.length === 0) {
+      await pool.execute(
+        `
+        ALTER TABLE inventario_item
+        ADD COLUMN codigo_barras VARCHAR(64) NULL UNIQUE
+        COMMENT 'Código de barras único por línea de producto'
+        AFTER nombre
+        `
+      );
+      console.log('✓ Columna codigo_barras creada automáticamente en inventario_item');
+    }
+  } catch (error: any) {
+    console.warn('Advertencia: No se pudo verificar/crear la columna codigo_barras:', error.message);
+  }
+};
+
+/** Crea columnas contenido_por_pieza y unidad_contenido si no existen (productos por pieza con equivalencia en kg/L). */
+const ensureContenidoPorPiezaColumnsExist = async () => {
+  try {
+    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+      `
+      SELECT COLUMN_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'inventario_item'
+        AND COLUMN_NAME = 'contenido_por_pieza'
+      `
+    );
+    if (columns.length === 0) {
+      await pool.execute(
+        `ALTER TABLE inventario_item ADD COLUMN contenido_por_pieza DECIMAL(12,4) NULL COMMENT 'Peso o volumen por pieza (ej. 5 para envase 5 kg)' AFTER activo`
+      );
+      await pool.execute(
+        `ALTER TABLE inventario_item ADD COLUMN unidad_contenido VARCHAR(16) NULL COMMENT 'Unidad del contenido (kg, g, L, ml)' AFTER contenido_por_pieza`
+      );
+      console.log('✓ Columnas contenido_por_pieza y unidad_contenido creadas en inventario_item');
+    }
+  } catch (error: any) {
+    console.warn('Advertencia: No se pudo verificar/crear columnas contenido_por_pieza:', (error as Error).message);
+  }
+};
+
 export const crearInsumo = async ({
   nombre,
+  codigoBarras,
   categoria,
   unidad,
   cantidadActual,
@@ -209,9 +315,12 @@ export const crearInsumo = async ({
   stockMaximo,
   costoUnitario,
   proveedor,
-  activo
+  activo,
+  contenidoPorPieza,
+  unidadContenido
 }: {
   nombre: string;
+  codigoBarras?: string | null;
   categoria: string;
   unidad: string;
   cantidadActual: number;
@@ -220,12 +329,15 @@ export const crearInsumo = async ({
   costoUnitario?: number | null;
   proveedor?: string | null;
   activo: boolean;
+  contenidoPorPieza?: number | null;
+  unidadContenido?: string | null;
 }) => {
   try {
-    // Asegurar que las columnas categoria, proveedor y stock_maximo existen antes de insertar
     await ensureCategoriaColumnExists();
     await ensureProveedorColumnExists();
     await ensureStockMaximoColumnExists();
+    await ensureCodigoBarrasColumnExists();
+    await ensureContenidoPorPiezaColumnsExist();
     
     // Usar transacción para eliminar duplicados y crear nuevo registro de forma atómica
     return await withTransaction(async (conn) => {
@@ -282,14 +394,14 @@ export const crearInsumo = async ({
         console.warn(`Advertencia al eliminar registros duplicados:`, error.message);
       }
       
-      // Crear el nuevo registro
       const [result] = await conn.execute<ResultSetHeader>(
       `
-      INSERT INTO inventario_item (nombre, categoria, unidad, cantidad_actual, stock_minimo, stock_maximo, costo_unitario, proveedor, activo)
-      VALUES (:nombre, :categoria, :unidad, :cantidadActual, :stockMinimo, :stockMaximo, :costoUnitario, :proveedor, :activo)
+      INSERT INTO inventario_item (nombre, codigo_barras, categoria, unidad, cantidad_actual, stock_minimo, stock_maximo, costo_unitario, proveedor, activo, contenido_por_pieza, unidad_contenido)
+      VALUES (:nombre, :codigoBarras, :categoria, :unidad, :cantidadActual, :stockMinimo, :stockMaximo, :costoUnitario, :proveedor, :activo, :contenidoPorPieza, :unidadContenido)
       `,
       {
         nombre,
+        codigoBarras: codigoBarras?.trim() || null,
         categoria,
         unidad,
         cantidadActual,
@@ -297,7 +409,9 @@ export const crearInsumo = async ({
         stockMaximo: stockMaximo ?? null,
         costoUnitario: costoUnitario ?? null,
         proveedor: proveedor ?? null,
-        activo: activo ? 1 : 0
+        activo: activo ? 1 : 0,
+        contenidoPorPieza: contenidoPorPieza ?? null,
+        unidadContenido: unidadContenido?.trim() || null
       }
       );
       return result.insertId;
@@ -315,6 +429,7 @@ export const actualizarInsumo = async (
   id: number,
   {
     nombre,
+    codigoBarras,
     categoria,
     unidad,
     cantidadActual,
@@ -322,9 +437,12 @@ export const actualizarInsumo = async (
     stockMaximo,
     costoUnitario,
     proveedor,
-    activo
+    activo,
+    contenidoPorPieza,
+    unidadContenido
   }: {
     nombre?: string;
+    codigoBarras?: string | null;
     categoria?: string;
     unidad?: string;
     cantidadActual?: number;
@@ -333,24 +451,25 @@ export const actualizarInsumo = async (
     costoUnitario?: number | null;
     proveedor?: string | null;
     activo?: boolean;
+    contenidoPorPieza?: number | null;
+    unidadContenido?: string | null;
   }
 ) => {
-  // Asegurar que las columnas categoria, proveedor y stock_maximo existen antes de actualizar
-  if (categoria !== undefined) {
-    await ensureCategoriaColumnExists();
-  }
-  if (proveedor !== undefined) {
-    await ensureProveedorColumnExists();
-  }
-  if (stockMaximo !== undefined) {
-    await ensureStockMaximoColumnExists();
-  }
+  if (categoria !== undefined) await ensureCategoriaColumnExists();
+  if (proveedor !== undefined) await ensureProveedorColumnExists();
+  if (stockMaximo !== undefined) await ensureStockMaximoColumnExists();
+  if (codigoBarras !== undefined) await ensureCodigoBarrasColumnExists();
+  if (contenidoPorPieza !== undefined || unidadContenido !== undefined) await ensureContenidoPorPiezaColumnsExist();
   const fields: string[] = [];
   const params: Record<string, unknown> = { id };
 
   if (nombre !== undefined) {
     fields.push('nombre = :nombre');
     params.nombre = nombre;
+  }
+  if (codigoBarras !== undefined) {
+    fields.push('codigo_barras = :codigoBarras');
+    params.codigoBarras = codigoBarras?.trim() || null;
   }
   if (categoria !== undefined) {
     fields.push('categoria = :categoria');
@@ -383,6 +502,14 @@ export const actualizarInsumo = async (
   if (activo !== undefined) {
     fields.push('activo = :activo');
     params.activo = activo ? 1 : 0;
+  }
+  if (contenidoPorPieza !== undefined) {
+    fields.push('contenido_por_pieza = :contenidoPorPieza');
+    params.contenidoPorPieza = contenidoPorPieza ?? null;
+  }
+  if (unidadContenido !== undefined) {
+    fields.push('unidad_contenido = :unidadContenido');
+    params.unidadContenido = unidadContenido?.trim() || null;
   }
 
   if (fields.length === 0) return;
@@ -531,6 +658,18 @@ export const registrarMovimiento = async ({
   });
 };
 
+/**
+ * Indica si ya existe al menos un movimiento de inventario con referencia a esta orden
+ * (evita descontar dos veces la misma orden al sincronizar).
+ */
+export const existeMovimientoConReferenciaOrden = async (ordenId: number): Promise<boolean> => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT 1 FROM movimiento_inventario WHERE referencia_orden_id = :ordenId LIMIT 1`,
+    { ordenId }
+  );
+  return Array.isArray(rows) && rows.length > 0;
+};
+
 export const listarMovimientos = async (inventarioItemId?: number) => {
   const [rows] = await pool.query<MovimientoRow[]>(
     `
@@ -559,26 +698,75 @@ export const listarMovimientos = async (inventarioItemId?: number) => {
     origen: row.origen,
     referenciaOrdenId: row.referencia_orden_id,
     creadoPorUsuarioId: row.creado_por_usuario_id,
-    creadoEn: row.creado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null)
   }));
 };
 
-export const obtenerCategoriasUnicas = async () => {
+/** Crea la tabla inventario_categoria si no existe (categorías creadas por el usuario que no dependen de ítems). */
+const ensureInventarioCategoriaTableExists = async () => {
   try {
-    const [rows] = await pool.query<{ categoria: string }[]>(
+    await pool.execute(
       `
-      SELECT DISTINCT categoria
-      FROM inventario_item
-      WHERE activo = 1 AND categoria IS NOT NULL AND categoria != ''
-      ORDER BY categoria
+      CREATE TABLE IF NOT EXISTS inventario_categoria (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(64) NOT NULL,
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_inventario_categoria_nombre (nombre)
+      )
+      `
+    );
+  } catch (error: any) {
+    console.warn('Advertencia: No se pudo crear tabla inventario_categoria:', (error as Error).message);
+  }
+};
+
+/** Inserta una categoría en inventario_categoria (si no existe ya). No lanza si el nombre ya existe. Devuelve la lista actualizada de categorías. */
+export const crearCategoriaInventario = async (nombre: string): Promise<string[]> => {
+  await ensureInventarioCategoriaTableExists();
+  const n = nombre.trim();
+  if (!n) return obtenerCategoriasUnicas();
+  try {
+    await pool.execute(
+      `INSERT IGNORE INTO inventario_categoria (nombre) VALUES (:nombre)`,
+      { nombre: n }
+    );
+  } catch (error: any) {
+    throw error;
+  }
+  return obtenerCategoriasUnicas();
+};
+
+export const obtenerCategoriasUnicas = async () => {
+  await ensureInventarioCategoriaTableExists();
+  try {
+    const [rows] = await pool.query<{ nombre: string }[]>(
+      `
+      (
+        SELECT DISTINCT categoria AS nombre
+        FROM inventario_item
+        WHERE activo = 1 AND categoria IS NOT NULL AND TRIM(categoria) != ''
+      )
+      UNION
+      (
+        SELECT nombre FROM inventario_categoria
+      )
+      ORDER BY nombre
       `
     );
 
-    return rows.map((row) => row.categoria ?? '').filter(cat => cat !== '');
+    return rows.map((row) => (row.nombre ?? '').trim()).filter(cat => cat !== '');
   } catch (error: any) {
-    // Si la columna no existe, retornar array vacío
     if (error.code === 'ER_BAD_FIELD_ERROR' || error.message?.includes('Unknown column')) {
-      console.warn('La columna categoria no existe en inventario_item. Ejecuta el script de migración.');
+      try {
+        const [rows] = await pool.query<{ categoria: string }[]>(
+          `SELECT DISTINCT categoria FROM inventario_item WHERE activo = 1 AND categoria IS NOT NULL AND categoria != '' ORDER BY categoria`
+        );
+        return rows.map((row) => row.categoria ?? '').filter(cat => cat !== '');
+      } catch {
+        return [];
+      }
+    }
+    if (error.code === 'ER_NO_SUCH_TABLE') {
       return [];
     }
     throw error;

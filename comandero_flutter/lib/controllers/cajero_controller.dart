@@ -11,12 +11,14 @@ import '../services/socket_service.dart';
 import '../services/cierres_service.dart';
 import '../services/tickets_service.dart';
 import '../services/ordenes_service.dart';
+import '../services/configuracion_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
 
 class CajeroController extends ChangeNotifier {
   final PagosService _pagosService = PagosService();
+  final ConfiguracionService _configuracionService = ConfiguracionService();
 
   CajeroController({
     required PaymentRepository paymentRepository,
@@ -70,8 +72,20 @@ class CajeroController extends ChangeNotifier {
         });
       }
 
-      // 4. Cargar datos desde el backend
-      await Future.wait([refreshBills(), loadCashClosures()]);
+      // 4. Cargar configuración (IVA habilitado para mostrar en cuentas por cobrar)
+      try {
+        final config = await _configuracionService.getConfiguracion();
+        _ivaHabilitado = config.ivaHabilitado;
+      } catch (_) {
+        _ivaHabilitado = false;
+      }
+
+      // 5. Cargar datos desde el backend (bills, cierres y pagos para resumen e historial)
+      await Future.wait([
+        refreshBills(),
+        loadCashClosures(),
+        _loadPaymentsFromBackend(),
+      ]);
 
       print('✅ Cajero: Inicialización completada');
     } catch (e) {
@@ -319,10 +333,24 @@ class CajeroController extends ChangeNotifier {
             }).toList() ??
             [];
 
+        // Cuenta dividida: parsear personAccounts si el mesero los envía
+        final isDividedAccount = data['isDividedAccount'] as bool? ?? false;
+        List<PersonAccount>? personAccounts;
+        if (isDividedAccount) {
+          final paList = data['personAccounts'] as List<dynamic>?;
+          if (paList != null && paList.isNotEmpty) {
+            personAccounts = paList
+                .map((pa) => PersonAccount.fromJson(pa as Map<String, dynamic>))
+                .toList();
+          }
+        }
+
         final bill = BillModel(
           id: billId, // Usar el billId del evento (puede ser único para múltiples órdenes)
-          tableNumber: data['tableNumber'] as int?,
+          tableNumber: data['tableNumber'] is int ? data['tableNumber'] as int? : int.tryParse(data['tableNumber']?.toString() ?? ''),
+          mesaCodigo: data['mesaCodigo'] as String?,
           ordenId: ordenId, // Orden principal para compatibilidad
+          ordenIds: (data['ordenIds'] as List<dynamic>?)?.map((e) => (e as num).toInt()).toList(),
           items: items,
           subtotal: (data['subtotal'] as num?)?.toDouble() ?? 0.0,
           tax: (data['tax'] as num?)?.toDouble() ?? 0.0,
@@ -339,6 +367,8 @@ class CajeroController extends ChangeNotifier {
           customerName: data['customerName'] as String?,
           customerPhone: data['customerPhone'] as String?,
           waiterNotes: data['waiterNotes'] as String?,
+          isDividedAccount: isDividedAccount,
+          personAccounts: personAccounts,
         );
 
         // Agregar al repositorio local
@@ -368,6 +398,12 @@ class CajeroController extends ChangeNotifier {
         '🔄 Cajero: Refrescando bills desde backend (solo agregando nuevas, preservando pendientes)...',
       );
 
+      // Actualizar configuración (IVA) para reflejar cambios del administrador
+      try {
+        final config = await _configuracionService.getConfiguracion();
+        _ivaHabilitado = config.ivaHabilitado;
+      } catch (_) {}
+
       // Guardar las bills pendientes existentes antes de cargar
       final billsPendientesExistentes = _bills
           .where((b) => b.status == BillStatus.pending)
@@ -388,7 +424,7 @@ class CajeroController extends ChangeNotifier {
       // Obtener órdenes del backend para verificar su estado
       final ordenesService = OrdenesService();
       final ordenes = await ordenesService.getOrdenes();
-      final ahora = DateTime.now();
+      final ahora = date_utils.AppDateUtils.nowCdmx();
 
       for (final billExistente in billsPendientesExistentes) {
         // Verificar si la bill ya no existe en el repositorio
@@ -481,6 +517,9 @@ class CajeroController extends ChangeNotifier {
   final PaymentRepository _paymentRepository;
   final BillRepository _billRepository;
 
+  // Configuración (IVA): cuando está habilitado se muestra la línea IVA en cada cuenta por cobrar
+  bool _ivaHabilitado = false;
+
   // Estado de las facturas
   List<BillModel> _bills = [];
 
@@ -501,7 +540,12 @@ class CajeroController extends ChangeNotifier {
   // Vista actual
   String _currentView = 'main';
 
+  // Último error de impresión (para mostrar en SnackBar al usuario)
+  String? _lastPrintError;
+
   // Getters
+  String? get lastPrintError => _lastPrintError;
+  bool get ivaHabilitado => _ivaHabilitado;
   List<BillModel> get bills => _bills;
   List<PaymentModel> get payments => _payments;
   List<CashCloseModel> get cashClosures => _cashClosures;
@@ -510,6 +554,37 @@ class CajeroController extends ChangeNotifier {
   String get selectedPaymentType => _selectedPaymentType;
   String get selectedShowFilter => _selectedShowFilter;
   String get currentView => _currentView;
+
+  /// Si IVA está habilitado y la cuenta tiene impuesto en 0, recalcula IVA (16%)
+  /// para mostrarlo y cobrarlo en cuentas por cobrar (incluye cuentas divididas).
+  /// Para cuentas divididas también actualiza cada PersonAccount con su IVA recalculado.
+  BillModel _applyIvaSiHabilitado(BillModel bill) {
+    if (!_ivaHabilitado) return bill;
+    if (bill.tax.abs() >= 0.005) return bill; // ya tiene IVA a nivel bill
+    final base = bill.subtotal - bill.discount;
+    if (base <= 0) return bill;
+    final recalcTax = (base * 0.16 * 100).round() / 100;
+    final recalcTotal = ((base + recalcTax) * 100).round() / 100;
+
+    // Si es cuenta dividida, recalcular IVA por persona para que el detalle muestre bien
+    List<PersonAccount>? updatedPersonAccounts;
+    if (bill.personAccounts != null && bill.personAccounts!.isNotEmpty) {
+      updatedPersonAccounts = bill.personAccounts!.map((pa) {
+        if (pa.tax.abs() >= 0.005) return pa;
+        final paBase = pa.subtotal - pa.discount;
+        if (paBase <= 0) return pa;
+        final paTax = (paBase * 0.16 * 100).round() / 100;
+        final paTotal = ((paBase + paTax) * 100).round() / 100;
+        return pa.copyWith(tax: paTax, total: paTotal);
+      }).toList();
+    }
+
+    return bill.copyWith(
+      tax: recalcTax,
+      total: recalcTotal,
+      personAccounts: updatedPersonAccounts ?? bill.personAccounts,
+    );
+  }
 
   // Obtener facturas filtradas
   List<BillModel> get filteredBills {
@@ -540,7 +615,7 @@ class CajeroController extends ChangeNotifier {
     print(
       '📊 Cajero: filteredBills - Total bills: ${_bills.length}, Filtrados: ${filtered.length}, Status seleccionado: $_selectedStatus, Show seleccionado: $_selectedShowFilter',
     );
-    return filtered;
+    return filtered.map((b) => _applyIvaSiHabilitado(b)).toList();
   }
 
   // Obtener pagos filtrados
@@ -551,6 +626,73 @@ class CajeroController extends ChangeNotifier {
           payment.type == _selectedPaymentType;
       return typeMatch;
     }).toList();
+  }
+
+  /// Carga los pagos desde el backend y actualiza el repositorio y _payments.
+  /// Enriquece con nombre del mesero (creadoPorNombre) y mesa desde la orden.
+  Future<void> _loadPaymentsFromBackend() async {
+    try {
+      final pagosData = await _pagosService.getPagos();
+      final ordenesService = OrdenesService();
+      final payments = <PaymentModel>[];
+      for (final pagoData in pagosData) {
+        try {
+          final ordenId = pagoData['ordenId'] as int?;
+          String? waiterName;
+          int? tableNumber;
+          if (ordenId != null) {
+            try {
+              final orden = await ordenesService.getOrden(ordenId);
+              if (orden != null) {
+                waiterName = (orden['creadoPorNombre'] as String?) ??
+                    (orden['creadoPorUsuarioNombre'] as String?);
+                final mesaId = orden['mesaId'];
+                if (mesaId != null) {
+                  tableNumber = mesaId is int ? mesaId : int.tryParse(mesaId.toString());
+                }
+              }
+            } catch (e) {
+              print('⚠️ Cajero: Error al obtener orden $ordenId: $e');
+            }
+          }
+          final formaPagoNombre =
+              (pagoData['formaPagoNombre'] as String? ?? '').toLowerCase();
+          String paymentType = 'cash';
+          if (formaPagoNombre.contains('tarjeta') ||
+              formaPagoNombre.contains('card')) {
+            paymentType = 'card';
+          } else if (formaPagoNombre.contains('transfer')) {
+            paymentType = 'transfer';
+          } else if (formaPagoNombre.contains('mixto') ||
+              formaPagoNombre.contains('mixed')) {
+            paymentType = 'mixed';
+          }
+          final fechaPago = pagoData['fechaPago'] ?? pagoData['creadoEn'];
+          final payment = PaymentModel(
+            id: pagoData['id'].toString(),
+            type: paymentType,
+            totalAmount: (pagoData['monto'] as num?)?.toDouble() ?? 0.0,
+            billId: 'BILL-${ordenId ?? pagoData['id']}',
+            timestamp: date_utils.AppDateUtils.parseToLocal(fechaPago),
+            cashierName: 'Sistema',
+            ordenId: ordenId,
+            waiterName: waiterName,
+            tableNumber: tableNumber,
+            notes: pagoData['referencia'] as String?,
+            voucherPrinted:
+                (pagoData['estado'] as String?)?.toLowerCase() == 'aplicado',
+          );
+          payments.add(payment);
+        } catch (e) {
+          print('⚠️ Cajero: Error al mapear pago ${pagoData['id']}: $e');
+        }
+      }
+      _paymentRepository.addPayments(payments);
+      _payments = List.from(_paymentRepository.payments);
+      print('✅ Cajero: ${payments.length} pagos cargados desde backend');
+    } catch (e) {
+      print('❌ Cajero: Error al cargar pagos desde backend: $e');
+    }
   }
 
   // Cargar cierres de caja desde el backend
@@ -954,53 +1096,64 @@ class CajeroController extends ChangeNotifier {
     }
   }
 
-  // Marcar factura como impresa e imprimir ticket
-  Future<void> markBillAsPrinted(
+  // Marcar factura como impresa e imprimir ticket.
+  // Retorna true si la impresión en el backend fue exitosa, false en caso contrario.
+  Future<bool> markBillAsPrinted(
     String billId,
     String printedBy, {
     String? paymentId,
     int? ordenId,
+    List<int>? ordenIds,
   }) async {
-    // Obtener el bill para verificar si es una cuenta agrupada
+    // Obtener el bill para verificar si es una cuenta agrupada (puede ser null si ya se cobró)
     final bill = _billRepository.getBill(billId);
 
-    // Si hay ordenId, imprimir el ticket en el backend
-    if (ordenId != null || bill != null) {
+    // Construir lista de ordenIds: la pasada por parámetro (ej. desde modal de éxito) o la del bill
+    final ordenIdsCompletos = <int>[];
+    if (ordenIds != null && ordenIds.isNotEmpty) {
+      ordenIdsCompletos.addAll(ordenIds);
+    } else if (bill != null) {
+      ordenIdsCompletos.addAll(bill.ordenIdsFromBillIdInt);
+    }
+
+    // ordenId: parámetro, o primer elemento de ordenIdsCompletos, o parsear desde billId (ej. BILL-ORD-47 -> 47)
+    int? ordenIdPrincipal = ordenId ?? (ordenIdsCompletos.isNotEmpty ? ordenIdsCompletos.first : null);
+    if (ordenIdPrincipal == null && billId.startsWith('BILL-ORD-')) {
+      ordenIdPrincipal = int.tryParse(billId.replaceFirst('BILL-ORD-', ''));
+      if (ordenIdPrincipal != null && ordenIdsCompletos.isEmpty) {
+        ordenIdsCompletos.add(ordenIdPrincipal);
+      }
+    }
+
+    bool printSuccess = false;
+
+    // Imprimir ticket en el backend si tenemos al menos una orden
+    if (ordenIdPrincipal != null) {
       try {
         final ticketsService = TicketsService();
+        final result = await ticketsService.imprimirTicket(
+          ordenId: ordenIdPrincipal,
+          ordenIds: ordenIdsCompletos.length > 1 ? ordenIdsCompletos : null,
+          incluirCodigoBarras: true,
+        );
 
-        // Extraer todos los ordenIds del billId si es una cuenta agrupada
-        final ordenIdsCompletos = <int>[];
-        if (bill != null) {
-          ordenIdsCompletos.addAll(bill.ordenIdsFromBillIdInt);
-        }
-
-        // Si no se pudieron extraer del billId pero tenemos ordenId, usarlo
-        final ordenIdPrincipal =
-            ordenId ??
-            (ordenIdsCompletos.isNotEmpty ? ordenIdsCompletos.first : null);
-
-        if (ordenIdPrincipal != null) {
-          // Si hay múltiples ordenIds (cuenta agrupada), enviarlos todos para que el ticket muestre todos los productos
-          final result = await ticketsService.imprimirTicket(
-            ordenId: ordenIdPrincipal,
-            ordenIds: ordenIdsCompletos.length > 1 ? ordenIdsCompletos : null,
-            incluirCodigoBarras: true,
+        if (!result['success']) {
+          _lastPrintError = result['error'] as String? ?? 'Error al imprimir ticket';
+          print('Error al imprimir ticket: $_lastPrintError');
+        } else {
+          _lastPrintError = null;
+          print(
+            '✅ Cajero: Ticket impreso correctamente${ordenIdsCompletos.length > 1 ? ' (${ordenIdsCompletos.length} órdenes agrupadas)' : ''}',
           );
-
-          if (!result['success']) {
-            print('Error al imprimir ticket: ${result['error']}');
-            // Continuar de todas formas para marcar como impreso localmente
-          } else {
-            print(
-              '✅ Cajero: Ticket impreso correctamente${ordenIdsCompletos.length > 1 ? ' (${ordenIdsCompletos.length} órdenes agrupadas)' : ''}',
-            );
-          }
+          printSuccess = true;
         }
       } catch (e) {
+        _lastPrintError = e.toString();
         print('Error al imprimir ticket: $e');
         // Continuar de todas formas para marcar como impreso localmente
       }
+    } else {
+      _lastPrintError = 'No se pudo obtener la orden para imprimir';
     }
 
     // Marcar como impreso localmente
@@ -1019,11 +1172,12 @@ class CajeroController extends ChangeNotifier {
       'billId': billId,
       'ordenId': ordenId,
       'impresoPor': printedBy,
-      'timestamp': DateTime.now().toIso8601String(),
+      'timestamp': date_utils.AppDateUtils.nowCdmx().toIso8601String(),
     });
     print('📢 Cajero: Evento ticket.impreso emitido para orden $ordenId');
 
     notifyListeners();
+    return printSuccess;
   }
 
   // Agregar nueva factura
@@ -1043,6 +1197,7 @@ class CajeroController extends ChangeNotifier {
   Future<void> openCashRegister({
     required double efectivoInicial,
     String? nota,
+    String? usuario,
   }) async {
     try {
       print('💰 Cajero: Iniciando apertura de caja con efectivo inicial: $efectivoInicial');
@@ -1050,9 +1205,9 @@ class CajeroController extends ChangeNotifier {
       // Crear un cierre con solo efectivo inicial (apertura)
       final apertura = CashCloseModel(
         id: 'open_${DateTime.now().millisecondsSinceEpoch}',
-        fecha: DateTime.now(),
+        fecha: date_utils.AppDateUtils.nowCdmx(),
         periodo: 'Día',
-        usuario: 'Cajero',
+        usuario: usuario ?? 'Cajero',
         totalNeto: 0,
         efectivo: efectivoInicial,
         tarjeta: 0,
@@ -1166,7 +1321,7 @@ class CajeroController extends ChangeNotifier {
 
   // Obtener estadísticas
   Map<String, double> getPaymentStats() {
-    final today = DateTime.now();
+    final today = date_utils.AppDateUtils.nowCdmx();
 
     // Obtener la fecha de referencia: última apertura de caja del día o último cierre con ventas
     DateTime? fechaReferencia;
@@ -1178,7 +1333,7 @@ class CajeroController extends ChangeNotifier {
     }
 
     // Buscar el último cierre de caja con ventas del día (más reciente que la apertura)
-    final hoy = DateTime.now();
+    final hoy = date_utils.AppDateUtils.nowCdmx();
     final cierresConVentas = _cashClosures.where((cierre) {
       final esHoy =
           cierre.fecha.year == hoy.year &&
@@ -1255,6 +1410,68 @@ class CajeroController extends ChangeNotifier {
     };
   }
 
+  /// Estadísticas del día completo para el Resumen de Consumo: todos los pagos de hoy,
+  /// con desglose real por local/para llevar y débito/crédito. Se actualiza al hacer cobros.
+  Map<String, double> getDailyConsumptionStats() {
+    final today = date_utils.AppDateUtils.nowCdmx();
+    final todayPayments = _payments.where((payment) {
+      return payment.timestamp.day == today.day &&
+          payment.timestamp.month == today.month &&
+          payment.timestamp.year == today.year;
+    }).toList();
+
+    double totalCash = 0;
+    double totalCard = 0;
+    double totalTransfer = 0;
+    double totalLocal = 0;
+    double totalParaLlevar = 0;
+    double totalDebit = 0;
+    double totalCredit = 0;
+
+    for (final payment in todayPayments) {
+      final amount = payment.totalAmount;
+      final isLocal = payment.tableNumber != null;
+      if (isLocal) {
+        totalLocal += amount;
+      } else {
+        totalParaLlevar += amount;
+      }
+
+      final typeLower = payment.type.toLowerCase();
+      if (typeLower.contains('cash') || typeLower.contains('efectivo')) {
+        totalCash += amount;
+      } else if (typeLower.contains('card') || typeLower.contains('tarjeta')) {
+        totalCard += amount;
+        if (payment.cardMethod == 'credito') {
+          totalCredit += amount;
+        } else {
+          totalDebit += amount;
+        }
+      } else if (typeLower.contains('transfer')) {
+        totalTransfer += amount;
+      } else if (typeLower.contains('mixed') || typeLower.contains('mixto')) {
+        totalCash += payment.cashApplied ?? 0;
+        final cardPart = amount - (payment.cashApplied ?? 0);
+        totalCard += cardPart;
+        if (payment.cardMethod == 'credito') {
+          totalCredit += cardPart;
+        } else {
+          totalDebit += cardPart;
+        }
+      }
+    }
+
+    return {
+      'totalCash': totalCash,
+      'totalCard': totalCard + totalTransfer,
+      'totalDebit': totalDebit,
+      'totalCredit': totalCredit,
+      'totalLocal': totalLocal,
+      'totalParaLlevar': totalParaLlevar,
+      'total': totalCash + totalCard + totalTransfer,
+    };
+  }
+
   // Obtener facturas pendientes
   List<BillModel> getPendingBills() {
     return _bills.where((bill) => bill.status == BillStatus.pending).toList();
@@ -1265,23 +1482,43 @@ class CajeroController extends ChangeNotifier {
     return _bills.where((bill) => bill.status == BillStatus.paid).toList();
   }
 
-  // Obtener historial completo de cobros del día (desde última apertura de caja)
-  Map<String, dynamic> getCollectionHistory({String? periodo}) {
-    final now = DateTime.now();
+  // Obtener historial completo de cobros (por período o rango personalizado)
+  Map<String, dynamic> getCollectionHistory({
+    String? periodo,
+    DateTime? fechaInicioCustom,
+    DateTime? fechaFinCustom,
+  }) {
+    final now = date_utils.AppDateUtils.nowCdmx();
     DateTime fechaInicio;
     DateTime fechaFin = now;
 
     // Determinar rango de fechas según el período
     switch (periodo) {
+      case 'personalizado':
+        if (fechaInicioCustom != null && fechaFinCustom != null) {
+          fechaInicio = DateTime(fechaInicioCustom.year, fechaInicioCustom.month, fechaInicioCustom.day);
+          fechaFin = DateTime(fechaFinCustom.year, fechaFinCustom.month, fechaFinCustom.day, 23, 59, 59, 999);
+          if (fechaFin.isBefore(fechaInicio)) {
+            final temp = fechaInicio;
+            fechaInicio = fechaFin;
+            fechaFin = DateTime(temp.year, temp.month, temp.day, 23, 59, 59, 999);
+          }
+        } else {
+          fechaInicio = DateTime(now.year, now.month, now.day);
+        }
+        break;
       case 'ayer':
+        // Solo el día de ayer: desde 00:00 ayer hasta antes de 00:00 hoy
         fechaInicio = DateTime(now.year, now.month, now.day - 1);
-        fechaFin = DateTime(now.year, now.month, now.day);
+        fechaFin = DateTime(now.year, now.month, now.day); // exclusivo: no incluir hoy
         break;
       case 'semana':
+        // Últimos 7 días hasta ahora
         fechaInicio = now.subtract(const Duration(days: 7));
         break;
       case 'mes':
-        fechaInicio = DateTime(now.year, now.month - 1, now.day);
+        // Últimos 30 días (evita desborde de día/mes, ej. 31 mar -> feb)
+        fechaInicio = now.subtract(const Duration(days: 30));
         break;
       case 'hoy':
       default:
@@ -1310,10 +1547,15 @@ class CajeroController extends ChangeNotifier {
         break;
     }
 
-    // Filtrar pagos según el rango de fechas
+    // Filtrar pagos según el rango de fechas (inicio inclusivo)
+    final isAyer = periodo == 'ayer';
     final filteredPayments = _payments.where((payment) {
-      return payment.timestamp.isAfter(fechaInicio) && 
-             payment.timestamp.isBefore(fechaFin.add(const Duration(days: 1)));
+      final t = payment.timestamp;
+      final despuesOIgualInicio = !t.isBefore(fechaInicio);
+      if (!despuesOIgualInicio) return false;
+      // Ayer: fin exclusivo (antes de las 00:00 de hoy). Resto: fin inclusivo (hasta fechaFin).
+      if (isAyer) return t.isBefore(fechaFin);
+      return !t.isAfter(fechaFin);
     }).toList();
 
     // Agrupar por método de pago
@@ -1334,11 +1576,11 @@ class CajeroController extends ChangeNotifier {
       // Usar metadata guardada en el PaymentModel; si falta, fallback al bill (compatibilidad)
       final bill = _billRepository.getBill(payment.billId);
       final ordenIdValue = payment.ordenId ?? bill?.ordenId;
-      final ordenIdStr = ordenIdValue != null ? 'ORD-${ordenIdValue.toString().padLeft(6, '0')}' : 'N/A';
-      final waiterName = payment.waiterName ?? bill?.waiterName ?? 'N/A';
+      final ordenIdStr = ordenIdValue != null ? 'ORD-${ordenIdValue.toString().padLeft(6, '0')}' : '—';
+      final waiterName = payment.waiterName ?? bill?.waiterName;
       final mesaInfo = payment.tableNumber != null
           ? 'Mesa ${payment.tableNumber}'
-          : (bill?.isTakeaway == true ? 'Para llevar' : 'N/A');
+          : (bill?.isTakeaway == true ? 'Para llevar' : 'Para llevar');
 
       final paymentInfo = {
         'id': payment.id,
@@ -1630,10 +1872,20 @@ class CajeroController extends ChangeNotifier {
     return '\$${amount.toStringAsFixed(2)}';
   }
 
+  /// Descompone un total con IVA (16%) en subtotal e IVA. México CDMX.
+  static double _subtotalFromTotalConIva(double totalConIva) {
+    if (totalConIva <= 0) return 0.0;
+    return totalConIva / 1.16;
+  }
+
+  static double _ivaFromTotalConIva(double totalConIva) {
+    return totalConIva - _subtotalFromTotalConIva(totalConIva);
+  }
+
   // Exportar cierres de caja a CSV
   Future<void> exportCashClosuresToCSV() async {
     try {
-      final hoy = DateTime.now();
+      final hoy = date_utils.AppDateUtils.nowCdmx();
       final cierresDelDia = _cashClosures.where((cierre) {
         return cierre.fecha.year == hoy.year &&
             cierre.fecha.month == hoy.month &&
@@ -1645,11 +1897,18 @@ class CajeroController extends ChangeNotifier {
 
       // Construir contenido CSV
       final csvLines = <String>[];
+      final bool showIva = _ivaHabilitado;
 
-      // Encabezados
-      csvLines.add(
-        'Fecha,Hora,Cajero,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
-      );
+      // Encabezados (con columnas IVA cuando está habilitado)
+      if (showIva) {
+        csvLines.add(
+          'Fecha,Hora,Cajero,Subtotal,IVA (16%),Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+        );
+      } else {
+        csvLines.add(
+          'Fecha,Hora,Cajero,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+        );
+      }
 
       // Datos
       for (final cierre in cierresDelDia) {
@@ -1663,41 +1922,70 @@ class CajeroController extends ChangeNotifier {
             .replaceAll(',', ';')
             .replaceAll('\n', ' ');
 
-        csvLines.add(
-          [
-            fechaStr,
-            horaStr,
-            cierre.usuario,
-            cierre.totalNeto.toStringAsFixed(2),
-            cierre.efectivo.toStringAsFixed(2),
-            cierre.tarjeta.toStringAsFixed(2),
-            cierre.otrosIngresos.toStringAsFixed(2),
-            (cierre.propinasTarjeta + cierre.propinasEfectivo).toStringAsFixed(
-              2,
-            ),
-            estadoStr,
-            cierre.efectivoInicial.toStringAsFixed(2),
-            notas,
-          ].join(','),
-        );
+        if (showIva) {
+          final subtotal = _subtotalFromTotalConIva(cierre.totalNeto);
+          final iva = _ivaFromTotalConIva(cierre.totalNeto);
+          csvLines.add(
+            [
+              fechaStr,
+              horaStr,
+              cierre.usuario,
+              subtotal.toStringAsFixed(2),
+              iva.toStringAsFixed(2),
+              cierre.totalNeto.toStringAsFixed(2),
+              cierre.efectivo.toStringAsFixed(2),
+              cierre.tarjeta.toStringAsFixed(2),
+              cierre.otrosIngresos.toStringAsFixed(2),
+              (cierre.propinasTarjeta + cierre.propinasEfectivo).toStringAsFixed(2),
+              estadoStr,
+              cierre.efectivoInicial.toStringAsFixed(2),
+              notas,
+            ].join(','),
+          );
+        } else {
+          csvLines.add(
+            [
+              fechaStr,
+              horaStr,
+              cierre.usuario,
+              cierre.totalNeto.toStringAsFixed(2),
+              cierre.efectivo.toStringAsFixed(2),
+              cierre.tarjeta.toStringAsFixed(2),
+              cierre.otrosIngresos.toStringAsFixed(2),
+              (cierre.propinasTarjeta + cierre.propinasEfectivo).toStringAsFixed(2),
+              estadoStr,
+              cierre.efectivoInicial.toStringAsFixed(2),
+              notas,
+            ].join(','),
+          );
+        }
       }
 
-      // Agregar resumen al final
-      final stats = getPaymentStats();
+      // Resumen del día a partir de los mismos cierres exportados
+      double resumenVentas = 0;
+      double resumenEfectivo = 0;
+      double resumenTarjeta = 0;
+      double resumenPropinas = 0;
+      for (final cierre in cierresDelDia) {
+        resumenVentas += cierre.totalNeto;
+        resumenEfectivo += cierre.efectivo;
+        resumenTarjeta += cierre.tarjeta;
+        resumenPropinas += cierre.propinasTarjeta + cierre.propinasEfectivo;
+      }
       csvLines.add('');
       csvLines.add('RESUMEN DEL DÍA');
-      csvLines.add(
-        'Total Ventas,${stats['totalSales']?.toStringAsFixed(2) ?? '0.00'}',
-      );
-      csvLines.add(
-        'Total Efectivo,${stats['totalCash']?.toStringAsFixed(2) ?? '0.00'}',
-      );
-      csvLines.add(
-        'Total Tarjeta,${stats['totalCard']?.toStringAsFixed(2) ?? '0.00'}',
-      );
-      csvLines.add(
-        'Total Propinas,${(stats['totalCash'] ?? 0) * 0.1 + (stats['totalCard'] ?? 0) * 0.1}',
-      );
+      if (showIva) {
+        final resumenSubtotal = _subtotalFromTotalConIva(resumenVentas);
+        final resumenIva = _ivaFromTotalConIva(resumenVentas);
+        csvLines.add('Subtotal,${resumenSubtotal.toStringAsFixed(2)}');
+        csvLines.add('IVA (16%),${resumenIva.toStringAsFixed(2)}');
+        csvLines.add('Total Ventas,${resumenVentas.toStringAsFixed(2)}');
+      } else {
+        csvLines.add('Total Ventas,${resumenVentas.toStringAsFixed(2)}');
+      }
+      csvLines.add('Total Efectivo,${resumenEfectivo.toStringAsFixed(2)}');
+      csvLines.add('Total Tarjeta,${resumenTarjeta.toStringAsFixed(2)}');
+      csvLines.add('Total Propinas,${resumenPropinas.toStringAsFixed(2)}');
 
       final csvContent = csvLines.join('\n');
       final filename =
@@ -1715,7 +2003,12 @@ class CajeroController extends ChangeNotifier {
   // Generar PDF de cierres de caja
   Future<void> generateCashClosuresPDF() async {
     try {
-      final hoy = DateTime.now();
+      // Recargar cierres y pagos desde el backend para que el PDF use datos reales
+      await loadCashClosures();
+      await _loadPaymentsFromBackend();
+      notifyListeners();
+
+      final hoy = date_utils.AppDateUtils.nowCdmx();
       final cierresDelDia = _cashClosures.where((cierre) {
         return cierre.fecha.year == hoy.year &&
             cierre.fecha.month == hoy.month &&
@@ -1725,7 +2018,17 @@ class CajeroController extends ChangeNotifier {
       // Ordenar por fecha descendente
       cierresDelDia.sort((a, b) => b.fecha.compareTo(a.fecha));
 
-      final stats = getPaymentStats();
+      // Resumen del día a partir de los mismos cierres del día (igual que en CSV)
+      double resumenVentas = 0;
+      double resumenEfectivo = 0;
+      double resumenTarjeta = 0;
+      for (final cierre in cierresDelDia) {
+        resumenVentas += cierre.totalNeto;
+        resumenEfectivo += cierre.efectivo;
+        resumenTarjeta += cierre.tarjeta;
+      }
+      final resumenSubtotal = _ivaHabilitado ? _subtotalFromTotalConIva(resumenVentas) : 0.0;
+      final resumenIva = _ivaHabilitado ? _ivaFromTotalConIva(resumenVentas) : 0.0;
       final apertura = getTodayCashOpening();
 
       // Crear documento PDF
@@ -1819,15 +2122,31 @@ class CajeroController extends ChangeNotifier {
                         ),
                       ),
                       pdf_widgets.SizedBox(height: 10.0),
+                      if (_ivaHabilitado) ...[
+                        pdf_widgets.Row(
+                          mainAxisAlignment:
+                              pdf_widgets.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pdf_widgets.Text('Subtotal:'),
+                            pdf_widgets.Text(formatCurrency(resumenSubtotal)),
+                          ],
+                        ),
+                        pdf_widgets.Row(
+                          mainAxisAlignment:
+                              pdf_widgets.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pdf_widgets.Text('IVA (16%):'),
+                            pdf_widgets.Text(formatCurrency(resumenIva)),
+                          ],
+                        ),
+                      ],
                       pdf_widgets.Row(
                         mainAxisAlignment:
                             pdf_widgets.MainAxisAlignment.spaceBetween,
                         children: [
                           pdf_widgets.Text('Total Ventas:'),
                           pdf_widgets.Text(
-                            formatCurrency(
-                              (stats['totalSales'] as num?)?.toDouble() ?? 0.0,
-                            ),
+                            formatCurrency(resumenVentas),
                             style: pdf_widgets.TextStyle(
                               fontWeight: pdf_widgets.FontWeight.bold,
                             ),
@@ -1839,11 +2158,7 @@ class CajeroController extends ChangeNotifier {
                             pdf_widgets.MainAxisAlignment.spaceBetween,
                         children: [
                           pdf_widgets.Text('Total Efectivo:'),
-                          pdf_widgets.Text(
-                            formatCurrency(
-                              (stats['totalCash'] as num?)?.toDouble() ?? 0.0,
-                            ),
-                          ),
+                          pdf_widgets.Text(formatCurrency(resumenEfectivo)),
                         ],
                       ),
                       pdf_widgets.Row(
@@ -1851,11 +2166,7 @@ class CajeroController extends ChangeNotifier {
                             pdf_widgets.MainAxisAlignment.spaceBetween,
                         children: [
                           pdf_widgets.Text('Total Tarjeta:'),
-                          pdf_widgets.Text(
-                            formatCurrency(
-                              (stats['totalCard'] as num?)?.toDouble() ?? 0.0,
-                            ),
-                          ),
+                          pdf_widgets.Text(formatCurrency(resumenTarjeta)),
                         ],
                       ),
                     ],
@@ -1883,7 +2194,7 @@ class CajeroController extends ChangeNotifier {
                         color: PdfColors.grey,
                       ),
                       children: [
-                        // Encabezados
+                        // Encabezados (con Subtotal e IVA cuando está habilitado)
                         pdf_widgets.TableRow(
                           decoration: const pdf_widgets.BoxDecoration(
                             color: PdfColors.grey300,
@@ -1907,6 +2218,26 @@ class CajeroController extends ChangeNotifier {
                                 ),
                               ),
                             ),
+                            if (_ivaHabilitado) ...[
+                              pdf_widgets.Padding(
+                                padding: const pdf_widgets.EdgeInsets.all(5),
+                                child: pdf_widgets.Text(
+                                  'Subtotal',
+                                  style: pdf_widgets.TextStyle(
+                                    fontWeight: pdf_widgets.FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              pdf_widgets.Padding(
+                                padding: const pdf_widgets.EdgeInsets.all(5),
+                                child: pdf_widgets.Text(
+                                  'IVA (16%)',
+                                  style: pdf_widgets.TextStyle(
+                                    fontWeight: pdf_widgets.FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
                             pdf_widgets.Padding(
                               padding: const pdf_widgets.EdgeInsets.all(5),
                               child: pdf_widgets.Text(
@@ -1969,6 +2300,26 @@ class CajeroController extends ChangeNotifier {
                                   ),
                                 ),
                               ),
+                              if (_ivaHabilitado) ...[
+                                pdf_widgets.Padding(
+                                  padding: const pdf_widgets.EdgeInsets.all(5),
+                                  child: pdf_widgets.Text(
+                                    formatCurrency(_subtotalFromTotalConIva(cierre.totalNeto)),
+                                    style: const pdf_widgets.TextStyle(
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ),
+                                pdf_widgets.Padding(
+                                  padding: const pdf_widgets.EdgeInsets.all(5),
+                                  child: pdf_widgets.Text(
+                                    formatCurrency(_ivaFromTotalConIva(cierre.totalNeto)),
+                                    style: const pdf_widgets.TextStyle(
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ),
+                              ],
                               pdf_widgets.Padding(
                                 padding: const pdf_widgets.EdgeInsets.all(5),
                                 child: pdf_widgets.Text(
@@ -2015,7 +2366,7 @@ class CajeroController extends ChangeNotifier {
               // Pie de página
               pdf_widgets.Divider(),
               pdf_widgets.Text(
-                'Generado el ${date_utils.AppDateUtils.formatDateTime(DateTime.now())}',
+                'Generado el ${date_utils.AppDateUtils.formatDateTime(date_utils.AppDateUtils.nowCdmx())}',
                 style: const pdf_widgets.TextStyle(
                   fontSize: 10,
                   color: PdfColors.grey700,
@@ -2027,10 +2378,11 @@ class CajeroController extends ChangeNotifier {
         ),
       );
 
-      // Mostrar diálogo de impresión/descarga
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfDoc.save(),
-      );
+      // Guardar PDF en bytes y abrir diálogo de compartir/descargar (permite guardar en archivo)
+      final bytes = await pdfDoc.save();
+      final filename =
+          'reporte-cierres-caja_${hoy.year}_${hoy.month.toString().padLeft(2, '0')}_${hoy.day.toString().padLeft(2, '0')}.pdf';
+      await Printing.sharePdf(bytes: bytes, filename: filename);
 
       print('✅ PDF generado correctamente');
     } catch (e) {

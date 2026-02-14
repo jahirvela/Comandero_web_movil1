@@ -5,6 +5,7 @@ import '../../controllers/cocinero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/order_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 import '../../widgets/logout_button.dart';
 import '../../services/kitchen_order_service.dart';
 import '../../services/socket_service.dart';
@@ -1446,7 +1447,7 @@ class CocineroApp extends StatelessWidget {
     final statusColor = controller.getStatusColor(order.status);
     // Usar StreamBuilder para actualizar el tiempo en tiempo real
     return StreamBuilder<DateTime>(
-      stream: Stream.periodic(const Duration(seconds: 1), (_) => DateTime.now()),
+      stream: Stream.periodic(const Duration(seconds: 1), (_) => date_utils.AppDateUtils.nowCdmx()),
       builder: (context, snapshot) {
         final elapsedTime = controller.formatElapsedTime(order.orderTime);
 
@@ -1996,12 +1997,92 @@ class CocineroApp extends StatelessWidget {
                     );
                   }
                 } catch (e) {
-                  if (context.mounted) {
+                  if (!context.mounted) return;
+                  final msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+                  final esFaltanteIngredientes = msg.contains('faltan ingredientes') ||
+                      msg.contains('No se puede marcar como listo');
+                  if (esFaltanteIngredientes) {
+                    // Mensaje entendible: quitar "Error del servidor (400):" y códigos técnicos
+                    final msgLimpia = msg
+                        .replaceFirst(RegExp(r'^Error del servidor\s*\(\d+\):\s*'), '')
+                        .replaceFirst(RegExp(r'^Error\s*\(\d+\):\s*'), '')
+                        .trim();
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Faltan ingredientes'),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(msgLimpia),
+                              const SizedBox(height: 16),
+                              Text(
+                                'Forzar igual: marca el pedido como listo sin descontar inventario. Úsalo solo si repusiste ingredientes por otro medio o es una excepción.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(ctx).hintColor,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            child: const Text('Entendido'),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              try {
+                                final newStatus = order.isTakeaway
+                                    ? OrderStatus.listoParaRecoger
+                                    : OrderStatus.listo;
+                                await controller.updateOrderStatus(
+                                  order.id,
+                                  newStatus,
+                                  forzarSinStock: true,
+                                );
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        order.isTakeaway
+                                            ? 'Pedido ${order.id} listo para recoger'
+                                            : 'Pedido ${order.id} listo',
+                                      ),
+                                      backgroundColor: AppColors.success,
+                                    ),
+                                  );
+                                }
+                              } catch (e2) {
+                                if (context.mounted) {
+                                  final errMsg = e2.toString()
+                                      .replaceFirst(RegExp(r'^Exception:\s*'), '')
+                                      .replaceFirst(RegExp(r'^Error del servidor\s*\(\d+\):\s*'), '')
+                                      .replaceFirst(RegExp(r'^Error\s*\(\d+\):\s*'), '');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Error: $errMsg'),
+                                      backgroundColor: AppColors.error,
+                                      duration: const Duration(seconds: 4),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            child: const Text('Forzar igual'),
+                          ),
+                        ],
+                      ),
+                    );
+                  } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(
-                          'Error al actualizar pedido: ${e.toString()}',
-                        ),
+                        content: Text('Error al actualizar pedido: $msg'),
                         backgroundColor: AppColors.error,
                         duration: const Duration(seconds: 3),
                       ),

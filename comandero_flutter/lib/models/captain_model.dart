@@ -178,6 +178,7 @@ class CaptainOrderItem {
 }
 
 class CaptainTable {
+  final String codigo;
   final int number;
   final String status;
   final int? customers;
@@ -188,6 +189,7 @@ class CaptainTable {
   final String? notes;
 
   CaptainTable({
+    required this.codigo,
     required this.number,
     required this.status,
     this.customers,
@@ -198,9 +200,20 @@ class CaptainTable {
     this.notes,
   });
 
+  /// Si el código es solo número → "Mesa 1"; si tiene texto → tal cual (ej: "Terraza", "Mesa de Prueba")
+  String get displayLabel {
+    final c = codigo.trim();
+    if (c.isEmpty) return codigo;
+    final n = int.tryParse(c);
+    return (n != null && n.toString() == c) ? 'Mesa $c' : codigo;
+  }
+
   factory CaptainTable.fromJson(Map<String, dynamic> json) {
+    final codigo = (json['codigo'] as String?) ?? json['number']?.toString() ?? '0';
+    final number = json['number'] is int ? json['number'] as int : (int.tryParse(codigo) ?? 0);
     return CaptainTable(
-      number: json['number'],
+      codigo: codigo,
+      number: number,
       status: json['status'],
       customers: json['customers'],
       waiter: json['waiter'],
@@ -215,6 +228,7 @@ class CaptainTable {
 
   Map<String, dynamic> toJson() {
     return {
+      'codigo': codigo,
       'number': number,
       'status': status,
       'customers': customers,
@@ -227,6 +241,7 @@ class CaptainTable {
   }
 
   CaptainTable copyWith({
+    String? codigo,
     int? number,
     String? status,
     int? customers,
@@ -237,6 +252,7 @@ class CaptainTable {
     String? notes,
   }) {
     return CaptainTable(
+      codigo: codigo ?? this.codigo,
       number: number ?? this.number,
       status: status ?? this.status,
       customers: customers ?? this.customers,

@@ -15,6 +15,8 @@ import reportesRouter from '../modules/reportes/reportes.routes.js';
 import cierresRouter from '../modules/cierres/cierres.routes.js';
 import alertasRouter from '../modules/alertas/alertas.routes.js';
 import reservasRouter from '../modules/reservas/reservas.routes.js';
+import configuracionRouter from '../modules/configuracion/configuracion.routes.js';
+import impresorasRouter from '../modules/impresoras/impresoras.routes.js';
 import { nowMxISO } from '../config/time.js';
 
 const apiRouter = Router();
@@ -106,6 +108,8 @@ apiRouter.use('/reportes', reportesRouter);
 apiRouter.use('/cierres', cierresRouter);
 apiRouter.use('/alertas', alertasRouter);
 apiRouter.use('/reservas', reservasRouter);
+apiRouter.use('/configuracion', configuracionRouter);
+apiRouter.use('/impresoras', impresorasRouter);
 
 // Aquí se montarán los módulos específicos, e.g. usuarios, mesas, etc.
 

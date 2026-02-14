@@ -7,6 +7,20 @@ import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/date_utils.dart' as date_utils;
 
+/// Parsea el ordenId desde billId (ej. BILL-ORD-47 -> 47) para impresión.
+int? _ordenIdFromBillId(String billId) {
+  if (billId.startsWith('BILL-ORD-')) {
+    final n = int.tryParse(billId.replaceFirst('BILL-ORD-', ''));
+    if (n != null && n > 0) return n;
+  }
+  final parts = billId.split('-');
+  for (final p in parts) {
+    final n = int.tryParse(p);
+    if (n != null && n > 0) return n;
+  }
+  return null;
+}
+
 /// Modal para registrar el comprobante de pago con tarjeta.
 class CardVoucherModal extends StatefulWidget {
   final BillModel bill;
@@ -59,9 +73,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   @override
   void initState() {
     super.initState();
-    // Inicializar con hora CDMX actual (hora local del sistema)
-    // Usar DateTime.now() directamente ya que Flutter usa la zona horaria del sistema
-    _selectedDateTime = DateTime.now();
+    _selectedDateTime = date_utils.AppDateUtils.nowCdmx();
   }
   bool _voucherPrinted = false;
   bool _submitted = false;
@@ -169,6 +181,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     final badgeText = widget.cardMethod == 'debito'
         ? 'Tarjeta de débito'
         : 'Tarjeta de crédito';
+    final showIva = widget.controller.ivaHabilitado;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -177,48 +190,102 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFFFCC80)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF8D6E63),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              badgeText,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: widget.isTablet ? 13 : 11,
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8D6E63),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  badgeText,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: widget.isTablet ? 13 : 11,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Text(
+                widget.terminal,
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: widget.isTablet ? 14 : 12,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Text(
-            widget.terminal,
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: widget.isTablet ? 14 : 12,
-            ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Subtotal:',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: widget.isTablet ? 13 : 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                widget.controller.formatCurrency(widget.bill.subtotal - widget.bill.discount),
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: widget.isTablet ? 13 : 11,
+                ),
+              ),
+            ],
           ),
-          const Spacer(),
-          Text(
-            'Total cobrado:',
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: widget.isTablet ? 13 : 11,
-              fontWeight: FontWeight.w500,
+          if (showIva) ...[
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'IVA (16%):',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: widget.isTablet ? 13 : 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  widget.controller.formatCurrency(widget.bill.tax),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: widget.isTablet ? 13 : 11,
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            widget.controller.formatCurrency(widget.bill.calculatedTotal),
-            style: TextStyle(
-              color: AppColors.primary,
-              fontSize: widget.isTablet ? 16 : 14,
-              fontWeight: FontWeight.w700,
-            ),
+          ],
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Total cobrado:',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: widget.isTablet ? 13 : 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                widget.controller.formatCurrency(widget.bill.calculatedTotal),
+                style: TextStyle(
+                  color: AppColors.primary,
+                  fontSize: widget.isTablet ? 16 : 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -377,6 +444,14 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
       onChanged: (value) {
         setState(() => _voucherPrinted = value ?? false);
       },
+      activeColor: AppColors.primary,
+      checkColor: Colors.white,
+      fillColor: WidgetStateProperty.resolveWith<Color>((Set<WidgetState> states) {
+        if (states.contains(WidgetState.selected)) {
+          return AppColors.primary;
+        }
+        return Colors.transparent;
+      }),
     );
   }
 
@@ -449,7 +524,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   }
 
   Future<void> _selectDateTime() async {
-    final now = DateTime.now(); // Usar hora local del sistema
+    final now = date_utils.AppDateUtils.nowCdmx();
     final date = await showDatePicker(
       context: context,
       initialDate: _selectedDateTime,
@@ -511,6 +586,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
     );
 
     try {
+      final ordenIdsList = widget.bill.ordenIdsFromBillIdInt;
       final payment = PaymentModel(
         id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
         type: PaymentType.card,
@@ -535,6 +611,8 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
         notes: _notesController.text.trim().isNotEmpty
             ? _notesController.text.trim()
             : null,
+        ordenId: ordenIdsList.isNotEmpty ? ordenIdsList.first : widget.bill.ordenId,
+        ordenIds: ordenIdsList.length > 1 ? ordenIdsList : null,
       );
 
       await widget.controller.processPayment(payment);
@@ -761,11 +839,62 @@ class _CardPaymentSuccessDialog extends StatelessWidget {
     if (!context.mounted) return;
     if (!shouldPrint) return;
 
-    controller.markBillAsPrinted(
+    // Mostrar indicador de carga mientras se envía a imprimir
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Imprimiendo ticket...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Asegurar ordenId/ordenIds para impresión (por si el bill ya fue removido de la lista)
+    final ordenId = payment.ordenId ?? _ordenIdFromBillId(payment.billId);
+    final ordenIds = payment.ordenIds ?? (ordenId != null ? [ordenId] : null);
+
+    final success = await controller.markBillAsPrinted(
       payment.billId,
       payment.cashierName,
       paymentId: payment.id,
+      ordenId: ordenId,
+      ordenIds: ordenIds,
     );
-    Navigator.of(context).pop();
+
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // Cerrar loading
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ticket enviado a imprimir correctamente'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            controller.lastPrintError ?? 'No se pudo imprimir el ticket. Verifica la impresora o la conexión.',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // Cerrar diálogo de éxito
   }
 }

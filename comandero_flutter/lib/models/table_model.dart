@@ -1,6 +1,8 @@
 class TableModel {
   final int id;
-  final int number;
+  /// Código o nombre de la mesa (ej: "1", "Terraza", "VIP 1"). Se usa en tickets, cocina, cuentas por cobrar.
+  final String codigo;
+  final int number; // Compatibilidad/orden: int.parse(codigo) si es numérico
   final String status;
   final int seats;
   final int? customers;
@@ -11,6 +13,7 @@ class TableModel {
 
   TableModel({
     required this.id,
+    required this.codigo,
     required this.number,
     required this.status,
     required this.seats,
@@ -21,10 +24,32 @@ class TableModel {
     this.section,
   });
 
+  /// Etiqueta para mostrar: si el código es solo número → "Mesa 1"; si tiene texto → tal cual (ej: "Terraza", "Mesa de Prueba")
+  String get displayLabel {
+    final c = codigo.trim();
+    if (c.isEmpty) return codigo;
+    final n = int.tryParse(c);
+    return (n != null && n.toString() == c) ? 'Mesa $c' : codigo;
+  }
+
+  /// Genera la etiqueta de mesa a partir de código o número (para usar sin un TableModel).
+  static String displayLabelFromCodigo(String? codigo, [int? fallbackNumber]) {
+    if (codigo != null && codigo.isNotEmpty) {
+      final c = codigo.trim();
+      final n = int.tryParse(c);
+      return (n != null && n.toString() == c) ? 'Mesa $c' : codigo;
+    }
+    if (fallbackNumber != null) return 'Mesa $fallbackNumber';
+    return 'N/A';
+  }
+
   factory TableModel.fromJson(Map<String, dynamic> json) {
+    final codigo = (json['codigo'] as String?) ?? json['number']?.toString() ?? '0';
+    final number = json['number'] is int ? json['number'] as int : (int.tryParse(codigo) ?? 0);
     return TableModel(
       id: json['id'],
-      number: json['number'],
+      codigo: codigo,
+      number: number,
       status: json['status'],
       seats: json['seats'],
       customers: json['customers'],
@@ -38,6 +63,7 @@ class TableModel {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'codigo': codigo,
       'number': number,
       'status': status,
       'seats': seats,
@@ -51,6 +77,7 @@ class TableModel {
 
   TableModel copyWith({
     int? id,
+    String? codigo,
     int? number,
     String? status,
     int? seats,
@@ -62,6 +89,7 @@ class TableModel {
   }) {
     return TableModel(
       id: id ?? this.id,
+      codigo: codigo ?? this.codigo,
       number: number ?? this.number,
       status: status ?? this.status,
       seats: seats ?? this.seats,

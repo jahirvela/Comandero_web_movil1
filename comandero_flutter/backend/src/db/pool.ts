@@ -1,10 +1,11 @@
 import mysql from 'mysql2/promise';
+import type { ResultSetHeader } from 'mysql2';
 import { getEnv } from '../config/env.js';
 import { logger } from '../config/logger.js';
 
 const env = getEnv();
 
-export const pool = mysql.createPool({
+const rawPool = mysql.createPool({
   host: env.DATABASE_HOST,
   port: env.DATABASE_PORT,
   user: env.DATABASE_USER,
@@ -13,11 +14,55 @@ export const pool = mysql.createPool({
   connectionLimit: env.DATABASE_CONNECTION_LIMIT,
   namedPlaceholders: true,
   dateStrings: false,
-  timezone: 'Z',
-  connectTimeout: 60000, // 60 segundos de timeout
+  timezone: 'Z', // Leer fechas de MySQL como UTC (coherente con session time_zone UTC)
+  connectTimeout: 60000,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
 });
+
+const UTC_SESSION = "SET time_zone = '+00:00'";
+
+/**
+ * Pool que fuerza cada conexión a usar UTC.
+ * Así NOW() y CURRENT_TIMESTAMP en MySQL guardan hora UTC y la hora se muestra
+ * correctamente en la app (backend convierte UTC → America/Mexico_City).
+ */
+export const pool = {
+  getConnection: async (): Promise<mysql.PoolConnection> => {
+    const conn = await rawPool.getConnection();
+    try {
+      await conn.query(UTC_SESSION);
+    } catch (e) {
+      conn.release();
+      throw e;
+    }
+    return conn;
+  },
+  query: async <T extends mysql.RowDataPacket[] | ResultSetHeader>(
+    sql: string,
+    values?: any
+  ): Promise<[T, mysql.FieldPacket[]]> => {
+    const conn = await rawPool.getConnection();
+    try {
+      await conn.query(UTC_SESSION);
+      return conn.query(sql, values) as Promise<[T, mysql.FieldPacket[]]>;
+    } finally {
+      conn.release();
+    }
+  },
+  execute: async <T extends mysql.RowDataPacket[] | ResultSetHeader>(
+    sql: string,
+    values?: any
+  ): Promise<[T, mysql.FieldPacket[]]> => {
+    const conn = await rawPool.getConnection();
+    try {
+      await conn.query(UTC_SESSION);
+      return conn.execute(sql, values) as Promise<[T, mysql.FieldPacket[]]>;
+    } finally {
+      conn.release();
+    }
+  },
+};
 
 // Intentar conectar con reintentos
 const testConnection = async (retries = 3, delay = 2000) => {

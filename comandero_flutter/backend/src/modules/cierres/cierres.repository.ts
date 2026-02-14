@@ -13,6 +13,8 @@ interface CierreCajaRow extends RowDataPacket {
   total_tarjeta: number;
   total_otros: number;
   total_propinas: number;
+  total_propinas_efectivo: number;
+  total_propinas_tarjeta: number;
 }
 
 export interface CierreCajaItem {
@@ -27,6 +29,8 @@ export interface CierreCajaItem {
   totalTarjeta: number;
   totalOtros: number;
   totalPropinas: number;
+  propinasEfectivo: number; // Propinas registradas en pagos con efectivo
+  propinasTarjeta: number;  // Propinas registradas en pagos con tarjeta
   status: string; // 'pending', 'approved', 'rejected', 'clarification'
   cierreId?: number; // ID real del cierre manual en la BD (opcional, solo para manuales)
   creadoEn?: string; // Fecha de creación del cierre manual (opcional)
@@ -89,7 +93,9 @@ export const listarCierresCaja = async (
       COALESCE(SUM(CASE WHEN LOWER(fp.nombre) = 'efectivo' THEN p.monto ELSE 0 END), 0) AS total_efectivo,
       COALESCE(SUM(CASE WHEN LOWER(fp.nombre) LIKE 'tarjeta%' THEN p.monto ELSE 0 END), 0) AS total_tarjeta,
       COALESCE(SUM(CASE WHEN LOWER(fp.nombre) NOT IN ('efectivo') AND LOWER(fp.nombre) NOT LIKE 'tarjeta%' THEN p.monto ELSE 0 END), 0) AS total_otros,
-      COALESCE(SUM(prop.monto), 0) AS total_propinas
+      COALESCE(SUM(prop.monto), 0) AS total_propinas,
+      0 AS total_propinas_efectivo,
+      0 AS total_propinas_tarjeta
     FROM pago p
     INNER JOIN orden o ON o.id = p.orden_id
     LEFT JOIN forma_pago fp ON fp.id = p.forma_pago_id
@@ -105,6 +111,74 @@ export const listarCierresCaja = async (
     params
   );
   console.log(`✅ CierresRepository: ${rowsCalculados.length} cierres calculados encontrados`);
+
+  // 1b. Obtener propinas por tipo (efectivo vs tarjeta) prorrateadas por monto de pago
+  // Para cada orden con propina: prorratear según monto efectivo/tarjeta de sus pagos
+  const wherePropinas = conditionsPago.length > 0
+    ? ' AND ' + conditionsPago
+        .map(c => c.replace(/DATE\(p\.fecha_pago\)/g, 'pp.fecha').replace(/p\.empleado_id/g, 'pp.empleado_id'))
+        .join(' AND ')
+    : '';
+  interface PropinasTipoRow extends RowDataPacket { fecha: Date; cajero_id: number | null; total_propinas_efectivo: number; total_propinas_tarjeta: number; }
+  const [rowsPropinasTipo] = await pool.execute<PropinasTipoRow[]>(
+    `
+    SELECT
+      pp.fecha AS fecha,
+      pp.empleado_id AS cajero_id,
+      COALESCE(SUM(
+        pr.propina_monto *
+        COALESCE(
+          (SELECT SUM(CASE WHEN LOWER(fp2.nombre) = 'efectivo' THEN p2.monto ELSE 0 END) / NULLIF(SUM(p2.monto), 0)
+           FROM pago p2 JOIN forma_pago fp2 ON fp2.id = p2.forma_pago_id
+           WHERE p2.orden_id = pr.orden_id AND p2.estado = 'aplicado'),
+          0.5
+        )
+      ), 0) AS total_propinas_efectivo,
+      COALESCE(SUM(
+        pr.propina_monto *
+        COALESCE(
+          (SELECT SUM(CASE WHEN LOWER(fp2.nombre) LIKE 'tarjeta%' THEN p2.monto ELSE 0 END) / NULLIF(SUM(p2.monto), 0)
+           FROM pago p2 JOIN forma_pago fp2 ON fp2.id = p2.forma_pago_id
+           WHERE p2.orden_id = pr.orden_id AND p2.estado = 'aplicado'),
+          0.5
+        )
+      ), 0) AS total_propinas_tarjeta
+    FROM (SELECT orden_id, SUM(monto) AS propina_monto FROM propina GROUP BY orden_id) pr
+    INNER JOIN orden o ON o.id = pr.orden_id
+    INNER JOIN (
+      SELECT p1.orden_id, p1.empleado_id, DATE(p1.fecha_pago) AS fecha
+      FROM pago p1
+      WHERE p1.estado = 'aplicado'
+        AND NOT EXISTS (
+          SELECT 1 FROM pago p2
+          WHERE p2.orden_id = p1.orden_id AND p2.estado = 'aplicado'
+            AND p2.fecha_pago < p1.fecha_pago
+        )
+    ) pp ON pp.orden_id = o.id
+    WHERE o.estado_orden_id IN (SELECT id FROM estado_orden WHERE nombre IN ('pagada', 'cerrada'))
+      ${wherePropinas}
+    GROUP BY pp.fecha, pp.empleado_id
+    `,
+    params
+  );
+
+  // Map (fecha-cajero_id) -> { propinasEfectivo, propinasTarjeta }
+  const propinasTipoMap = new Map<string, { propinasEfectivo: number; propinasTarjeta: number }>();
+  // Map fecha -> total propinas del día (suma de todos los empleados) - para cierres manuales
+  const propinasPorFechaMap = new Map<string, { propinasEfectivo: number; propinasTarjeta: number }>();
+  for (const row of rowsPropinasTipo) {
+    const fechaStr = row.fecha instanceof Date ? row.fecha.toISOString().split('T')[0] : String(row.fecha).split('T')[0];
+    const key = `${fechaStr}-${row.cajero_id ?? 'sin-cajero'}`;
+    const propEf = Number(row.total_propinas_efectivo);
+    const propTj = Number(row.total_propinas_tarjeta);
+    propinasTipoMap.set(key, { propinasEfectivo: propEf, propinasTarjeta: propTj });
+    // Acumular por fecha (para cierres manuales que pueden ser de un cajero distinto al que procesó pagos)
+    const prev = propinasPorFechaMap.get(fechaStr) ?? { propinasEfectivo: 0, propinasTarjeta: 0 };
+    propinasPorFechaMap.set(fechaStr, {
+      propinasEfectivo: prev.propinasEfectivo + propEf,
+      propinasTarjeta: prev.propinasTarjeta + propTj
+    });
+  }
 
   // 2. Obtener cierres manuales desde caja_cierre (declaraciones del cajero)
   // Primero hacer una consulta sin filtros para verificar que hay cierres manuales
@@ -160,6 +234,8 @@ export const listarCierresCaja = async (
     const fechaSoloStr = fechaMx?.toFormat('yyyy-MM-dd') ?? new Date().toISOString().split('T')[0];
     
     const key = `calc-${fechaSoloStr}-${row.cajero_id ?? 'sin-cajero'}`;
+    const propinasKey = `${fechaSoloStr}-${row.cajero_id ?? 'sin-cajero'}`; // Sin "calc-" para coincidir con propinasTipoMap
+    const propinasTipo = propinasTipoMap.get(propinasKey) ?? { propinasEfectivo: 0, propinasTarjeta: 0 };
 
     cierresCalculadosMap.set(key, {
       id: key,
@@ -173,6 +249,8 @@ export const listarCierresCaja = async (
       totalTarjeta: Number(row.total_tarjeta),
       totalOtros: Number(row.total_otros),
       totalPropinas: Number(row.total_propinas),
+      propinasEfectivo: propinasTipo.propinasEfectivo,
+      propinasTarjeta: propinasTipo.propinasTarjeta,
       status: 'pending' // Cierres calculados también están pendientes de revisión
     });
   }
@@ -202,6 +280,11 @@ export const listarCierresCaja = async (
     const keyCalculado = `calc-${fechaSolo}-${row.cajero_id ?? 'sin-cajero'}`;
     const cierreCalculado = cierresCalculadosMap.get(keyCalculado);
 
+    // Propinas: usar total del DÍA (propinasPorFechaMap) para cierres manuales, porque el cajero
+    // que cierra puede ser distinto al empleado que procesó los pagos (mesero). Así mostramos
+    // todas las propinas del día en el detalle del cierre.
+    const propinasDelDia = propinasPorFechaMap.get(fechaSolo) ?? { propinasEfectivo: 0, propinasTarjeta: 0 };
+
     // Los valores manuales SIEMPRE tienen prioridad
     const totalVentasManual = row.total_ventas != null ? Number(row.total_ventas) : 0;
     const totalEfectivoManual = row.total_efectivo != null ? Number(row.total_efectivo) : 0;
@@ -219,7 +302,9 @@ export const listarCierresCaja = async (
       totalEfectivo: totalEfectivoManual,
       totalTarjeta: totalTarjetaManual,
       totalOtros: cierreCalculado?.totalOtros ?? 0,
-      totalPropinas: cierreCalculado?.totalPropinas ?? 0,
+      totalPropinas: cierreCalculado?.totalPropinas ?? (propinasDelDia.propinasEfectivo + propinasDelDia.propinasTarjeta),
+      propinasEfectivo: propinasDelDia.propinasEfectivo,
+      propinasTarjeta: propinasDelDia.propinasTarjeta,
       status: row.estado || 'pending', // Leer el estado desde la BD
       cierreId: cierreId ?? undefined,
       creadoEn: utcToMxISO(row.creado_en) ?? undefined,
@@ -305,12 +390,14 @@ export const crearCierreCaja = async (
   input: CrearCierreCajaInput,
   usuarioId?: number
 ): Promise<CierreCajaCreado> => {
-  // Combinar notas si hay notaCajero
-  const notasCompletas = [
+  // Combinar notas sin duplicados (evitar "Enviando cierre | Enviando cierre | ...")
+  const parts = [
     input.notas,
     input.notaCajero,
     input.otrosIngresosTexto ? `Otros ingresos: ${input.otrosIngresosTexto}` : null
-  ].filter(Boolean).join(' | ') || null;
+  ].filter((p): p is string => p != null && typeof p === 'string' && p.trim().length > 0);
+  const uniqueParts = parts.filter((p, i) => parts.indexOf(p) === i);
+  const notasCompletas = uniqueParts.length > 0 ? uniqueParts.join(' | ') : null;
 
   // Convertir fecha a string usando zona CDMX
   const fechaStr = getDateOnlyMx(input.fecha) ?? (input.fecha instanceof Date ? input.fecha.toISOString().split('T')[0] : String(input.fecha).split('T')[0]);
@@ -477,6 +564,52 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
     ? row.fecha.toISOString().split('T')[0]
     : new Date(row.fecha).toISOString().split('T')[0]);
 
+  // Obtener propinas por tipo para este cierre - TOTAL del día (sin filtrar por cajero),
+  // porque el cierre manual puede ser del cajero pero las propinas vienen de pagos del mesero
+  const fechaStr = row.fecha instanceof Date ? row.fecha.toISOString().split('T')[0] : String(row.fecha).split('T')[0];
+  interface PropinasPorIdRow extends RowDataPacket { total_propinas_efectivo: number; total_propinas_tarjeta: number; }
+  const [rowsPropinas] = await pool.execute<PropinasPorIdRow[]>(
+    `
+    SELECT
+      COALESCE(SUM(
+        pr.propina_monto *
+        COALESCE(
+          (SELECT SUM(CASE WHEN LOWER(fp2.nombre) = 'efectivo' THEN p2.monto ELSE 0 END) / NULLIF(SUM(p2.monto), 0)
+           FROM pago p2 JOIN forma_pago fp2 ON fp2.id = p2.forma_pago_id
+           WHERE p2.orden_id = pr.orden_id AND p2.estado = 'aplicado'),
+          0.5
+        )
+      ), 0) AS total_propinas_efectivo,
+      COALESCE(SUM(
+        pr.propina_monto *
+        COALESCE(
+          (SELECT SUM(CASE WHEN LOWER(fp2.nombre) LIKE 'tarjeta%' THEN p2.monto ELSE 0 END) / NULLIF(SUM(p2.monto), 0)
+           FROM pago p2 JOIN forma_pago fp2 ON fp2.id = p2.forma_pago_id
+           WHERE p2.orden_id = pr.orden_id AND p2.estado = 'aplicado'),
+          0.5
+        )
+      ), 0) AS total_propinas_tarjeta
+    FROM (SELECT orden_id, SUM(monto) AS propina_monto FROM propina GROUP BY orden_id) pr
+    INNER JOIN orden o ON o.id = pr.orden_id
+    INNER JOIN (
+      SELECT p1.orden_id, p1.empleado_id, DATE(p1.fecha_pago) AS fecha
+      FROM pago p1
+      WHERE p1.estado = 'aplicado'
+        AND NOT EXISTS (
+          SELECT 1 FROM pago p2
+          WHERE p2.orden_id = p1.orden_id AND p2.estado = 'aplicado'
+            AND p2.fecha_pago < p1.fecha_pago
+        )
+    ) pp ON pp.orden_id = o.id
+    WHERE o.estado_orden_id IN (SELECT id FROM estado_orden WHERE nombre IN ('pagada', 'cerrada'))
+      AND pp.fecha = :fechaStr
+    `,
+    { fechaStr }
+  );
+  const propinasRow = rowsPropinas[0];
+  const propinasEfectivo = propinasRow ? Number(propinasRow.total_propinas_efectivo) : 0;
+  const propinasTarjeta = propinasRow ? Number(propinasRow.total_propinas_tarjeta) : 0;
+
   return {
     id: `cierre-${cierreId}`,
     fecha,
@@ -488,7 +621,9 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
     totalEfectivo: Number(row.total_efectivo),
     totalTarjeta: Number(row.total_tarjeta),
     totalOtros: 0,
-    totalPropinas: 0,
+    totalPropinas: propinasEfectivo + propinasTarjeta,
+    propinasEfectivo,
+    propinasTarjeta,
     status: row.estado || 'pending',
     cierreId: cierreId,
     creadoEn: utcToMxISO(row.creado_en) ?? undefined,

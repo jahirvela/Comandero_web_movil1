@@ -1,6 +1,6 @@
 import { getIO, getSocketRooms } from './socket.js';
 import type { OrdenDetalle } from '../types/ordenes.js';
-import { emitirAlertaCancelacion, emitirAlertaModificacion } from '../modules/alertas/alertas.service.js';
+import { emitirAlertaCancelacion } from '../modules/alertas/alertas.service.js';
 import { logger } from '../config/logger.js';
 
 // Re-exportar logger para uso en controladores
@@ -108,10 +108,10 @@ export const emitOrderCreated = async (orden: OrdenDetalle) => {
 
 export const emitOrderUpdated = async (
   orden: OrdenDetalle,
-  usuarioId?: number,
-  username?: string,
-  rol?: string,
-  cambio?: string
+  _usuarioId?: number,
+  _username?: string,
+  _rol?: string,
+  _cambio?: string
 ) => {
   const io = getIO();
   // Emitir a todos (incluye administrador)
@@ -123,18 +123,10 @@ export const emitOrderUpdated = async (
   io.to(getSocketRooms.role('capitan')).emit('pedido.actualizado', orden);
   io.to(getSocketRooms.role('administrador')).emit('pedido.actualizado', orden);
 
-  // Si hay cambio y usuario, emitir alerta de modificación
-  if (cambio && usuarioId && username && rol) {
-    await emitirAlertaModificacion(
-      orden.id,
-      orden.items[0]?.productoId || 0,
-      cambio,
-      usuarioId,
-      username,
-      rol
-    );
-  }
-};
+  // NO crear ni guardar alertas de modificación automáticamente al actualizar una orden.
+  // Las alertas en cocina solo deben aparecer cuando mesero o capitán las envían explícitamente
+  // desde el modal "Enviar alerta a cocina" (kitchen:alert:create / POST /alertas).
+}
 
 export const emitOrderCancelled = async (
   orden: OrdenDetalle,
@@ -231,5 +223,16 @@ export const emitInventoryDeleted = (itemId: number) => {
   io.to(getSocketRooms.role('administrador')).emit('inventario.eliminado', { id: itemId });
   io.to(getSocketRooms.role('capitan')).emit('inventario.eliminado', { id: itemId });
   io.to(getSocketRooms.role('cocinero')).emit('inventario.eliminado', { id: itemId });
+};
+
+// Evento cuando un producto se crea o actualiza (disponible, nombre, precio, etc.)
+// El mesero debe recargar el menú para reflejar habilitar/deshabilitar producto
+export const emitProductUpdated = (producto: any) => {
+  const io = getIO();
+  logger.info({ productoId: producto?.id, disponible: producto?.disponible }, 'Emitiendo evento producto.actualizado');
+  io.to(getSocketRooms.role('mesero')).emit('producto.actualizado', producto);
+  io.to(getSocketRooms.role('capitan')).emit('producto.actualizado', producto);
+  io.to(getSocketRooms.role('cocinero')).emit('producto.actualizado', producto);
+  io.to(getSocketRooms.role('administrador')).emit('producto.actualizado', producto);
 };
 

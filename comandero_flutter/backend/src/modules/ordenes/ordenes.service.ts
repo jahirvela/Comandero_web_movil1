@@ -25,6 +25,7 @@ import { emitOrderCreated, emitOrderCancelled, emitOrderUpdated } from '../../re
 import { emitirAlertaPedidoListo, emitirAlertaPedidoEnPreparacion } from '../alertas/alertas.service.js';
 import { utcToMxISO } from '../../config/time.js';
 import { logger } from '../../config/logger.js';
+import { obtenerConfiguracion } from '../configuracion/configuracion.repository.js';
 
 const obtenerEstadoOrdenId = async (estadoOrdenId?: number) => {
   if (estadoOrdenId) {
@@ -55,8 +56,11 @@ const calcularTotales = (items: OrdenItemInput[]) => {
   return { subtotal };
 };
 
-export const obtenerOrdenes = (filters: { estadoOrdenId?: number; mesaId?: number }) =>
-  listarOrdenes(filters);
+export const obtenerOrdenes = (filters: {
+  estadoOrdenId?: number;
+  mesaId?: number;
+  incluirCerradas?: boolean;
+}) => listarOrdenes(filters);
 
 export const obtenerOrdenDetalle = async (id: number): Promise<OrdenDetalle> => {
   const base = await obtenerOrdenBasePorId(id);
@@ -99,9 +103,21 @@ export const crearNuevaOrden = async (input: CrearOrdenInput, usuarioId?: number
   const estadoOrdenId = await obtenerEstadoOrdenId(input.estadoOrdenId);
   const { subtotal } = calcularTotales(input.items);
   const descuentoTotal = input.descuentoTotal ?? 0;
-  const impuestoTotal = input.impuestoTotal ?? 0;
   const propinaSugerida = input.propinaSugerida ?? 0;
-  const total = subtotal - descuentoTotal + impuestoTotal + propinaSugerida;
+  // IVA (16%): el backend aplica según configuración para no depender del cliente
+  let impuestoTotal: number;
+  try {
+    const config = await obtenerConfiguracion();
+    if (config.ivaHabilitado) {
+      const baseImponible = subtotal - descuentoTotal;
+      impuestoTotal = Math.round(baseImponible * 0.16 * 100) / 100;
+    } else {
+      impuestoTotal = input.impuestoTotal ?? 0;
+    }
+  } catch {
+    impuestoTotal = input.impuestoTotal ?? 0;
+  }
+  const total = Math.round((subtotal - descuentoTotal + impuestoTotal + propinaSugerida) * 100) / 100;
 
   const ordenId = await crearOrden({
     mesaId: input.mesaId ?? null,
@@ -180,12 +196,34 @@ export const actualizarEstadoDeOrden = async (
   if (!estadoValido) {
     throw badRequest('Estado de orden inválido');
   }
+
+  const estadoNombreLower = estadoValido.nombre.toLowerCase();
+  const esEstadoListo =
+    estadoNombreLower.includes('listo') ||
+    estadoNombreLower.includes('ready') ||
+    estadoNombreLower === 'listo_para_recoger';
+
+  if (esEstadoListo && !input.forzarSinStock) {
+    const { verificarStockDisponibleParaOrden } = await import('../inventario/inventario.service.js');
+    const { ok, faltantes } = await verificarStockDisponibleParaOrden(id);
+    if (!ok && faltantes.length > 0) {
+      const mensajeFaltantes = faltantes
+        .map(
+          (f) =>
+            `${f.nombre}: disponible ${f.disponible} ${f.unidad}, requerido ${f.requerido} ${f.unidad}`
+        )
+        .join('; ');
+      throw badRequest(
+        `No se puede marcar como listo: faltan ingredientes (${mensajeFaltantes}). Repón inventario o usa "forzar sin stock" si es excepcional.`
+      );
+    }
+  }
+
   await actualizarEstadoOrden(id, input.estadoOrdenId, usuarioId ?? null);
   const orden = await obtenerOrdenDetalle(id);
   
   // Formatear nombre del estado y verificar si es estado de preparación
   const estadoNombreFormateado = formatearNombreEstado(estadoValido.nombre);
-  const estadoNombreLower = estadoValido.nombre.toLowerCase();
   const esEstadoPreparacion = estadoNombreLower.includes('preparacion') || 
                                estadoNombreLower.includes('preparación') || 
                                estadoNombreLower.includes('cooking') || 
@@ -246,6 +284,8 @@ export const actualizarEstadoDeOrden = async (
       mesaCodigo: orden.mesaCodigo
     }, '🔔 Estado "en preparación" detectado, emitiendo alerta al mesero');
     
+    // Nombre del mesero que tomó el pedido (para mostrar "De: Isaias" en la notificación)
+    const meseroNombre = (orden as any).creadoPorUsuarioNombre ?? (orden as any).creadoPorNombre ?? null;
     // Emitir alerta de preparación y ESPERAR a que se complete
     logger.info({ ordenId: orden.id }, '🚀 LLAMANDO a emitirAlertaPedidoEnPreparacion...');
     emitirAlertaPedidoEnPreparacion(
@@ -255,7 +295,8 @@ export const actualizarEstadoDeOrden = async (
       usuarioId,
       username,
       rol,
-      isTakeaway
+      isTakeaway,
+      meseroNombre
     ).then(() => {
       logger.info({ ordenId: orden.id }, '✅ emitirAlertaPedidoEnPreparacion COMPLETADA');
     }).catch((error) => {
@@ -269,11 +310,6 @@ export const actualizarEstadoDeOrden = async (
       rol 
     }, '⚠️ No se puede emitir alerta de preparación: faltan datos de usuario');
   }
-  
-  // Verificar si el estado es "listo" o "listo para recoger" y emitir alerta al mesero INMEDIATAMENTE
-  const esEstadoListo = estadoNombreLower.includes('listo') || 
-                        estadoNombreLower.includes('ready') ||
-                        estadoNombreLower === 'listo_para_recoger';
   
   // Descontar inventario automáticamente cuando se marca como "listo"
   if (esEstadoListo) {
@@ -303,6 +339,8 @@ export const actualizarEstadoDeOrden = async (
       mesaCodigo: orden.mesaCodigo
     }, '🔔 Estado "listo" detectado, emitiendo alerta al mesero');
     
+    // Nombre del mesero que tomó el pedido (para mostrar "De: Isaias" en la notificación)
+    const meseroNombre = (orden as any).creadoPorUsuarioNombre ?? (orden as any).creadoPorNombre ?? null;
     // Emitir alerta y ESPERAR a que se complete (usar await para asegurar que se complete)
     logger.info({ ordenId: orden.id }, '🚀 LLAMANDO a emitirAlertaPedidoListo...');
     try {
@@ -313,7 +351,8 @@ export const actualizarEstadoDeOrden = async (
         usuarioId,
         username,
         rol,
-        isTakeaway
+        isTakeaway,
+        meseroNombre
       );
       logger.info({ ordenId: orden.id }, '✅ emitirAlertaPedidoListo COMPLETADA');
     } catch (error) {
@@ -362,7 +401,8 @@ export const agregarItemsOrden = async (
       }))
     }))
   );
-  await recalcularTotalesOrden(id);
+  const config = await obtenerConfiguracion().catch(() => ({ ivaHabilitado: false }));
+  await recalcularTotalesOrden(id, config.ivaHabilitado);
   const orden = await obtenerOrdenDetalle(id);
   await emitOrderUpdated(orden, usuarioId, username, rol, `Se agregaron ${input.items.length} item(s)`);
   return orden;

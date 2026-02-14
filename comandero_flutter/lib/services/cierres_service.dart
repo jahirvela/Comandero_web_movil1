@@ -207,9 +207,9 @@ class CierresService {
     final totalPropinas = (data['totalPropinas'] as num?)?.toDouble() ?? 0.0;
     final numeroOrdenes = (data['numeroOrdenes'] as num?)?.toInt() ?? 0;
     
-    // Dividir propinas entre efectivo y tarjeta (aproximación)
-    final propinasEfectivo = totalPropinas * 0.5; // Aproximación
-    final propinasTarjeta = totalPropinas * 0.5; // Aproximación
+    // Usar propinas reales por tipo desde el backend (calculadas desde pagos)
+    final propinasEfectivo = (data['propinasEfectivo'] as num?)?.toDouble() ?? (totalPropinas * 0.5);
+    final propinasTarjeta = (data['propinasTarjeta'] as num?)?.toDouble() ?? (totalPropinas * 0.5);
     
     // Determinar período usando hora CDMX
     final now = date_utils.AppDateUtils.now();

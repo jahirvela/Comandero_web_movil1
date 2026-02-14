@@ -38,7 +38,7 @@ class _StationManagementViewState extends State<StationManagementView> {
 
       // Obtener órdenes para calcular estadísticas
       final ordenes = await ordenesService.getOrdenes();
-      final hoy = DateTime.now();
+      final hoy = date_utils.AppDateUtils.nowCdmx();
       final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
 
       // Filtrar órdenes del día

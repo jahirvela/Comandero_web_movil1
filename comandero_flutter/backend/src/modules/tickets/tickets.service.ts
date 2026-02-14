@@ -1,5 +1,7 @@
 import { obtenerDatosTicket, listarTickets } from './tickets.repository.js';
-import { createPrinter, generarContenidoTicket } from './tickets.printer.js';
+import { createPrinter, createPrinterFromConfig, generarContenidoTicket } from './tickets.printer.js';
+import { getPrinterConfigsForDocument } from '../../config/printers.config.js';
+import { getImpresorasAsPrinterConfig } from '../impresoras/impresoras.repository.js';
 import { logger } from '../../config/logger.js';
 import { notFound } from '../../utils/http-error.js';
 import type { ImprimirTicketInput } from './tickets.schemas.js';
@@ -29,9 +31,9 @@ const registrarBitacora = async (
     // Verificar si existe la tabla bitacora_impresion
     // Si no existe, solo logueamos (no falla)
     await pool.query(
-      `INSERT INTO bitacora_impresion (orden_id, usuario_id, exito, mensaje, creado_en)
+      `INSERT INTO bitacora_impresion (orden_id, usuario_id, exito, mensaje_error, creado_en)
        VALUES (?, ?, ?, ?, NOW())`,
-      [ordenId, usuarioId, exito ? 1 : 0, mensaje]
+      [ordenId, usuarioId, exito ? 1 : 0, exito ? null : mensaje]
     );
   } catch (error: any) {
     // Si la tabla no existe, solo logueamos el error pero no fallamos
@@ -60,11 +62,11 @@ const registrarBitacoraMultiples = async (
     const params: any[] = [];
     
     for (const ordenId of ordenIds) {
-      params.push(ordenId, usuarioId, exito ? 1 : 0, mensaje);
+      params.push(ordenId, usuarioId, exito ? 1 : 0, exito ? null : mensaje);
     }
     
     await pool.query(
-      `INSERT INTO bitacora_impresion (orden_id, usuario_id, exito, mensaje, creado_en)
+      `INSERT INTO bitacora_impresion (orden_id, usuario_id, exito, mensaje_error, creado_en)
        VALUES ${values}`,
       params
     );
@@ -97,13 +99,70 @@ export const imprimirTicket = async (
       throw notFound('Orden no encontrada');
     }
 
-    // Generar contenido del ticket
-    const contenido = generarContenidoTicket(datosTicket, input.incluirCodigoBarras ?? true);
+    let configs = await getImpresorasAsPrinterConfig('ticket');
+    if (configs.length === 0) configs = getPrinterConfigsForDocument('ticket');
+    let successCount = 0;
+    let rutaArchivo: string | undefined;
 
-    // Crear impresora y enviar
-    const printer = createPrinter();
-    await printer.print(contenido);
-    await printer.close();
+    if (configs.length > 0) {
+      for (const config of configs) {
+        try {
+          const contenido = generarContenidoTicket(
+            datosTicket,
+            input.incluirCodigoBarras ?? true,
+            config.paperWidth ?? 80
+          );
+          const printer = createPrinterFromConfig(config);
+          await printer.print(contenido);
+          await printer.close();
+          successCount++;
+          if (config.type === 'simulation' && config.device) {
+            const { nowMx } = await import('../../config/time.js');
+            rutaArchivo = `./${config.device}/ticket-${nowMx().toFormat('yyyy-MM-dd-HH-mm-ss')}.txt`;
+          }
+          logger.info({ ordenId: input.ordenId, printerId: config.id }, 'Ticket impreso');
+        } catch (err: unknown) {
+          logger.warn({ err, ordenId: input.ordenId, printerId: config.id }, 'Error al imprimir ticket en impresora');
+        }
+      }
+      if (successCount === 0) {
+        await registrarBitacora(input.ordenId, usuarioId, false, 'No se pudo imprimir en ninguna impresora configurada');
+        return {
+          exito: false,
+          mensaje: 'No se pudo imprimir en ninguna impresora. Verifica conexión y configuración.',
+        };
+      }
+    } else {
+      // Sin impresoras en config: usar simulación en ./tickets para que el ticket siempre se genere
+      const contenido = generarContenidoTicket(datosTicket, input.incluirCodigoBarras ?? true);
+      try {
+        const printer = createPrinter();
+        await printer.print(contenido);
+        await printer.close();
+        successCount = 1;
+        const { getEnv } = await import('../../config/env.js');
+        const env = getEnv();
+        if (env.PRINTER_TYPE === 'simulation' || env.PRINTER_INTERFACE === 'file') {
+          rutaArchivo = env.PRINTER_DEVICE || env.PRINTER_SIMULATION_PATH;
+        }
+      } catch (errNoPrinter: unknown) {
+        const { createPrinterFromConfig } = await import('./tickets.printer.js');
+        const { getEnv } = await import('../../config/env.js');
+        const env = getEnv();
+        const simPath = env.PRINTER_SIMULATION_PATH || './tickets';
+        logger.info({ path: simPath }, 'Sin impresora configurada: guardando ticket en simulación');
+        const simPrinter = createPrinterFromConfig({
+          id: 'sim-fallback',
+          type: 'simulation',
+          documents: ['ticket'],
+          device: simPath,
+        });
+        await simPrinter.print(contenido);
+        await simPrinter.close();
+        successCount = 1;
+        rutaArchivo = simPath;
+      }
+    }
 
     // Registrar en bitácora - si hay múltiples ordenIds (cuenta agrupada), registrar todos
     if (input.ordenIds && input.ordenIds.length > 1) {
@@ -128,13 +187,6 @@ export const imprimirTicket = async (
         logger.info({ ordenIds: ordenIdsToRegister, usuarioId, count: ordenIdsToRegister.length }, 'Ticket impreso exitosamente');
       }
     }
-
-    const { getEnv } = await import('../../config/env.js');
-    const env = getEnv();
-    const rutaArchivo =
-      env.PRINTER_TYPE === 'simulation' || env.PRINTER_INTERFACE === 'file'
-        ? env.PRINTER_DEVICE || env.PRINTER_SIMULATION_PATH
-        : undefined;
 
     // Emitir evento de ticket impreso para que el administrador se entere
     // Si hay múltiples ordenIds, emitir evento para cada uno

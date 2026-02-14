@@ -20,6 +20,20 @@ class OrdenesService {
     }
   }
 
+  /// Órdenes incluyendo estado "cerrada" (para cajero: ver cuentas por cobrar)
+  Future<List<dynamic>> getOrdenesParaCajero() async {
+    try {
+      final response = await _api.get('/ordenes', queryParameters: {'incluirCerradas': '1'});
+      if (response.statusCode == 200) {
+        return response.data['data'] ?? [];
+      }
+      return [];
+    } catch (e) {
+      print('Error al obtener órdenes para cajero: $e');
+      return [];
+    }
+  }
+
   /// Obtener una orden por ID
   Future<Map<String, dynamic>?> getOrden(int id) async {
     try {
@@ -114,11 +128,20 @@ class OrdenesService {
   }
 
   /// Cambiar estado de una orden
-  Future<bool> cambiarEstado(int id, int estadoOrdenId) async {
+  /// [forzarSinStock] Si true, permite marcar como listo aunque falte stock (uso excepcional).
+  Future<bool> cambiarEstado(
+    int id,
+    int estadoOrdenId, {
+    bool forzarSinStock = false,
+  }) async {
     try {
+      final body = <String, dynamic>{
+        'estadoOrdenId': estadoOrdenId,
+        if (forzarSinStock) 'forzarSinStock': true,
+      };
       final response = await _api.patch(
         '/ordenes/$id/estado',
-        data: {'estadoOrdenId': estadoOrdenId},
+        data: body,
       );
       if (response.statusCode == 200) {
         return true;
@@ -194,7 +217,7 @@ class OrdenesService {
       final response = await _api.get('/ordenes');
       if (response.statusCode == 200) {
         final ordenes = response.data['data'] as List<dynamic>? ?? [];
-        final hoy = DateTime.now();
+        final hoy = date_utils.AppDateUtils.nowCdmx();
         
         // Filtrar solo órdenes de hoy con estado "listo" que NO estén pagadas
         return ordenes.where((orden) {

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../services/reportes_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class SalesReportsView extends StatefulWidget {
   const SalesReportsView({super.key});
@@ -682,7 +683,7 @@ class _SalesReportsViewState extends State<SalesReportsView> {
           ),
           Expanded(
             child: Text(
-              bill.isTakeaway ? 'Llevar' : '${bill.tableNumber ?? 'N/A'}',
+              bill.isTakeaway ? 'Llevar' : (bill.mesaCodigo ?? bill.tableNumber?.toString() ?? 'N/A'),
               style: TextStyle(
                 fontSize: isTablet ? 12.0 : 10.0,
                 color: AppColors.textSecondary,
@@ -756,7 +757,7 @@ class _SalesReportsViewState extends State<SalesReportsView> {
   }
 
   void _showExportDialog() {
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     DateTime fechaInicio;
     DateTime fechaFin = DateTime(now.year, now.month, now.day, 23, 59, 59);
 

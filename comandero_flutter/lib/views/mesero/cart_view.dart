@@ -35,7 +35,6 @@ class _CartViewState extends State<CartView> {
         final subtotal = controller.calculateTotal();
         final discountAmount = subtotal * (discountPercentage / 100);
         final subtotalAfterDiscount = subtotal - discountAmount;
-        final total = subtotalAfterDiscount;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -60,6 +59,10 @@ class _CartViewState extends State<CartView> {
                           ] else ...[
                             // Artículos del pedido
                             _buildOrderItems(cart, controller, isTablet),
+                            if (controller.isTakeawayMode) ...[
+                              const SizedBox(height: 16),
+                              _buildAddMoreProductsButton(context, controller, isTablet),
+                            ],
                             const SizedBox(height: 24),
 
                             // Sección de descuento
@@ -78,13 +81,23 @@ class _CartViewState extends State<CartView> {
                             _buildSplitSection(isTablet),
                             const SizedBox(height: 24),
 
-                            // Resumen y totales
-                            _buildSummarySection(
-                              subtotal,
-                              discountAmount,
-                              total,
-                              splitCount,
-                              isTablet,
+                            // Resumen y totales (con IVA si está habilitado en configuración)
+                            FutureBuilder<bool>(
+                              future: controller.getIvaHabilitado(),
+                              builder: (context, snapshot) {
+                                final ivaHabilitado = snapshot.data ?? false;
+                                final impuesto = ivaHabilitado ? (subtotalAfterDiscount * 0.16) : 0.0;
+                                final totalConIva = subtotalAfterDiscount + impuesto;
+                                return _buildSummarySection(
+                                  subtotal,
+                                  discountAmount,
+                                  totalConIva,
+                                  splitCount,
+                                  isTablet,
+                                  ivaHabilitado: ivaHabilitado,
+                                  impuesto: impuesto,
+                                );
+                              },
                             ),
                             const SizedBox(height: 24),
 
@@ -149,7 +162,7 @@ class _CartViewState extends State<CartView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Pedido Mesa ${table?.number ?? ''}',
+                      'Pedido ${table?.displayLabel ?? table?.number ?? ''}',
                       style: TextStyle(
                         fontSize: isTablet ? 24.0 : 20.0,
                         fontWeight: FontWeight.bold,
@@ -455,6 +468,35 @@ class _CartViewState extends State<CartView> {
       return customPrice.toDouble();
     }
     return item.product.price;
+  }
+
+  Widget _buildAddMoreProductsButton(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () => controller.setCurrentView('menu'),
+        icon: const Icon(Icons.add_circle_outline),
+        label: Text(
+          'Añadir más productos',
+          style: TextStyle(
+            fontSize: isTablet ? 16.0 : 14.0,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primary,
+          side: BorderSide(color: AppColors.primary),
+          padding: EdgeInsets.symmetric(vertical: isTablet ? 14.0 : 12.0),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildDiscountSection(bool isTablet) {
@@ -781,8 +823,10 @@ class _CartViewState extends State<CartView> {
     double discountAmount,
     double total,
     int splitCount,
-    bool isTablet,
-  ) {
+    bool isTablet, {
+    bool ivaHabilitado = false,
+    double impuesto = 0.0,
+  }) {
     final totalPerPerson = splitCount > 1 ? total / splitCount : total;
 
     return Card(
@@ -831,6 +875,28 @@ class _CartViewState extends State<CartView> {
                     style: TextStyle(
                       fontSize: isTablet ? 16.0 : 14.0,
                       color: AppColors.success,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (ivaHabilitado) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'IVA (16%):',
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    '\$${impuesto.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: isTablet ? 16.0 : 14.0,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                 ],
@@ -1057,7 +1123,7 @@ class _CartViewState extends State<CartView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Mesa ${table?.number ?? ''}',
+              '${table?.displayLabel ?? table?.number ?? ''}',
               style: TextStyle(
                 fontSize: isTablet ? 16.0 : 14.0,
                 color: AppColors.textSecondary,
@@ -1275,7 +1341,7 @@ class _CartViewState extends State<CartView> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'Cuenta de Mesa ${table.number} enviada al Cajero',
+                          'Cuenta de ${table.displayLabel} enviada al Cajero',
                         ),
                         backgroundColor: Colors.green,
                       ),

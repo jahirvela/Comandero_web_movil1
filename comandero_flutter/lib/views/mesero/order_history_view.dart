@@ -100,16 +100,13 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
           .toList();
     }
 
-    // Filtrar por búsqueda
-    if (searchQuery.isNotEmpty) {
+    // Filtrar por búsqueda solo cuando hay texto
+    final q = searchQuery.trim();
+    if (q.isNotEmpty) {
       orders = orders.where((order) {
-        return order['id'].toLowerCase().contains(searchQuery.toLowerCase()) ||
-            order['tableNumber'].toLowerCase().contains(
-              searchQuery.toLowerCase(),
-            ) ||
-            order['customerName'].toLowerCase().contains(
-              searchQuery.toLowerCase(),
-            );
+        return order['id'].toLowerCase().contains(q.toLowerCase()) ||
+            order['tableNumber'].toLowerCase().contains(q.toLowerCase()) ||
+            order['customerName'].toLowerCase().contains(q.toLowerCase());
       }).toList();
     }
 
@@ -241,6 +238,7 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
         },
         decoration: InputDecoration(
           hintText: "Buscar por orden, mesa o cliente",
+          helperText: "Los resultados se filtran al escribir",
           hintStyle: TextStyle(
             color: AppColors.textSecondary,
             fontSize: isTablet ? 16.0 : 14.0,
@@ -308,7 +306,7 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
     final orders = filteredOrders;
 
     if (orders.isEmpty) {
-      return _buildEmptyState(isTablet);
+      return _buildEmptyState(isTablet, sourceEmpty: orderHistory.isEmpty);
     }
 
     return Column(
@@ -521,7 +519,7 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
     );
   }
 
-  Widget _buildEmptyState(bool isTablet) {
+  Widget _buildEmptyState(bool isTablet, {bool sourceEmpty = false}) {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isTablet ? 60.0 : 40.0),
@@ -539,7 +537,9 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No hay pedidos que coincidan con los filtros',
+            sourceEmpty
+                ? 'No hay pedidos'
+                : 'Sin coincidencias para la búsqueda',
             style: TextStyle(
               fontSize: isTablet ? 18.0 : 16.0,
               fontWeight: FontWeight.w600,
@@ -549,7 +549,9 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Intenta cambiar los filtros o la búsqueda',
+            sourceEmpty
+                ? 'Los pedidos aparecerán aquí'
+                : 'Intenta cambiar los filtros o la búsqueda',
             style: TextStyle(
               fontSize: isTablet ? 14.0 : 12.0,
               color: AppColors.textSecondary,

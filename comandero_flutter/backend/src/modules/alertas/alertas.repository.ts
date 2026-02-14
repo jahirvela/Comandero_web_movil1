@@ -1,5 +1,6 @@
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { pool } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 import type { AlertaDB, AlertaPayload } from './alertas.types.js';
 
 interface AlertaRow extends RowDataPacket {
@@ -114,32 +115,65 @@ export const obtenerAlertasNoLeidas = async (
   rol?: string,
   tipoFiltro?: string | null
 ): Promise<AlertaDB[]> => {
-  // No usar a.metadata: la columna puede no existir en la BD (Unknown column 'a.metadata').
-  let query = `
-    SELECT a.id, a.tipo, a.mensaje, a.orden_id, a.mesa_id, a.usuario_origen_id, a.usuario_destino_id, a.leida, a.creado_en,
-           m.codigo AS mesa_codigo
-    FROM alerta a
-    LEFT JOIN mesa m ON m.id = a.mesa_id
-    WHERE a.leida = 0
-  `;
   const params: unknown[] = [];
-
   if (usuarioId) {
-    query += ' AND a.usuario_origen_id != ?';
     params.push(usuarioId);
   }
-
-  // Filtrar por tipo si se especifica (útil para meseros que solo necesitan alerta.cocina)
   if (tipoFiltro) {
-    query += ' AND a.tipo = ?';
     params.push(tipoFiltro);
   }
 
-  query += ' ORDER BY a.creado_en DESC LIMIT 50';
+  const whereClause = [
+    'a.leida = 0',
+    usuarioId ? 'a.usuario_origen_id != ?' : null,
+    tipoFiltro ? 'a.tipo = ?' : null
+  ].filter(Boolean).join(' AND ');
 
-  const [rows] = await pool.query<AlertaRowWithMesa[]>(query, params);
+  // Incluir a.metadata para que cocinero/capitán reciban prioridad (Urgente/Normal) enviada por mesero
+  let query = `
+    SELECT a.id, a.tipo, a.mensaje, a.orden_id, a.mesa_id, a.usuario_origen_id, a.usuario_destino_id, a.leida, a.creado_en, a.metadata,
+           m.codigo AS mesa_codigo
+    FROM alerta a
+    LEFT JOIN mesa m ON m.id = a.mesa_id
+    WHERE ${whereClause}
+    ORDER BY a.creado_en DESC
+    LIMIT 50
+  `;
+
+  let rows: AlertaRowWithMesa[];
+  try {
+    const [rowsResult] = await pool.query<AlertaRowWithMesa[]>(query, params);
+    rows = rowsResult;
+  } catch (error: any) {
+    if (error.code === 'ER_BAD_FIELD_ERROR' && error.message?.includes('metadata')) {
+      query = `
+        SELECT a.id, a.tipo, a.mensaje, a.orden_id, a.mesa_id, a.usuario_origen_id, a.usuario_destino_id, a.leida, a.creado_en,
+               m.codigo AS mesa_codigo
+        FROM alerta a
+        LEFT JOIN mesa m ON m.id = a.mesa_id
+        WHERE ${whereClause}
+        ORDER BY a.creado_en DESC
+        LIMIT 50
+      `;
+      const [rowsResult] = await pool.query<AlertaRowWithMesa[]>(query, params);
+      rows = rowsResult;
+    } else {
+      throw error;
+    }
+  }
 
   return rows.map((row) => {
+    let metadata: Record<string, unknown> | null = null;
+    const rawMeta = (row as any).metadata;
+    if (rawMeta != null && typeof rawMeta === 'string') {
+      try {
+        metadata = JSON.parse(rawMeta) as Record<string, unknown>;
+      } catch {
+        metadata = null;
+      }
+    } else if (rawMeta != null && typeof rawMeta === 'object') {
+      metadata = rawMeta as Record<string, unknown>;
+    }
     const alerta: any = {
       id: row.id,
       tipo: row.tipo,
@@ -149,7 +183,8 @@ export const obtenerAlertasNoLeidas = async (
       mesaCodigo: row.mesa_codigo ?? null,
       creadoPorUsuarioId: row.usuario_origen_id,
       leido: Boolean(row.leida),
-      creadoEn: row.creado_en
+      creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+      metadata: metadata ?? undefined
     };
     return alerta;
   });

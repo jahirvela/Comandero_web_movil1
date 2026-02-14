@@ -204,6 +204,22 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
       child: Column(
         children: [
           _buildSummaryRow(
+            label: 'Subtotal:',
+            value: widget.controller.formatCurrency(widget.bill.subtotal - widget.bill.discount),
+            color: AppColors.textSecondary,
+            isTablet: isTablet,
+          ),
+          if (widget.controller.ivaHabilitado) ...[
+            const SizedBox(height: 6),
+            _buildSummaryRow(
+              label: 'IVA (16%):',
+              value: widget.controller.formatCurrency(widget.bill.tax),
+              color: AppColors.textSecondary,
+              isTablet: isTablet,
+            ),
+          ],
+          const SizedBox(height: 6),
+          _buildSummaryRow(
             label: 'Total de la cuenta',
             value: widget.controller.formatCurrency(_billTotal),
             color: AppColors.textPrimary,

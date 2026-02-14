@@ -16,6 +16,7 @@ class PaymentModel {
   final int? tableNumber;
   // Metadata para historial (no depender del BillRepository después de cobrar)
   final int? ordenId;
+  final List<int>? ordenIds; // Para cuentas agrupadas (imprimir ticket completo)
   final String? waiterName;
   final String billId;
   final DateTime timestamp;
@@ -44,6 +45,7 @@ class PaymentModel {
     this.bankName,
     this.tableNumber,
     this.ordenId,
+    this.ordenIds,
     this.waiterName,
     required this.billId,
     required this.timestamp,
@@ -73,6 +75,9 @@ class PaymentModel {
       bankName: json['bankName'],
       tableNumber: json['tableNumber'],
       ordenId: (json['ordenId'] as num?)?.toInt(),
+      ordenIds: json['ordenIds'] != null
+          ? (json['ordenIds'] as List).map((e) => (e as num).toInt()).toList()
+          : null,
       waiterName: json['waiterName'],
       billId: json['billId'],
       timestamp: date_utils.AppDateUtils.parseToLocal(json['timestamp']),
@@ -105,6 +110,7 @@ class PaymentModel {
       'bankName': bankName,
       'tableNumber': tableNumber,
       'ordenId': ordenId,
+      'ordenIds': ordenIds,
       'waiterName': waiterName,
       'billId': billId,
       'timestamp': timestamp.toIso8601String(),
@@ -180,6 +186,8 @@ class PaymentModel {
 class BillModel {
   final String id;
   final int? tableNumber;
+  /// Código o nombre de la mesa para mostrar (ej: "1", "Terraza"). Usar en tickets y cuentas por cobrar.
+  final String? mesaCodigo;
   final int? ordenId; // ID de la orden en la BD (requerido para pagos)
   final List<int>? ordenIds; // IDs de todas las órdenes (para cuentas agrupadas)
   final bool? isGrouped; // Flag para indicar si es una cuenta agrupada
@@ -210,6 +218,7 @@ class BillModel {
   BillModel({
     required this.id,
     this.tableNumber,
+    this.mesaCodigo,
     this.ordenId, // ID de la orden en la BD
     this.ordenIds, // IDs de todas las órdenes (para cuentas agrupadas)
     this.isGrouped, // Flag para indicar si es una cuenta agrupada
@@ -239,6 +248,18 @@ class BillModel {
 
   /// Calcula el total real sumando precio * cantidad de cada item
   /// Esto asegura que siempre se muestre el precio correcto
+  /// Si es solo número → "Mesa 1"; si tiene texto → tal cual; para llevar → "Para llevar"
+  String get tableDisplayLabel {
+    if (isTakeaway) return 'Para llevar';
+    if (mesaCodigo != null && mesaCodigo!.isNotEmpty) {
+      final c = mesaCodigo!.trim();
+      final n = int.tryParse(c);
+      return (n != null && n.toString() == c) ? 'Mesa $c' : mesaCodigo!;
+    }
+    if (tableNumber != null) return 'Mesa $tableNumber';
+    return 'N/A';
+  }
+
   double get calculatedTotal {
     final totalFromItems = items.fold<double>(
       0.0,
@@ -388,7 +409,8 @@ class BillModel {
   factory BillModel.fromJson(Map<String, dynamic> json) {
     return BillModel(
       id: json['id'],
-      tableNumber: json['tableNumber'],
+      tableNumber: json['tableNumber'] is int ? json['tableNumber'] as int? : (int.tryParse(json['tableNumber']?.toString() ?? '')),
+      mesaCodigo: json['mesaCodigo'] as String?,
       ordenId: json['ordenId'],
       ordenIds: json['ordenIds'] != null
           ? (json['ordenIds'] as List).map((e) => (e as num).toInt()).toList()
@@ -431,6 +453,7 @@ class BillModel {
     return {
       'id': id,
       'tableNumber': tableNumber,
+      'mesaCodigo': mesaCodigo,
       'ordenId': ordenId,
       'ordenIds': ordenIds,
       'isGrouped': isGrouped,
@@ -463,6 +486,7 @@ class BillModel {
   BillModel copyWith({
     String? id,
     int? tableNumber,
+    String? mesaCodigo,
     int? ordenId,
     List<int>? ordenIds,
     bool? isGrouped,
@@ -492,6 +516,7 @@ class BillModel {
     return BillModel(
       id: id ?? this.id,
       tableNumber: tableNumber ?? this.tableNumber,
+      mesaCodigo: mesaCodigo ?? this.mesaCodigo,
       ordenId: ordenId ?? this.ordenId,
       ordenIds: ordenIds ?? this.ordenIds,
       isGrouped: isGrouped ?? this.isGrouped,

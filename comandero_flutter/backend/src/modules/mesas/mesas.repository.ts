@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool, withTransaction } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 
 interface MesaRow extends RowDataPacket {
   id: number;
@@ -51,8 +52,8 @@ export const listarMesas = async () => {
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   }));
 };
 
@@ -79,8 +80,8 @@ export const obtenerMesaPorId = async (id: number) => {
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   };
 };
 
@@ -107,8 +108,8 @@ export const obtenerMesaPorCodigo = async (codigo: string) => {
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   };
 };
 
@@ -135,8 +136,8 @@ export const obtenerMesaPorCodigoIncluyendoInactivos = async (codigo: string) =>
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   };
 };
 

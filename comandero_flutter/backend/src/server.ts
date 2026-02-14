@@ -14,8 +14,16 @@ import { errorHandler } from './middlewares/error-handler.js';
 import { notFoundHandler } from './middlewares/not-found.js';
 import { initRealtime } from './realtime/socket.js';
 import { nowMxISO } from './config/time.js';
+import { loadPrintersConfig } from './config/printers.config.js';
 
 const env = getEnv();
+
+// Cargar configuración de impresoras (archivo opcional) para que esté lista al primer uso
+loadPrintersConfig()
+  .then((printers) => {
+    if (printers.length > 0) logger.info({ count: printers.length }, 'Impresoras cargadas');
+  })
+  .catch(() => {});
 
 const app = express();
 const httpServer = createServer(app);
@@ -78,6 +86,25 @@ if (env.NODE_ENV !== 'test') {
     logger.info(`Comandix API escuchando en http://0.0.0.0:${port}`);
     logger.info(`Swagger UI disponible en http://localhost:${port}/docs`);
   });
+
+  // Cierre con Ctrl+C (SIGINT) o SIGTERM: cerrar servidor y Socket.IO para que el proceso termine
+  const gracefulShutdown = (signal: string) => {
+    logger.info({ signal }, 'Cerrando servidor...');
+    httpServer.close(() => {
+      logger.info('Servidor HTTP cerrado');
+      io.close(() => {
+        logger.info('Socket.IO cerrado');
+        process.exit(0);
+      });
+    });
+    // Si en 5 s no cerró, forzar salida (p. ej. si el terminal no envía bien la señal)
+    setTimeout(() => {
+      logger.warn('Forzando salida del proceso');
+      process.exit(1);
+    }, 5000);
+  };
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
   // Manejo de errores al iniciar el servidor
   httpServer.on('error', (err: NodeJS.ErrnoException) => {

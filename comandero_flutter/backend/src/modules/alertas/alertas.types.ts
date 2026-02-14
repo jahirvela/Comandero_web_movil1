@@ -8,7 +8,8 @@ export enum TipoAlerta {
   CAJA = 'alerta.caja',
   COCINA = 'alerta.cocina',
   MESA = 'alerta.mesa',
-  PAGO = 'alerta.pago'
+  PAGO = 'alerta.pago',
+  INVENTARIO = 'alerta.inventario'
 }
 
 export interface AlertaPayload {

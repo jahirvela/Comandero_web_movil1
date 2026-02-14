@@ -47,7 +47,9 @@ export const actualizarOrdenSchema = z
   );
 
 export const actualizarEstadoOrdenSchema = z.object({
-  estadoOrdenId: z.number().int().positive()
+  estadoOrdenId: z.number().int().positive(),
+  /** Si es true, permite marcar como listo aunque falte stock (uso excepcional). */
+  forzarSinStock: z.boolean().optional(),
 });
 
 export const agregarItemSchema = z.object({

@@ -539,6 +539,7 @@ class SocketService {
     'alerta.cocina',
     'alerta.mesa',
     'alerta.pago',
+    'alerta.inventario',
     'cocina.alerta',
     'pago.creado',
     'pago.actualizado',
@@ -551,6 +552,7 @@ class SocketService {
     'cierre.creado',
     'cierre.actualizado',
     'cuenta.enviada',
+    'producto.actualizado',
     'connected',
   ];
 
@@ -713,6 +715,32 @@ class SocketService {
     on('alerta.pago', callback);
   }
 
+  /// Escuchar actualización de producto (menú: habilitar/deshabilitar, cambios de precio, etc.)
+  void onProductoActualizado(Function(dynamic) callback) {
+    on('producto.actualizado', (data) {
+      print('📦 Socket: Evento producto.actualizado recibido');
+      try {
+        callback(data);
+      } catch (e, stackTrace) {
+        print('❌ Error en callback onProductoActualizado: $e');
+        print('❌ Stack trace: $stackTrace');
+      }
+    });
+  }
+
+  /// Escuchar alertas de inventario (stock crítico / sin stock) en tiempo real
+  void onAlertaInventario(Function(dynamic) callback) {
+    on('alerta.inventario', (data) {
+      print('📦 Socket: Evento alerta.inventario recibido - $data');
+      try {
+        callback(data);
+      } catch (e, stackTrace) {
+        print('❌ Error en callback onAlertaInventario: $e');
+        print('❌ Stack trace: $stackTrace');
+      }
+    });
+  }
+
   /// Escuchar eventos de pagos
   void onPaymentCreated(Function(dynamic) callback) {
     on('pago.creado', (data) {
@@ -810,6 +838,7 @@ class SocketService {
       'alerta.cocina',
       'alerta.mesa',
       'alerta.pago',
+      'alerta.inventario',
       'cocina.alerta', // Evento emitido por clientes y re-emitido por backend
       'ticket.creado',
       'ticket.impreso',

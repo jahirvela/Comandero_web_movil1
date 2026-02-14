@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const crearMesaSchema = z.object({
-  codigo: z.string().min(1),
-  nombre: z.string().min(1).optional().nullable(),
+  codigo: z.string().min(1).max(60),
+  nombre: z.string().max(120).optional().nullable(),
   capacidad: z.number().int().positive().max(500).optional().nullable(),
   ubicacion: z.string().max(120).optional().nullable(),
   estadoMesaId: z.number().int().positive().optional().nullable(),
@@ -12,7 +12,7 @@ export const crearMesaSchema = z.object({
 export const actualizarMesaSchema = z
   .object({
     codigo: z.string().min(1).optional(),
-    nombre: z.string().min(1).optional().nullable(),
+    nombre: z.string().max(120).optional().nullable(),
     capacidad: z.number().int().positive().max(500).optional().nullable(),
     ubicacion: z.string().max(120).optional().nullable(),
     estadoMesaId: z.number().int().positive().optional().nullable(),

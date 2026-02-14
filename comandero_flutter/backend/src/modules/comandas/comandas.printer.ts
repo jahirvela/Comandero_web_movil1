@@ -1,176 +1,211 @@
 import { getEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
-import { createPrinter } from '../tickets/tickets.printer.js';
+import { getCharsPerLine, type PaperWidth } from '../../config/printers.config.js';
+import { createPrinter, createPrinterFromConfig } from '../tickets/tickets.printer.js';
 import { formatMxLocale, nowMx } from '../../config/time.js';
 import type { OrdenDetalle } from '../ordenes/ordenes.service.js';
 
+/** Parte un texto en líneas por ancho máximo (corte por espacios cuando sea posible). */
+function wrap(text: string, maxLen: number): string[] {
+  if (maxLen < 1) return [];
+  const t = (text || '').trim().replace(/\s+/g, ' ');
+  if (!t) return [];
+  const lines: string[] = [];
+  let rest = t;
+  while (rest.length > 0) {
+    if (rest.length <= maxLen) {
+      lines.push(rest);
+      break;
+    }
+    const chunk = rest.substring(0, maxLen);
+    const lastSpace = chunk.lastIndexOf(' ');
+    const cut = lastSpace > 0 ? lastSpace : maxLen;
+    lines.push(rest.substring(0, cut).trim());
+    rest = rest.substring(cut).trim();
+  }
+  return lines;
+}
+
 /**
- * Genera el contenido de la comanda en formato texto plano compatible con POS-80
- * La comanda es diferente al ticket: muestra información relevante para cocina
+ * Genera el contenido de la comanda en formato ESC/POS (cocina).
+ * Nombre del producto completo (wrap); notas organizadas con wrap; número de orden visible; sin fecha/hora al final.
+ * @param paperWidth 57, 58, 72 u 80 mm. Por defecto 80.
  */
-export const generarContenidoComanda = (orden: OrdenDetalle): string => {
+export const generarContenidoComanda = (orden: OrdenDetalle, paperWidth: PaperWidth = 80): string => {
+  const w = getCharsPerLine(paperWidth);
+  const descMaxLen = Math.max(16, w - 6);
   let contenido = '';
 
-  // Comandos ESC/POS para formato
   const ESC = '\x1B';
-  const centrar = `${ESC}a1`; // Centrar texto
-  const izquierda = `${ESC}a0`; // Alinear izquierda
-  const negrita = `${ESC}E1`; // Negrita ON
-  const negritaOff = `${ESC}E0`; // Negrita OFF
-  const dobleAltura = `${ESC}d1`; // Doble altura
-  const alturaNormal = `${ESC}d0`; // Altura normal
-  const cortar = `${ESC}i`; // Cortar papel
+  const centrar = `${ESC}a1`;
+  const izquierda = `${ESC}a0`;
+  const negrita = `${ESC}E1`;
+  const negritaOff = `${ESC}E0`;
+  const cortar = `${ESC}i`;
+  const imprimirYAvanzar = (n: number) => `${ESC}d${String.fromCharCode(n)}`;
 
-  // Encabezado - COMANDA
+  const folio = `ORD-${String(orden.id).padStart(6, '0')}`;
+  const prefCant = (c: string) => c + '  ';
+  const prefCont = '     ';
+
+  contenido += `${'='.repeat(w)}\n`;
   contenido += centrar;
   contenido += negrita;
-  contenido += dobleAltura;
-  contenido += '*** COMANDA ***\n';
-  contenido += alturaNormal;
+  contenido += 'COMANDA\n';
   contenido += negritaOff;
-  contenido += `${'='.repeat(42)}\n`;
   contenido += izquierda;
-
-  // Información de la orden
-  const folio = `ORD-${String(orden.id).padStart(6, '0')}`;
+  contenido += `${'='.repeat(w)}\n`;
   contenido += `Folio: ${folio}\n`;
-  contenido += `Fecha: ${formatMxLocale(orden.creadoEn, { dateStyle: 'short', timeStyle: 'short' })}\n`;
+  contenido += `Fecha: ${formatMxLocale(nowMx(), { dateStyle: 'short', timeStyle: 'short' })}\n`;
 
-  // Mesa o Para llevar
   if (orden.mesaCodigo) {
     contenido += `Mesa: ${orden.mesaCodigo}\n`;
-  } else if (orden.clienteNombre) {
+  } else {
+    contenido += `${'-'.repeat(w)}\n`;
     contenido += centrar;
     contenido += negrita;
-    contenido += '*** PARA LLEVAR ***\n';
+    contenido += 'PEDIDO PARA LLEVAR\n';
     contenido += negritaOff;
     contenido += izquierda;
-    contenido += `Cliente: ${orden.clienteNombre}\n`;
-    if (orden.clienteTelefono) {
-      contenido += `Tel: ${orden.clienteTelefono}\n`;
+    contenido += `${'-'.repeat(w)}\n`;
+    const nombreCliente = (orden.clienteNombre || '').trim() || 'Cliente';
+    const lineasCliente = wrap(nombreCliente, w - 9);
+    for (let i = 0; i < lineasCliente.length; i++) {
+      contenido += i === 0 ? `Cliente:  ${lineasCliente[i]}\n` : `         ${lineasCliente[i]}\n`;
     }
+    if (orden.clienteTelefono && orden.clienteTelefono.trim()) {
+      const tel = orden.clienteTelefono.trim();
+      const lineasTel = wrap(tel, w - 5);
+      for (let i = 0; i < lineasTel.length; i++) {
+        contenido += i === 0 ? `Tel:     ${lineasTel[i]}\n` : `         ${lineasTel[i]}\n`;
+      }
+    }
+    contenido += `${'-'.repeat(w)}\n`;
   }
 
-  // Mesero
-  if (orden.creadoPorNombre) {
-    contenido += `Mesero: ${orden.creadoPorNombre}\n`;
-  }
+  if (orden.creadoPorNombre) contenido += `Mesero: ${orden.creadoPorNombre}\n`;
 
-  // Tiempo estimado
-  if (orden.tiempoEstimadoPreparacion) {
-    contenido += `Tiempo estimado: ${orden.tiempoEstimadoPreparacion} min\n`;
-  }
-
-  contenido += `${'-'.repeat(42)}\n`;
-
-  // Items de la orden - Formato para cocina
+  contenido += `${'-'.repeat(w)}\n`;
   contenido += negrita;
   contenido += 'CANT  PRODUCTO\n';
   contenido += negritaOff;
-  contenido += `${'-'.repeat(42)}\n`;
+  contenido += `${'-'.repeat(w)}\n`;
 
-  // Agrupar items por estación/categoría si es posible
   for (const item of orden.items) {
     const cantidad = String(item.cantidad).padStart(3);
     const nombreProducto = item.productoNombre || 'Producto';
     const tamano = item.productoTamanoEtiqueta;
     const descripcion = tamano ? `${nombreProducto} (${tamano})` : nombreProducto;
+    const lineasNombre = wrap(descripcion, descMaxLen);
 
-    // Truncar si es muy largo
-    const descripcionCorta = descripcion.length > 35 ? descripcion.substring(0, 32) + '...' : descripcion;
+    for (let i = 0; i < lineasNombre.length; i++) {
+      const pref = i === 0 ? prefCant(cantidad) : prefCont;
+      contenido += `${pref}${lineasNombre[i]}\n`;
+    }
 
-    contenido += `${cantidad}x  ${descripcionCorta}\n`;
-
-    // Mostrar modificadores (extras, salsas, etc.)
     if (item.modificadores && item.modificadores.length > 0) {
       for (const mod of item.modificadores) {
-        contenido += `     + ${mod.modificadorOpcionNombre}\n`;
+        contenido += `${prefCont}+ ${mod.modificadorOpcionNombre}\n`;
       }
     }
 
-    // Mostrar nota del item si existe
-    if (item.nota) {
-      contenido += `     NOTA: ${item.nota}\n`;
+    if (item.nota && item.nota.trim()) {
+      const lineasNota = wrap(item.nota.trim(), descMaxLen - 6);
+      for (let i = 0; i < lineasNota.length; i++) {
+        contenido += i === 0 ? `${prefCont}NOTA: ${lineasNota[i]}\n` : `${prefCont}      ${lineasNota[i]}\n`;
+      }
     }
   }
 
-  contenido += `${'-'.repeat(42)}\n`;
-
-  // Notas generales de la orden si existen
+  contenido += `${'-'.repeat(w)}\n`;
   if (orden.notas && orden.notas.length > 0) {
     contenido += negrita;
     contenido += 'NOTAS GENERALES:\n';
     contenido += negritaOff;
     for (const nota of orden.notas) {
-      contenido += `- ${nota.contenido}\n`;
+      const texto = (nota.contenido || '').trim();
+      if (!texto) continue;
+      const lineasNota = wrap(texto, w - 2);
+      for (const linea of lineasNota) {
+        contenido += `- ${linea}\n`;
+      }
     }
-    contenido += `${'-'.repeat(42)}\n`;
+    contenido += `${'-'.repeat(w)}\n`;
   }
 
-  // Pie de página
   contenido += centrar;
-  contenido += `\n${folio}\n`;
-  contenido += `${formatMxLocale(orden.creadoEn, { dateStyle: 'short', timeStyle: 'short' })}\n`;
+  contenido += negrita;
+  contenido += `${folio}\n`;
+  contenido += negritaOff;
   contenido += izquierda;
-
-  // Cortar papel
+  contenido += imprimirYAvanzar(4);
   contenido += cortar;
-  contenido += '\n'; // Avanzar papel
+  contenido += '\n';
 
   return contenido;
 };
 
 /**
- * Imprime una comanda usando la impresora configurada
+ * Imprime la comanda en todas las impresoras configuradas para "comanda".
+ * Si hay varias, imprime en cada una; si ninguna está configurada o todas fallan,
+ * se intenta una impresora por defecto (legacy) o simulación.
  */
 export const imprimirComanda = async (
   orden: OrdenDetalle,
   esReimpresion: boolean = false
 ): Promise<{ exito: boolean; mensaje: string; rutaArchivo?: string }> => {
-  try {
-    const contenido = generarContenidoComanda(orden);
-    const printer = createPrinter();
+  const { getImpresorasAsPrinterConfig } = await import('../impresoras/impresoras.repository.js');
+  const { getPrinterConfigsForDocument } = await import('../../config/printers.config.js');
+  let configs = await getImpresorasAsPrinterConfig('comanda');
+  if (configs.length === 0) configs = getPrinterConfigsForDocument('comanda');
+  const tipoImpresion = esReimpresion ? 'reimpresión manual' : 'impresión automática';
+  const rutas: string[] = [];
+  let successCount = 0;
 
-    await printer.print(contenido);
-    await printer.close();
+  for (const config of configs) {
+    try {
+      const contenido = generarContenidoComanda(orden, config.paperWidth ?? 80);
+      const printer = createPrinterFromConfig(config);
+      await printer.print(contenido);
+      await printer.close();
+      successCount++;
+      logger.info({ ordenId: orden.id, printerId: config.id, tipoImpresion }, 'Comanda impresa');
+      if (config.type === 'simulation' && config.device) {
+        rutas.push(`./${config.device}/comanda-${orden.id}-${nowMx().toFormat('yyyy-MM-dd-HH-mm-ss')}.txt`);
+      }
+    } catch (err: unknown) {
+      logger.warn({ err, ordenId: orden.id, printerId: config.id }, 'Error al imprimir comanda en impresora');
+    }
+  }
 
-    const tipoImpresion = esReimpresion ? 'reimpresión manual' : 'impresión automática';
-    logger.info(
-      { ordenId: orden.id, tipoImpresion },
-      `✅ Comanda impresa exitosamente (${tipoImpresion})`
-    );
-
+  if (configs.length > 0) {
     return {
-      exito: true,
-      mensaje: `Comanda impresa exitosamente (${tipoImpresion})`,
-      rutaArchivo: getEnv().PRINTER_TYPE === 'simulation' 
-        ? `./${getEnv().PRINTER_SIMULATION_PATH}/comanda-${orden.id}-${nowMx().toFormat('yyyy-MM-dd-HH-mm-ss')}.txt`
-        : undefined
+      exito: successCount > 0,
+      mensaje: successCount > 0 ? `Comanda impresa (${tipoImpresion})` : 'No se pudo imprimir en ninguna impresora configurada',
+      rutaArchivo: rutas[0],
     };
-  } catch (error: any) {
-    logger.error({ err: error, ordenId: orden.id }, '❌ Error al imprimir comanda');
-    
-    // En caso de error, intentar modo simulación
+  }
+
+  if (configs.length === 0) {
     try {
       const contenido = generarContenidoComanda(orden);
-      const simulationPrinter = createPrinter();
-      await simulationPrinter.print(contenido);
-      await simulationPrinter.close();
-
-      logger.warn({ ordenId: orden.id }, '⚠️ Comanda guardada en modo simulación debido a error de impresora');
-      
-      return {
-        exito: true,
-        mensaje: 'Comanda guardada en modo simulación (impresora no disponible)',
-        rutaArchivo: `./${getEnv().PRINTER_SIMULATION_PATH}/comanda-${orden.id}-${nowMx().toFormat('yyyy-MM-dd-HH-mm-ss')}.txt`
-      };
-    } catch (simError) {
-      logger.error({ err: simError, ordenId: orden.id }, '❌ Error incluso en modo simulación');
+      const printer = createPrinter();
+      await printer.print(contenido);
+      await printer.close();
+      logger.info({ ordenId: orden.id, tipoImpresion }, 'Comanda impresa (impresora por defecto)');
+      if (getEnv().PRINTER_TYPE === 'simulation') {
+        rutas.push(`./${getEnv().PRINTER_SIMULATION_PATH}/comanda-${orden.id}-${nowMx().toFormat('yyyy-MM-dd-HH-mm-ss')}.txt`);
+      }
+      return { exito: true, mensaje: `Comanda impresa (${tipoImpresion})`, rutaArchivo: rutas[0] };
+    } catch (error: unknown) {
+      logger.error({ err: error, ordenId: orden.id }, 'Error al imprimir comanda');
       return {
         exito: false,
-        mensaje: `Error al imprimir comanda: ${error.message || 'Error desconocido'}`
+        mensaje: `Error al imprimir comanda: ${error instanceof Error ? error.message : 'Error desconocido'}`,
       };
     }
   }
+
+  return { exito: false, mensaje: 'No hay impresoras configuradas para comanda' };
 };
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
 import '../../models/table_model.dart';
 import '../../models/payment_model.dart';
 import '../../services/comandas_service.dart';
@@ -22,16 +23,10 @@ class _DividedAccountViewState extends State<DividedAccountView> {
   @override
   void initState() {
     super.initState();
-    // Al iniciar, crear primera persona si no existe
+    // No crear persona por defecto: la lista empieza vacía hasta que el usuario pulse "Agregar Persona"
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final controller = context.read<MeseroController>();
-      if (controller.isDividedAccountMode && controller.personNames.isEmpty) {
-        final firstPersonId = controller.addPerson();
-        controller.setSelectedPersonId(firstPersonId);
-        setState(() {
-          _selectedPersonId = firstPersonId;
-        });
-      } else if (controller.personNames.isNotEmpty) {
+      if (controller.isDividedAccountMode && controller.personNames.isNotEmpty) {
         final firstPersonId = controller.personNames.keys.first;
         controller.setSelectedPersonId(firstPersonId);
         setState(() {
@@ -55,7 +50,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
             backgroundColor: AppColors.primary,
             foregroundColor: Colors.white,
             title: Text(
-              table != null ? 'Cuenta Dividida — Mesa ${table.number}' : 'Cuenta Dividida',
+              table != null ? 'Cuenta Dividida — ${table!.displayLabel}' : 'Cuenta Dividida',
               style: TextStyle(fontSize: isTablet ? 20.0 : 18.0),
             ),
             leading: IconButton(
@@ -826,18 +821,6 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                 color: AppColors.textSecondary,
               ),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                context.read<MeseroController>().setCurrentView('menu');
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('Agregar Productos'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
-            ),
           ],
         ),
       ),
@@ -1495,7 +1478,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
         child: ElevatedButton.icon(
           onPressed: () => _showCloseTableConfirmation(context, controller, isTablet),
           icon: const Icon(Icons.table_restaurant),
-          label: Text('Cerrar Mesa ${table.number}'),
+          label: Text('Cerrar ${table.displayLabel}'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.error,
             foregroundColor: Colors.white,
@@ -1597,7 +1580,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
           style: TextStyle(fontSize: isTablet ? 20.0 : 18.0),
         ),
         content: Text(
-          '¿Deseas cerrar la Mesa ${table.number}? Esto reseteará el modo de cuenta y podrás elegir nuevamente entre cuenta general o dividida.',
+          '¿Deseas cerrar la ${table.displayLabel}? Esto reseteará el modo de cuenta y podrás elegir nuevamente entre cuenta general o dividida.',
         ),
         actions: [
           TextButton(
@@ -1616,7 +1599,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Mesa ${table.number} cerrada. Puedes elegir un nuevo modo de cuenta.'),
+                    content: Text('${table.displayLabel} cerrada. Puedes elegir un nuevo modo de cuenta.'),
                     backgroundColor: AppColors.success,
                   ),
                 );
@@ -1704,7 +1687,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
     // Se puede agregar después si es necesario
     showAlertToKitchenModal(
       context,
-      tableNumber: table.number.toString(),
+      tableNumber: table.codigo,
       orderId: orderId,
     );
   }
@@ -1849,7 +1832,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                             ),
                           ),
                           Text(
-                            'Mesa ${table.number} • ${personHistory.length} ${personHistory.length == 1 ? 'pedido' : 'pedidos'}',
+                            '${table.displayLabel} • ${personHistory.length} ${personHistory.length == 1 ? 'pedido' : 'pedidos'}',
                             style: TextStyle(
                               fontSize: isTablet ? 14.0 : 12.0,
                               color: AppColors.textSecondary,
@@ -2152,25 +2135,439 @@ class _DividedAccountViewState extends State<DividedAccountView> {
     final table = controller.selectedTable;
     if (table == null) return;
 
-    // Usar el mismo método que table_view pero adaptado para mostrar por persona
-    // Por ahora, redirigir al método existente que ya maneja cuenta dividida
-    // Esto se puede mejorar después para mostrar un diálogo personalizado
-    
-    // Simplemente llamar al método de cerrar cuenta que ya existe
-    // El controller ya maneja la cuenta dividida correctamente y resetea el modo dividido
-    try {
+    final isCleared = controller.isHistoryCleared(table.id);
+    var history = controller.getTableOrderHistory(table.id);
+    if (history.isEmpty && !isCleared) {
+      await controller.loadTableOrderHistory(table.id);
+      history = controller.getTableOrderHistory(table.id);
+    }
+
+    final ordenesNoPagadas = history.where((order) {
+      final status = (order['status'] as String?)?.toLowerCase() ?? '';
+      final esFinalizada = status == 'pagada' ||
+          status == 'cancelada' ||
+          status == 'cerrada' ||
+          status == 'enviada';
+      return !esFinalizada;
+    }).toList();
+
+    ordenesNoPagadas.sort((a, b) {
+      try {
+        final fechaA = date_utils.AppDateUtils.parseToLocal(a['date'] ?? '1970-01-01');
+        final fechaB = date_utils.AppDateUtils.parseToLocal(b['date'] ?? '1970-01-01');
+        return fechaB.compareTo(fechaA);
+      } catch (e) {
+        return 0;
+      }
+    });
+
+    final allOrders = ordenesNoPagadas;
+    double totalConsumo = 0.0;
+    double totalImpuesto = 0.0;
+    final Map<String, List<Map<String, dynamic>>> itemsByPerson = {};
+    final Map<String, String> personNamesMap = {};
+
+    for (var order in allOrders) {
+      if (order['isDividedAccount'] == true && order['personNames'] != null) {
+        final names = order['personNames'] as Map<String, dynamic>?;
+        if (names != null) {
+          names.forEach((key, value) {
+            personNamesMap[key] = value.toString();
+            if (!itemsByPerson.containsKey(key)) itemsByPerson[key] = [];
+          });
+        }
+      }
+      final ordenId = order['ordenId'] as int?;
+      if (ordenId != null) {
+        try {
+          final ordenData = await controller.getOrdenDetalle(ordenId);
+          if (ordenData != null) {
+            final items = ordenData['items'] as List<dynamic>? ?? [];
+            for (var item in items) {
+              final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
+              final precioUnitario = (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
+              final totalLineaBackend = (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
+              final totalLineaCalculado = precioUnitario * cantidad;
+              final totalLinea = (totalLineaBackend <= 0.01 ||
+                      (totalLineaCalculado - totalLineaBackend).abs() > 0.01)
+                  ? totalLineaCalculado
+                  : totalLineaBackend;
+
+              totalConsumo += totalLinea;
+
+              final itemData = {
+                'nombre': item['productoNombre'] as String? ?? 'Producto',
+                'tamano': item['productoTamanoEtiqueta'] as String?,
+                'cantidad': cantidad,
+                'precioUnitario': precioUnitario,
+                'subtotal': totalLinea,
+                'extras': item['modificadores'] as List<dynamic>? ?? [],
+                'nota': item['nota'] as String?,
+                'ordenId': ordenId,
+                'ordenNumero': 'ORD-${ordenId.toString().padLeft(6, '0')}',
+              };
+
+              if (order['personAssignments'] != null) {
+                final personAssignments = order['personAssignments'] as Map<String, dynamic>?;
+                // Formato debe coincidir con sendOrderToKitchen: "Nombre (Tamaño)|cantidad"
+                final nombreProducto = itemData['nombre'] as String? ?? 'Producto';
+                final tamano = itemData['tamano'] as String?;
+                final nombreConTamano = (tamano != null && tamano.toString().trim().isNotEmpty)
+                    ? '$nombreProducto ($tamano)'
+                    : nombreProducto;
+                final itemKey = '$nombreConTamano|$cantidad';
+                String? assignedPersonId;
+                personAssignments?.forEach((personId, itemsList) {
+                  if (itemsList is List && itemsList.contains(itemKey)) {
+                    assignedPersonId = personId;
+                  }
+                });
+
+                if (assignedPersonId != null) {
+                  final key = assignedPersonId!;
+                  if (!itemsByPerson.containsKey(key)) itemsByPerson[key] = [];
+                  itemsByPerson[key]!.add(itemData);
+                } else {
+                  if (!itemsByPerson.containsKey('unassigned')) itemsByPerson['unassigned'] = [];
+                  itemsByPerson['unassigned']!.add(itemData);
+                }
+              } else {
+                if (!itemsByPerson.containsKey('unassigned')) itemsByPerson['unassigned'] = [];
+                itemsByPerson['unassigned']!.add(itemData);
+              }
+            }
+            totalImpuesto += (ordenData['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
+          }
+        } catch (e) {
+          // fallback: omitir orden si falla
+        }
+      }
+    }
+
+    final total = totalConsumo;
+    final ivaHabilitado = await controller.getIvaHabilitado();
+    final impuesto = ivaHabilitado
+        ? (totalImpuesto > 0 ? totalImpuesto : total * 0.16)
+        : 0.0;
+    final totalConIva = total + impuesto;
+
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          constraints: BoxConstraints(
+            maxWidth: isTablet ? 600 : double.infinity,
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.receipt_long, color: AppColors.warning, size: isTablet ? 28.0 : 24.0),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Cerrar cuenta — ${table.displayLabel}',
+                            style: TextStyle(
+                              fontSize: isTablet ? 20.0 : 18.0,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            allOrders.length > 1
+                                ? 'Resumen de consumo (${allOrders.length} órdenes agrupadas)'
+                                : 'Resumen de consumo',
+                            style: TextStyle(
+                              fontSize: isTablet ? 14.0 : 12.0,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                  child: Column(
+                    children: [
+                      if (itemsByPerson.isNotEmpty)
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: itemsByPerson.entries.map((entry) {
+                                final personId = entry.key;
+                                final personItems = entry.value;
+                                final personName = personId == 'unassigned'
+                                    ? 'Sin asignar'
+                                    : (personNamesMap[personId] ?? 'Persona');
+                                final personSubtotal = personItems.fold<double>(
+                                  0.0,
+                                  (sum, item) {
+                                    final v = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+                                    return sum + v;
+                                  },
+                                );
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary.withValues(alpha: 0.1),
+                                          borderRadius: const BorderRadius.only(
+                                            topLeft: Radius.circular(12),
+                                            topRight: Radius.circular(12),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Icon(Icons.person, color: AppColors.primary, size: isTablet ? 20.0 : 18.0),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  personName,
+                                                  style: TextStyle(
+                                                    fontSize: isTablet ? 18.0 : 16.0,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: AppColors.textPrimary,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            Text(
+                                              'Subtotal: \$${personSubtotal.toStringAsFixed(2)}',
+                                              style: TextStyle(
+                                                fontSize: isTablet ? 16.0 : 14.0,
+                                                fontWeight: FontWeight.w600,
+                                                color: AppColors.primary,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      DataTable(
+                                        columnSpacing: isTablet ? 12.0 : 8.0,
+                                        columns: [
+                                          const DataColumn(label: Text('Cant.', style: TextStyle(fontWeight: FontWeight.bold))),
+                                          const DataColumn(label: Text('Producto', style: TextStyle(fontWeight: FontWeight.bold))),
+                                          const DataColumn(label: Text('Subtotal', style: TextStyle(fontWeight: FontWeight.bold))),
+                                        ],
+                                        rows: personItems.map((item) {
+                                          final quantity = item['cantidad'] as int? ?? 1;
+                                          final nombre = item['nombre'] as String? ?? 'Producto';
+                                          final tamano = item['tamano'] as String? ?? '';
+                                          final subtotal = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+                                          return DataRow(
+                                            cells: [
+                                              DataCell(Text('$quantity')),
+                                              DataCell(Text(tamano.isNotEmpty ? '$nombre ($tamano)' : nombre)),
+                                              DataCell(Text('\$${subtotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w500))),
+                                            ],
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        )
+                      else
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              'No hay consumo registrado para esta mesa',
+                              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0, color: AppColors.textSecondary),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 24),
+                      Container(
+                        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+                        decoration: BoxDecoration(
+                          color: AppColors.secondary.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Subtotal:',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  '\$${total.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18.0 : 16.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (ivaHabilitado) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'IVA (16%):',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${impuesto.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Total:',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${totalConIva.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                        decoration: BoxDecoration(
+                          color: AppColors.info.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline, color: AppColors.info, size: isTablet ? 20.0 : 18.0),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Al enviar la cuenta, llegará al Cajero para su cobro e impresión de ticket.',
+                                style: TextStyle(fontSize: isTablet ? 14.0 : 12.0, color: AppColors.textSecondary),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.all(isTablet ? 24.0 : 20.0),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.textPrimary,
+                          side: BorderSide(color: AppColors.border),
+                          padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.close),
+                            SizedBox(width: 8),
+                            Text('Cancelar', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          try {
+                            showDialog(
+                              context: dialogContext,
+                              barrierDismissible: false,
+                              builder: (context) => const Center(child: CircularProgressIndicator()),
+                            );
       await controller.sendToCashier(table.id);
+                            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Cuenta completa de Mesa ${table.number} enviada al Cajero'),
+                                  content: Text('Cuenta de ${table.displayLabel} enviada al Cajero'),
             backgroundColor: AppColors.success,
           ),
         );
-        // Regresar al panel principal de mesas después de cerrar cuenta
         controller.setCurrentView('floor');
       }
     } catch (e) {
+                            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2181,5 +2578,23 @@ class _DividedAccountViewState extends State<DividedAccountView> {
         );
       }
     }
+                        },
+                        icon: const Icon(Icons.send),
+                        label: const Text('Enviar al Cajero', style: TextStyle(fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.success,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

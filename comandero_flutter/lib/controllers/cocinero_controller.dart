@@ -397,13 +397,16 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
             final alertaId = alertaData['id'] as int?;
             final creadoEn = alertaData['creadoEn'] as String?;
 
-            // Determinar tipo de alerta desde el mensaje
+            // Determinar tipo de alerta desde el mensaje (solo deben llegar alertas enviadas por mesero/capitán)
+            // No mostrar como "Demora" los mensajes de cambio de estado automático (modificada: Estado cambiado a:)
             String alertTypeDisplay = 'Demora';
-            if (mensaje.toLowerCase().contains('cancel')) {
+            final m = mensaje.toLowerCase();
+            if (m.contains('cancel')) {
               alertTypeDisplay = 'Cancelación';
-            } else if (mensaje.toLowerCase().contains('cambio')) {
+            } else if (m.contains('cambio') || (m.contains('modificada') && m.contains('estado cambiado'))) {
               alertTypeDisplay = 'Cambio en orden';
             }
+            // Si no es cancelación ni cambio, se mantiene Demora (alertas explícitas de demora)
 
             // Extraer prioridad de metadata si existe, o usar 'Normal' por defecto
             final metadataRaw = alertaData['metadata'];
@@ -453,7 +456,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
             // Parsear fecha correctamente usando parseToLocal para convertir UTC a CDMX
             final timestampParsed = creadoEn != null
                 ? date_utils.AppDateUtils.parseToLocal(creadoEn)
-                : DateTime.now();
+                : date_utils.AppDateUtils.nowCdmx();
 
             // Convertir al formato viejo para la UI
             // NUNCA usar mesaId para "Mesa X": es el ID de BD (ej. 4) y no el número visible (ej. 3).
@@ -588,7 +591,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           reason: alert.message,
           details: null,
           priority: priority,
-          timestamp: alert.createdAt ?? DateTime.now(),
+          timestamp: alert.createdAt ?? date_utils.AppDateUtils.nowCdmx(),
           sentBy: alert.createdByUsername,
           sentByRole: alert.createdByRole,
         );
@@ -714,7 +717,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           details: details,
           priority: priority,
           timestamp: date_utils.AppDateUtils.parseToLocal(
-            dataMap['timestamp'] ?? DateTime.now().toIso8601String(),
+            dataMap['timestamp'] ?? date_utils.AppDateUtils.nowCdmx().toIso8601String(),
           ),
         );
 
@@ -764,7 +767,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           details: data['metadata']?['cambio']?.toString(),
           priority: 'Normal',
           timestamp: date_utils.AppDateUtils.parseToLocal(
-            data['timestamp'] ?? DateTime.now().toIso8601String(),
+            data['timestamp'] ?? date_utils.AppDateUtils.nowCdmx().toIso8601String(),
           ),
         );
         _alerts.insert(0, alert);
@@ -796,7 +799,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           details: data['metadata']?['details']?.toString(),
           priority: data['prioridad']?.toString() ?? 'Normal',
           timestamp: date_utils.AppDateUtils.parseToLocal(
-            data['timestamp'] ?? DateTime.now().toIso8601String(),
+            data['timestamp'] ?? date_utils.AppDateUtils.nowCdmx().toIso8601String(),
           ),
         );
         _alerts.insert(0, alert);
@@ -855,7 +858,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
                   reason:
                       'Nueva orden #${nuevaOrden.id} requiere atención inmediata',
                   priority: 'high',
-                  timestamp: DateTime.now(),
+                  timestamp: date_utils.AppDateUtils.nowCdmx(),
                 ),
               );
               notifyListeners();
@@ -1088,7 +1091,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
             type: data['tipo'] ?? 'Alerta',
             reason: data['mensaje'] ?? 'Nueva alerta',
             priority: data['prioridad'] ?? 'medium',
-            timestamp: DateTime.now(),
+            timestamp: date_utils.AppDateUtils.nowCdmx(),
           ),
         );
         notifyListeners();
@@ -1165,7 +1168,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
               data['fecha_creacion'];
           if (fechaCreacion != null) {
             final fecha = _parseDateTime(fechaCreacion);
-            final ahora = DateTime.now();
+            final ahora = date_utils.AppDateUtils.nowCdmx();
             final diferencia = ahora.difference(fecha);
 
             // Si la orden es más antigua de 1 día, excluirla (probablemente datos de prueba)
@@ -1296,7 +1299,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     final orderTime = _parseDateTime(fechaCreacion);
 
     // Validar que la fecha sea razonable (no muy antigua ni futura)
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     final diff = now.difference(orderTime);
 
     // Validar fecha: si es muy antigua (más de 7 días) o muy futura, usar fecha actual
@@ -1305,13 +1308,13 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       print(
         '⚠️ Cocinero: Fecha de orden ${data['id']} en el futuro (${diff.inDays.abs()} días), usando fecha actual',
       );
-      finalOrderTime = DateTime.now();
+      finalOrderTime = date_utils.AppDateUtils.nowCdmx();
     } else if (!diff.isNegative && diff.inDays > 7) {
       // Si la fecha es muy antigua (más de 7 días), probablemente es un error de datos
       print(
         '⚠️ Cocinero: Fecha de orden ${data['id']} muy antigua (${diff.inDays} días), usando fecha actual',
       );
-      finalOrderTime = DateTime.now();
+      finalOrderTime = date_utils.AppDateUtils.nowCdmx();
     } else if (!diff.isNegative && diff.inDays > 1) {
       // Si es entre 1-7 días, puede ser datos de prueba, pero logueamos
       print(
@@ -1400,7 +1403,12 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   }
 
   // Actualizar estado de pedido
-  Future<void> updateOrderStatus(String orderId, String newStatus) async {
+  /// [forzarSinStock] Si true, permite marcar como listo aunque falte stock en inventario (uso excepcional).
+  Future<void> updateOrderStatus(
+    String orderId,
+    String newStatus, {
+    bool forzarSinStock = false,
+  }) async {
     try {
       // Convertir orderId de string a int (puede venir como "ORD-123" o "123")
       final ordenIdStr = orderId.replaceAll('ORD-', '');
@@ -1470,7 +1478,11 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       // Actualizar estado en BD
       // El backend se encarga automáticamente de emitir las alertas al mesero
       // cuando el estado cambia a "en_preparacion" o "listo"
-      await _ordenesService.cambiarEstado(ordenIdInt, estadoOrdenId);
+      await _ordenesService.cambiarEstado(
+        ordenIdInt,
+        estadoOrdenId,
+        forzarSinStock: forzarSinStock,
+      );
 
       print(
         '✅ Cocinero: Estado de orden $ordenIdInt cambiado a $newStatus. El backend emitirá las alertas automáticamente.',
@@ -1701,7 +1713,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
 
   // Obtener pedidos urgentes (más de 15 minutos)
   List<OrderModel> getUrgentOrders() {
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     return _orders.where((order) {
       final elapsed = now.difference(order.orderTime).inMinutes;
       return elapsed > 15 &&
@@ -1710,74 +1722,12 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     }).toList();
   }
 
-  // Formatear tiempo transcurrido
-  // IMPORTANTE: Usa hora CDMX para cálculos precisos
+  // Formatear tiempo transcurrido (unificado con el resto de la app)
   String formatElapsedTime(DateTime orderTime) {
-    // CRÍTICO: Usar SIEMPRE hora local (CDMX) para ambos valores
-    // El backend envía fechas MySQL datetime (formato local sin 'Z') que ya están en CDMX
-    // parseToLocal debería mantenerlas como locales, pero nos aseguramos aquí
-
-    // Obtener hora actual en local (CDMX)
-    final now = DateTime.now().toLocal();
-
-    // Convertir orderTime a local SIEMPRE (sin importar si viene marcado como UTC o local)
-    // Esto previene problemas de mezcla de zonas horarias
-    final orderTimeLocal = orderTime.toLocal();
-
-    // Calcular diferencia (ambos en hora local)
-    final elapsed = now.difference(orderTimeLocal);
-
-    // Si el tiempo es negativo, hay un error de parseo o la fecha es futura (error de datos)
-    if (elapsed.isNegative) {
-      // Si es negativo pero muy pequeño (menos de 1 minuto), probablemente es un problema de sincronización
-      if (elapsed.inSeconds.abs() < 60) {
-        return 'Recién creado';
-      }
-      // Si es muy negativo, hay un error - la fecha de orden es futura o hay problema de parseo
-      // En este caso, retornar "Recién creado" en lugar de mostrar tiempo negativo
-      // No loguear en producción para evitar spam
-      return 'Recién creado';
-    }
-
-    final totalSeconds = elapsed.inSeconds;
-    final minutes = elapsed.inMinutes;
-    final hours = elapsed.inHours;
-    final days = elapsed.inDays;
-
-    // Si el tiempo es muy grande (más de 1 día), probablemente es una fecha antigua de datos de prueba
-    // En producción, las órdenes no deberían tener más de unas horas
-    if (days > 1) {
-      print(
-        '⚠️ Cocinero: Tiempo transcurrido muy grande: $days días. orderTime: $orderTime, now: $now',
-      );
-      // Si es más de 7 días, definitivamente es un error
-      if (days > 7) {
-        return 'Recién creado';
-      }
-      // Si es entre 1-7 días, puede ser datos de prueba, pero mostramos el tiempo real
-      // (aunque en producción esto no debería pasar)
-    }
-
-    // Formatear según el tiempo transcurrido
-    if (totalSeconds < 60) {
-      return 'Recién creado';
-    } else if (minutes < 60) {
-      return 'Hace $minutes min';
-    } else if (hours < 24) {
-      final remainingMinutes = minutes % 60;
-      if (remainingMinutes > 0) {
-        return 'Hace ${hours}h ${remainingMinutes}min';
-      } else {
-        return 'Hace ${hours}h';
-      }
-    } else {
-      final remainingHours = hours % 24;
-      if (remainingHours > 0) {
-        return 'Hace ${days}d ${remainingHours}h';
-      } else {
-        return 'Hace ${days}d';
-      }
-    }
+    final elapsed = DateTime.now().difference(orderTime.isUtc ? orderTime.toLocal() : orderTime);
+    if (elapsed.isNegative) return 'Recién creado';
+    if (elapsed.inSeconds < 60) return 'Recién creado';
+    return date_utils.AppDateUtils.formatDurationShort(elapsed);
   }
 
   // Verificar si una nota es crítica

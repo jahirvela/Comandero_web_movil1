@@ -3,9 +3,19 @@ import 'package:provider/provider.dart';
 import '../../controllers/mesero_controller.dart';
 import '../../models/table_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/date_utils.dart' as date_utils;
+import 'mesero_tables_management_view.dart';
 
-class FloorView extends StatelessWidget {
+class FloorView extends StatefulWidget {
   const FloorView({super.key});
+
+  @override
+  State<FloorView> createState() => _FloorViewState();
+}
+
+class _FloorViewState extends State<FloorView> {
+  /// Filtro de área: null o 'Todos' = todas las mesas; si no, nombre del área.
+  String? _selectedAreaFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +41,11 @@ class FloorView extends StatelessWidget {
 
                     // Leyenda de estados
                     _buildStatusLegend(isTablet),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
+
+                    // Chips de filtro por área (igual que Administrador; áreas según lo que admin agregue/elimine)
+                    _buildAreaFilterChips(context, controller, isTablet),
+                    const SizedBox(height: 20),
 
                     // Grid de mesas
                     _buildTablesGrid(context, controller, isTablet, isDesktop),
@@ -43,10 +57,6 @@ class FloorView extends StatelessWidget {
 
                     // Estadísticas rápidas
                     _buildQuickStats(stats, isTablet),
-                    const SizedBox(height: 16),
-
-                    // Info del puesto
-                    _buildRestaurantInfo(isTablet),
                   ],
                 ),
               ),
@@ -62,7 +72,7 @@ class FloorView extends StatelessWidget {
     double occupancyRate,
     bool isTablet,
   ) {
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     final dateStr = '${now.day} de ${_getMonthName(now.month)}';
 
     return Row(
@@ -89,23 +99,44 @@ class FloorView extends StatelessWidget {
             ),
           ],
         ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              '${(occupancyRate.isNaN || occupancyRate.isInfinite ? 0.0 : occupancyRate).toInt()}%',
-              style: TextStyle(
-                fontSize: isTablet ? 28.0 : 24.0,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+            IconButton(
+              icon: const Icon(Icons.settings),
+              tooltip: 'Gestionar mesas (agregar, editar)',
+              onPressed: () {
+                final controller = context.read<MeseroController>();
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => ChangeNotifierProvider<MeseroController>.value(
+                      value: controller,
+                      child: const MeseroTablesManagementView(),
+                    ),
+                  ),
+                );
+              },
+              color: AppColors.primary,
             ),
-            Text(
-              'Ocupación',
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textSecondary,
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${(occupancyRate.isNaN || occupancyRate.isInfinite ? 0.0 : occupancyRate).toInt()}%',
+                  style: TextStyle(
+                    fontSize: isTablet ? 28.0 : 24.0,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                Text(
+                  'Ocupación',
+                  style: TextStyle(
+                    fontSize: isTablet ? 14.0 : 12.0,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -168,12 +199,77 @@ class FloorView extends StatelessWidget {
     );
   }
 
+  /// Fila de chips: Todas + una chip por cada área (las que existan según administrador).
+  /// Al estar seleccionado (Todas o un área) se usa un naranja más claro.
+  Widget _buildAreaFilterChips(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    const todosLabel = 'Todas';
+    final areas = controller.tableAreas;
+    final isTodos = _selectedAreaFilter == null || _selectedAreaFilter == todosLabel;
+    final selectedChipColor = Color.lerp(AppColors.primary, Colors.white, 0.25)!;
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          // Chip "Todas" (una sola palomita en el label; sin checkmark por defecto para no duplicar)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              showCheckmark: false,
+              label: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isTodos) Icon(Icons.check, size: isTablet ? 18 : 16, color: Colors.white),
+                  if (isTodos) const SizedBox(width: 6),
+                  const Text('Todas'),
+                ],
+              ),
+              selected: isTodos,
+              selectedColor: selectedChipColor,
+              onSelected: (_) => setState(() => _selectedAreaFilter = null),
+            ),
+          ),
+          // Una chip por cada área (mismo naranja claro al seleccionar)
+          ...areas.map((area) {
+            final selected = _selectedAreaFilter == area;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                label: Text(area),
+                selected: selected,
+                selectedColor: selectedChipColor,
+                checkmarkColor: Colors.white,
+                onSelected: (_) => setState(() => _selectedAreaFilter = area),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTablesGrid(
     BuildContext context,
     MeseroController controller,
     bool isTablet,
     bool isDesktop,
   ) {
+    const defaultArea = 'Área Principal';
+    final filtered = _selectedAreaFilter == null ||
+            _selectedAreaFilter == 'Todas' ||
+            _selectedAreaFilter!.isEmpty
+        ? controller.tables
+        : controller.tables.where((t) {
+            final section = (t.section != null && t.section!.trim().isNotEmpty)
+                ? t.section!.trim()
+                : defaultArea;
+            return section == _selectedAreaFilter;
+          }).toList();
+
     int crossAxisCount = 2;
     if (isDesktop) {
       crossAxisCount = 6;
@@ -190,9 +286,9 @@ class FloorView extends StatelessWidget {
         mainAxisSpacing: isTablet ? 16.0 : 12.0,
         childAspectRatio: 0.8,
       ),
-      itemCount: controller.tables.length,
+      itemCount: filtered.length,
       itemBuilder: (context, index) {
-        final table = controller.tables[index];
+        final table = filtered[index];
         return _buildTableCard(context, table, controller, isTablet);
       },
     );
@@ -227,27 +323,29 @@ class FloorView extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Icono y número de mesa
+              // Icono y nombre de mesa (nombre completo, puede ocupar hasta 2 líneas)
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Flexible(
-                    child: Text(
-                      statusIcon,
-                      style: TextStyle(fontSize: isTablet ? 20.0 : 16.0),
-                    ),
+                  Text(
+                    statusIcon,
+                    style: TextStyle(fontSize: isTablet ? 20.0 : 16.0),
                   ),
                   const SizedBox(width: 8),
                   Flexible(
                     child: Text(
-                      'Mesa ${table.number}',
+                      table.displayLabel,
                       style: TextStyle(
                         fontSize: isTablet ? 18.0 : 16.0,
                         fontWeight: FontWeight.w600,
                         color: statusColor,
                       ),
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                      softWrap: true,
+                      overflow: TextOverflow.visible,
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ],
@@ -294,18 +392,6 @@ class FloorView extends StatelessWidget {
                         fontSize: isTablet ? 14.0 : 12.0,
                         fontWeight: FontWeight.w500,
                         color: statusColor,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  if (table.orderValue != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '\$${table.orderValue!.toStringAsFixed(0)}',
-                      style: TextStyle(
-                        fontSize: isTablet ? 14.0 : 12.0,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -487,56 +573,6 @@ class FloorView extends StatelessWidget {
           ),
         );
       }).toList(),
-    );
-  }
-
-  Widget _buildRestaurantInfo(bool isTablet) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [AppColors.secondary, AppColors.primary.withValues(alpha: 0.1)],
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-          ),
-        ),
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.local_fire_department,
-                  color: AppColors.primary,
-                  size: isTablet ? 24.0 : 20.0,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Puesto de Barbacoa Abierto',
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Horario: 8:00 AM - 6:00 PM • Especialidad: Barbacoa de res',
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
     );
   }
 

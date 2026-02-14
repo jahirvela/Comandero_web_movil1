@@ -88,6 +88,8 @@ class AdminUser {
 class InventoryItem {
   final String id;
   final String name;
+  /// Código de barras único por línea de producto (ej. Café 5kg). Opcional.
+  final String? codigoBarras;
   final String category;
   final double currentStock;
   final double minStock;
@@ -103,10 +105,15 @@ class InventoryItem {
   final String status; // 'available', 'low_stock', 'out_of_stock', 'expired'
   final String? notes;
   final String? description;
+  /// Cuando la unidad es pieza: cuánto pesa o contiene cada pieza (ej. 5 para envase 5 kg). Opcional.
+  final double? contenidoPorPieza;
+  /// Unidad del contenido por pieza (ej. "kg", "L"). Solo tiene sentido con contenidoPorPieza.
+  final String? unidadContenido;
 
   InventoryItem({
     required this.id,
     required this.name,
+    this.codigoBarras,
     required this.category,
     required this.currentStock,
     required this.minStock,
@@ -122,36 +129,44 @@ class InventoryItem {
     required this.status,
     this.notes,
     this.description,
+    this.contenidoPorPieza,
+    this.unidadContenido,
   });
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
-    // Asegurar que el stock nunca sea negativo
-    final stockValue = json['currentStock']?.toDouble() ?? 0.0;
+    final stockValue = (json['currentStock'] ?? json['cantidadActual'])?.toDouble() ?? 0.0;
     final currentStock = stockValue < 0 ? 0.0 : stockValue;
-    
+    final minStock = (json['minStock'] ?? json['stockMinimo'])?.toDouble() ?? 0.0;
+    final maxStock = (json['maxStock'] ?? json['stockMaximo'])?.toDouble() ?? minStock * 2;
+    final cost = (json['cost'] ?? json['costoUnitario'])?.toDouble() ?? 0.0;
+    final unit = (json['unit'] ?? json['unidad'] ?? '').toString();
+    final contenidoPorPieza = json['contenidoPorPieza'] != null ? (json['contenidoPorPieza'] as num).toDouble() : null;
+    final unidadContenido = json['unidadContenido'] as String?;
     return InventoryItem(
-      id: json['id'],
-      name: json['name'],
+      id: json['id'].toString(),
+      name: (json['name'] ?? json['nombre'] ?? '').toString(),
+      codigoBarras: json['codigoBarras'] as String?,
       category: (json['category'] ?? json['categoria'] ?? 'Otros').toString(),
       currentStock: currentStock,
-      minStock: json['minStock'].toDouble(),
-      maxStock: json['maxStock'].toDouble(),
-      minimumStock:
-          json['minimumStock']?.toDouble() ?? json['minStock'].toDouble(),
-      unit: json['unit'],
-      cost: json['cost'].toDouble(),
-      price: json['price'].toDouble(),
-      unitPrice: json['unitPrice']?.toDouble() ?? json['price'].toDouble(),
-      supplier: json['supplier'],
-      lastRestock: json['lastRestock'] != null
-          ? date_utils.AppDateUtils.parseToLocal(json['lastRestock'])
+      minStock: minStock,
+      maxStock: maxStock,
+      minimumStock: minStock,
+      unit: unit,
+      cost: cost,
+      price: cost,
+      unitPrice: cost,
+      supplier: json['supplier'] ?? json['proveedor'] as String?,
+      lastRestock: (json['lastRestock'] ?? json['actualizadoEn']) != null
+          ? date_utils.AppDateUtils.parseToLocal((json['lastRestock'] ?? json['actualizadoEn']).toString())
           : null,
       expiryDate: json['expiryDate'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['expiryDate'])
           : null,
-      status: json['status'],
+      status: (json['status'] as String?) ?? (currentStock <= 0 ? InventoryStatus.outOfStock : (currentStock <= minStock ? InventoryStatus.lowStock : InventoryStatus.available)),
       notes: json['notes'],
       description: json['description'],
+      contenidoPorPieza: contenidoPorPieza,
+      unidadContenido: unidadContenido,
     );
   }
 
@@ -159,6 +174,7 @@ class InventoryItem {
     return {
       'id': id,
       'name': name,
+      if (codigoBarras != null) 'codigoBarras': codigoBarras,
       'category': category,
       'currentStock': currentStock,
       'minStock': minStock,
@@ -174,12 +190,15 @@ class InventoryItem {
       'status': status,
       'notes': notes,
       'description': description,
+      if (contenidoPorPieza != null) 'contenidoPorPieza': contenidoPorPieza,
+      if (unidadContenido != null) 'unidadContenido': unidadContenido,
     };
   }
 
   InventoryItem copyWith({
     String? id,
     String? name,
+    String? codigoBarras,
     String? category,
     double? currentStock,
     double? minStock,
@@ -195,10 +214,13 @@ class InventoryItem {
     String? status,
     String? notes,
     String? description,
+    double? contenidoPorPieza,
+    String? unidadContenido,
   }) {
     return InventoryItem(
       id: id ?? this.id,
       name: name ?? this.name,
+      codigoBarras: codigoBarras ?? this.codigoBarras,
       category: category ?? this.category,
       currentStock: currentStock ?? this.currentStock,
       minStock: minStock ?? this.minStock,
@@ -214,6 +236,8 @@ class InventoryItem {
       status: status ?? this.status,
       notes: notes ?? this.notes,
       description: description ?? this.description,
+      contenidoPorPieza: contenidoPorPieza ?? this.contenidoPorPieza,
+      unidadContenido: unidadContenido ?? this.unidadContenido,
     );
   }
 }
@@ -439,7 +463,7 @@ class MenuItem {
       allergens: json['allergens'] != null ? List<String>.from(json['allergens']) : [],
       preparationTime: json['preparationTime'] ?? 0,
       notes: json['notes'],
-      createdAt: json['createdAt'] != null ? date_utils.AppDateUtils.parseToLocal(json['createdAt']) : DateTime.now(),
+      createdAt: json['createdAt'] != null ? date_utils.AppDateUtils.parseToLocal(json['createdAt']) : date_utils.AppDateUtils.nowCdmx(),
       updatedAt: json['updatedAt'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['updatedAt'])
           : null,
@@ -688,7 +712,9 @@ class RecipeIngredient {
 
 class TableModel {
   final int id;
-  final int number;
+  /// Código o nombre de la mesa (ej: "1", "Terraza", "VIP 1"). Se usa en tickets, cocina, cuentas por cobrar.
+  final String codigo;
+  final int number; // Compatibilidad/orden: int.parse(codigo) si es numérico, si no 0
   final String status;
   final int seats;
   final int? customers;
@@ -700,6 +726,7 @@ class TableModel {
 
   TableModel({
     required this.id,
+    required this.codigo,
     required this.number,
     required this.status,
     required this.seats,
@@ -711,10 +738,23 @@ class TableModel {
     this.section,
   });
 
+  /// Etiqueta para mostrar: si el código es solo número → "Mesa 1"; si tiene texto → tal cual (ej: "Terraza", "Mesa de Prueba")
+  String get displayLabel {
+    final c = codigo.trim();
+    if (c.isEmpty) return codigo;
+    final n = int.tryParse(c);
+    return (n != null && n.toString() == c) ? 'Mesa $c' : codigo;
+  }
+
   factory TableModel.fromJson(Map<String, dynamic> json) {
+    final codigo = json['codigo'] as String? ?? json['number']?.toString() ?? '0';
+    final number = json['number'] is int
+        ? json['number'] as int
+        : (int.tryParse(codigo) ?? 0);
     return TableModel(
       id: json['id'],
-      number: json['number'],
+      codigo: codigo,
+      number: number,
       status: json['status'],
       seats: json['seats'],
       customers: json['customers'],
@@ -731,6 +771,7 @@ class TableModel {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'codigo': codigo,
       'number': number,
       'status': status,
       'seats': seats,
@@ -745,6 +786,7 @@ class TableModel {
 
   TableModel copyWith({
     int? id,
+    String? codigo,
     int? number,
     String? status,
     int? seats,
@@ -757,6 +799,7 @@ class TableModel {
   }) {
     return TableModel(
       id: id ?? this.id,
+      codigo: codigo ?? this.codigo,
       number: number ?? this.number,
       status: status ?? this.status,
       seats: seats ?? this.seats,
@@ -971,10 +1014,10 @@ class Role {
           [],
       creadoEn: json['creadoEn'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['creadoEn'])
-          : DateTime.now(),
+          : date_utils.AppDateUtils.nowCdmx(),
       actualizadoEn: json['actualizadoEn'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['actualizadoEn'])
-          : DateTime.now(),
+          : date_utils.AppDateUtils.nowCdmx(),
     );
   }
 

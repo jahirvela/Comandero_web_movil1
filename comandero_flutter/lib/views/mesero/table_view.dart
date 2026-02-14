@@ -145,10 +145,6 @@ class TableView extends StatelessWidget {
 
         // Acciones
         _buildActionsSection(context, controller, isTablet),
-        const SizedBox(height: 24),
-
-        // Info del puesto
-        _buildRestaurantInfo(isTablet),
       ],
     );
   }
@@ -168,25 +164,31 @@ class TableView extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 16),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Mesa ${table.number}',
-              style: TextStyle(
-                fontSize: isTablet ? 28.0 : 24.0,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                table.displayLabel,
+                style: TextStyle(
+                  fontSize: isTablet ? 28.0 : 24.0,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+                maxLines: 2,
+                softWrap: true,
+                overflow: TextOverflow.visible,
               ),
-            ),
             Text(
-              '${table.seats} lugares disponibles',
-              style: TextStyle(
-                fontSize: isTablet ? 16.0 : 14.0,
-                color: AppColors.textSecondary,
+                '${table.seats} lugares disponibles',
+                style: TextStyle(
+                  fontSize: isTablet ? 16.0 : 14.0,
+                  color: AppColors.textSecondary,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -361,7 +363,7 @@ class TableView extends StatelessWidget {
             if (cart.isEmpty) ...[
               _buildEmptyCart(isTablet),
             ] else ...[
-              _buildCartItems(cart, isTablet),
+              _buildCartItems(context, controller, cart, isTablet),
               const SizedBox(height: 16),
               _buildCartTotal(total, isTablet),
             ],
@@ -402,27 +404,33 @@ class TableView extends StatelessWidget {
     );
   }
 
-  Widget _buildCartItems(List<CartItem> cart, bool isTablet) {
-    return Column(
-      children: [
-        ...cart.take(3).map((item) => _buildCartItem(item, isTablet)),
-        if (cart.length > 3) ...[
-          const SizedBox(height: 8),
-          Center(
-            child: Text(
-              '+${cart.length - 3} artículos más',
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ],
+  Widget _buildCartItems(
+    BuildContext context,
+    MeseroController controller,
+    List<CartItem> cart,
+    bool isTablet,
+  ) {
+    const double maxListHeight = 320;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: maxListHeight),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: cart.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (context, index) {
+          return _buildCartItem(context, controller, cart[index], isTablet);
+        },
+      ),
     );
   }
 
-  Widget _buildCartItem(CartItem item, bool isTablet) {
+  Widget _buildCartItem(
+    BuildContext context,
+    MeseroController controller,
+    CartItem item,
+    bool isTablet,
+  ) {
     // Calcular precio total del item incluyendo extras y salsas
     final quantity = (item.customizations['quantity'] as num?)?.toInt() ?? 1;
     double unitPrice = _getUnitPrice(item);
@@ -448,7 +456,6 @@ class TableView extends StatelessWidget {
     final itemTotal = unitPrice * quantity;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
       decoration: BoxDecoration(
         color: AppColors.secondary,
@@ -456,7 +463,7 @@ class TableView extends StatelessWidget {
         border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Column(
@@ -505,13 +512,139 @@ class TableView extends StatelessWidget {
               ],
             ),
           ),
-          Text(
-            '\$${itemTotal.toStringAsFixed(0)}',
-            style: TextStyle(
-              fontSize: isTablet ? 16.0 : 14.0,
-              fontWeight: FontWeight.w600,
-              color: AppColors.primary,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                onPressed: () => _showEditCartItemDialog(context, controller, item, isTablet),
+                icon: Icon(
+                  Icons.edit_outlined,
+                  size: isTablet ? 22.0 : 20.0,
+                  color: AppColors.primary,
+                ),
+                tooltip: 'Editar',
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              ),
+              IconButton(
+                onPressed: () => _showRemoveCartItemDialog(context, controller, item, isTablet),
+                icon: Icon(
+                  Icons.delete_outline,
+                  size: isTablet ? 22.0 : 20.0,
+                  color: AppColors.error,
+                ),
+                tooltip: 'Eliminar',
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '\$${itemTotal.toStringAsFixed(0)}',
+                style: TextStyle(
+                  fontSize: isTablet ? 16.0 : 14.0,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditCartItemDialog(
+    BuildContext context,
+    MeseroController controller,
+    CartItem item,
+    bool isTablet,
+  ) {
+    final quantity = (item.customizations['quantity'] as num?)?.toInt() ?? 1;
+    final note = item.customizations['nota'] as String? ?? '';
+    final quantityController = TextEditingController(text: quantity.toString());
+    final noteController = TextEditingController(text: note);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Editar "${item.product.name}"'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: quantityController,
+                decoration: const InputDecoration(
+                  labelText: 'Cantidad',
+                  border: OutlineInputBorder(),
+                  hintText: '1',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: noteController,
+                decoration: const InputDecoration(
+                  labelText: 'Nota (opcional)',
+                  border: OutlineInputBorder(),
+                  hintText: 'Sin cebolla, etc.',
+                ),
+                maxLines: 2,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newQty = int.tryParse(quantityController.text) ?? quantity;
+              if (newQty < 1) {
+                Navigator.of(ctx).pop();
+                return;
+              }
+              controller.updateCartItem(item.id, {
+                'quantity': newQty.toDouble(),
+                'nota': noteController.text.trim(),
+              });
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRemoveCartItemDialog(
+    BuildContext context,
+    MeseroController controller,
+    CartItem item,
+    bool isTablet,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar artículo'),
+        content: Text(
+          '¿Quitar "${item.product.name}" del consumo de la mesa?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              controller.removeFromCart(item.id);
+              Navigator.of(ctx).pop();
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('Eliminar'),
           ),
         ],
       ),
@@ -673,7 +806,7 @@ class TableView extends StatelessWidget {
           builder: (dialogContext) => AlertDialog(
             title: const Text('Cerrar mesa'),
             content: Text(
-              'Se eliminarán los pedidos de la mesa ${table.number} y volverá a estar disponible.',
+              'Se eliminarán los pedidos de la ${table.displayLabel} y volverá a estar disponible.',
             ),
             actions: [
               TextButton(
@@ -703,7 +836,7 @@ class TableView extends StatelessWidget {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Mesa ${table.number} cerrada correctamente.'),
+          content: Text('${table.displayLabel} cerrada correctamente.'),
           backgroundColor: AppColors.success,
         ),
       );
@@ -738,7 +871,7 @@ class TableView extends StatelessWidget {
             .map<Map<String, dynamic>>(
               (order) => {
                 ...order,
-                'tableNumber': order['tableNumber'] ?? table.number,
+                'tableNumber': order['tableNumber'] ?? table.codigo,
               },
             )
             .toList();
@@ -775,7 +908,7 @@ class TableView extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Consumo Actual — Mesa ${table.number}',
+                                  'Consumo Actual — ${table.displayLabel}',
                                   style: TextStyle(
                                     fontSize: isTablet ? 16.0 : 14.0,
                                     fontWeight: FontWeight.w600,
@@ -845,31 +978,6 @@ class TableView extends StatelessWidget {
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.error,
                                 side: BorderSide(color: AppColors.error),
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: isTablet ? 12.0 : 8.0,
-                                  vertical: isTablet ? 12.0 : 8.0,
-                                ),
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: isTablet ? 160 : 150,
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                // Resetear la bandera de limpiado antes de recargar
-                                ctrl.resetHistoryClearedFlag(table.id);
-                                await ctrl.forceReloadTableHistory(table.id);
-                              },
-                              icon: const Icon(Icons.refresh, size: 18),
-                              label: Text(
-                                'Recargar historial',
-                                style: TextStyle(
-                                  fontSize: isTablet ? 14.0 : 12.0,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.info,
-                                foregroundColor: Colors.white,
                                 padding: EdgeInsets.symmetric(
                                   horizontal: isTablet ? 12.0 : 8.0,
                                   vertical: isTablet ? 12.0 : 8.0,
@@ -1098,26 +1206,7 @@ class TableView extends StatelessWidget {
               ),
             ],
           ),
-          if (order['estimatedTime'] != null) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(
-                  Icons.schedule,
-                  size: isTablet ? 14.0 : 12.0,
-                  color: AppColors.textSecondary,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Tiempo de salida: ${order['estimatedTime']} min',
-                  style: TextStyle(
-                    fontSize: isTablet ? 12.0 : 10.0,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ],
+          // Tiempo de salida lo muestra/edita el cocinero, no el mesero
           // Botones de acción
           if (_canSendAlertForStatus(order['status']) || order['ordenId'] != null) ...[
             const SizedBox(height: 12),
@@ -1188,7 +1277,7 @@ class TableView extends StatelessWidget {
     final orderId = order['id']?.toString() ?? 'ORD';
     showAlertToKitchenModal(
       context,
-      tableNumber: table.number.toString(),
+      tableNumber: table.codigo,
       orderId: orderId,
     );
   }
@@ -1281,59 +1370,6 @@ class TableView extends StatelessWidget {
     }
   }
 
-  Widget _buildRestaurantInfo(bool isTablet) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [
-              AppColors.warning.withValues(alpha: 0.1),
-              AppColors.error.withValues(alpha: 0.1),
-            ],
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-          ),
-        ),
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.local_fire_department,
-                  color: AppColors.primary,
-                  size: isTablet ? 20.0 : 18.0,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Barbacoa recién hecha',
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.primary,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '¡Servimos hasta agotar existencias del día!',
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Color _getStatusColor(String status) {
     switch (status) {
       case TableStatus.libre:
@@ -1392,7 +1428,7 @@ class TableView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Mesa ${table.number}',
+              table.displayLabel,
               style: TextStyle(
                 fontSize: isTablet ? 16.0 : 14.0,
                 color: AppColors.textSecondary,
@@ -1510,7 +1546,7 @@ class TableView extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '¿Confirmas que deseas limpiar el historial de Pedidos para la Mesa ${table.number}? Esto no eliminará registros del sistema, solo ocultará la lista en esta sesión.',
+              '¿Confirmas que deseas limpiar el historial de Pedidos para la ${table.displayLabel}? Esto no eliminará registros del sistema, solo ocultará la lista en esta sesión.',
               style: TextStyle(
                 fontSize: isTablet ? 14.0 : 12.0,
                 color: AppColors.textSecondary,
@@ -1615,8 +1651,9 @@ class TableView extends StatelessWidget {
       order['personAssignments'] != null
     );
 
-    // Calcular consumo total de todas las órdenes abiertas
+    // Calcular consumo total e IVA de todas las órdenes abiertas
     double totalConsumo = 0.0;
+    double totalImpuesto = 0.0;
     final allItems = <Map<String, dynamic>>[];
     final Map<String, List<Map<String, dynamic>>> itemsByPerson = {}; // Para cuenta dividida
     final Map<String, String> personNamesMap = {}; // Para cuenta dividida
@@ -1708,6 +1745,7 @@ class TableView extends StatelessWidget {
                 allItems.add(itemData);
               }
             }
+            totalImpuesto += (ordenData['impuestoTotal'] as num?)?.toDouble() ?? 0.0;
           }
         } catch (e) {
           print('Error al obtener detalles de orden $ordenId: $e');
@@ -1792,6 +1830,12 @@ class TableView extends StatelessWidget {
     }
 
     final total = totalConsumo;
+    // Si el admin tiene IVA activado, mostrar IVA: usar el de las órdenes o calcular 16% del subtotal
+    final ivaHabilitado = await controller.getIvaHabilitado();
+    final impuesto = ivaHabilitado
+        ? (totalImpuesto > 0 ? totalImpuesto : total * 0.16)
+        : 0.0;
+    final totalConIva = total + impuesto;
 
     showDialog(
       context: context,
@@ -1828,7 +1872,7 @@ class TableView extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Cerrar cuenta — Mesa ${table.number}',
+                            'Cerrar cuenta — ${table.displayLabel}',
                             style: TextStyle(
                               fontSize: isTablet ? 20.0 : 18.0,
                               fontWeight: FontWeight.bold,
@@ -2244,6 +2288,52 @@ class TableView extends StatelessWidget {
                                 ),
                               ],
                             ),
+                            if (ivaHabilitado) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'IVA (16%):',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${impuesto.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Total:',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${totalConIva.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 18.0 : 16.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -2351,7 +2441,7 @@ class TableView extends StatelessWidget {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    'Cuenta de Mesa ${table.number} enviada al Cajero',
+                                    'Cuenta de ${table.displayLabel} enviada al Cajero',
                                   ),
                                   backgroundColor: AppColors.success,
                                 ),

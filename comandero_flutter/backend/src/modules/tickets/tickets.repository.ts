@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { pool } from '../../db/pool.js';
 import { obtenerOrdenBasePorId, obtenerItemsOrden, obtenerModificadoresItem } from '../ordenes/ordenes.repository.js';
+import { obtenerConfiguracion } from '../configuracion/configuracion.repository.js';
 import { utcToMxISO, utcToMx } from '../../config/time.js';
 
 interface UsuarioRow extends RowDataPacket {
@@ -53,6 +54,10 @@ export interface TicketData {
     rfc: string | null;
     telefono: string | null;
   };
+  /** Si el negocio tiene IVA habilitado (México CDMX). Solo entonces se muestra la línea Impuesto en el ticket. */
+  ivaHabilitado: boolean;
+  /** Método de pago para mostrar en el ticket (ej. "Tarjeta de débito", "Tarjeta de crédito", "Efectivo"). */
+  metodoPago?: string | null;
 }
 
 export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number, ordenIds?: number[]): Promise<TicketData> => {
@@ -131,10 +136,10 @@ export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number, ord
     }
   }
 
-  // Obtener configuración del restaurante (por ahora valores por defecto)
-  // En el futuro esto podría venir de una tabla de configuración
+  const config = await obtenerConfiguracion();
+
   const restaurante: TicketData['restaurante'] = {
-    nombre: process.env.RESTAURANTE_NOMBRE || 'Comandix Restaurant',
+    nombre: process.env.RESTAURANTE_NOMBRE || 'Restaurante',
     direccion: process.env.RESTAURANTE_DIRECCION || null,
     rfc: process.env.RESTAURANTE_RFC || null,
     telefono: process.env.RESTAURANTE_TELEFONO || null
@@ -167,14 +172,40 @@ export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number, ord
     folio = `ORD-${String(ordenBase.id).padStart(6, '0')}`;
   }
 
+  // Obtener método de pago del último pago (de esta orden o de cualquiera del grupo) para el ticket
+  let metodoPago: string | null = null;
+  const placeholders = ordenIdsToProcess.map(() => '?').join(',');
+  const [pagosRows] = await pool.query<RowDataPacket[]>(
+    `SELECT fp.nombre AS forma_pago_nombre, p.referencia
+     FROM pago p
+     JOIN forma_pago fp ON fp.id = p.forma_pago_id
+     WHERE p.orden_id IN (${placeholders}) AND p.estado = 'aplicado'
+     ORDER BY p.fecha_pago DESC
+     LIMIT 1`,
+    ordenIdsToProcess
+  );
+  if (pagosRows.length > 0) {
+    const ref = ((pagosRows[0].referencia as string) || '').toLowerCase();
+    const nombre = ((pagosRows[0].forma_pago_nombre as string) || '').toLowerCase();
+    // Detectar Tarjeta de crédito o débito (con o sin tilde)
+    if (ref.includes('credito') || ref.includes('crédito') || nombre.includes('credito') || nombre.includes('crédito')) {
+      metodoPago = 'Tarjeta de crédito';
+    } else if (ref.includes('debito') || ref.includes('débito') || nombre.includes('debito') || nombre.includes('débito')) {
+      metodoPago = 'Tarjeta de débito';
+    } else if ((pagosRows[0].forma_pago_nombre as string)?.trim()) {
+      metodoPago = (pagosRows[0].forma_pago_nombre as string).trim();
+    }
+  }
+
+  // Siempre usar la orden solicitada (ordenId) para nombre de cliente y mesa.
+  // En "dividir cuenta" cada ticket es de una orden por persona, así el nombre impreso es el correcto.
   return {
     orden: {
       id: ordenBase.id,
       folio: folio,
-      // Usar la fecha más antigua si es cuenta agrupada
       fecha: fechaMasAntigua,
       mesaCodigo: ordenBase.mesaCodigo,
-      clienteNombre: ordenBase.clienteNombre,
+      clienteNombre: ordenBase.clienteNombre ?? null,
       clienteTelefono: ordenBase.clienteTelefono || null,
       subtotal: subtotalTotal,
       descuentoTotal: descuentoTotal,
@@ -184,7 +215,9 @@ export const obtenerDatosTicket = async (ordenId: number, cajeroId?: number, ord
     },
     cajero,
     items: itemsFormateados,
-    restaurante
+    restaurante,
+    ivaHabilitado: config.ivaHabilitado,
+    metodoPago
   };
 };
 
@@ -192,6 +225,7 @@ interface TicketListRow extends RowDataPacket {
   orden_id: number;
   orden_folio: string;
   orden_fecha: Date;
+  fecha_ultimo_cobro: Date | null; // Fecha del último pago aplicado (para ordenar cobros recientes primero)
   mesa_codigo: string | null;
   mesa_nombre: string | null;
   cliente_nombre: string | null;
@@ -413,6 +447,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
         o.id AS orden_id,
         CONCAT('ORD-', LPAD(o.id, 6, '0')) AS orden_folio,
         o.creado_en AS orden_fecha,
+        (SELECT COALESCE(MAX(p.fecha_pago), o.creado_en) FROM pago p WHERE p.orden_id = o.id AND p.estado = 'aplicado') AS fecha_ultimo_cobro,
         m.codigo AS mesa_codigo,
         m.nombre AS mesa_nombre,
         o.cliente_nombre,
@@ -519,7 +554,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           WHERE p.orden_id = o.id 
             AND p.estado = 'aplicado'
         )
-      ORDER BY o.creado_en DESC
+      ORDER BY fecha_ultimo_cobro DESC, o.id DESC
       LIMIT 500
     `;
 
@@ -674,7 +709,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           tip: propinaTotal > 0 ? propinaTotal : null,
           total: totalTotal,
           status,
-          createdAt: utcToMxISO(fechaMasAntigua) ?? new Date().toISOString(),
+          createdAt: utcToMxISO(row.fecha_ultimo_cobro ?? fechaMasAntigua) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,
           cashierName: row.cajero_nombre,
           paymentMethod: paymentMethod,
@@ -725,7 +760,7 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           tip: row.propina_pago && Number(row.propina_pago) > 0 ? Number(row.propina_pago) : null,
           total: Number(row.orden_total),
           status,
-          createdAt: utcToMxISO(row.orden_fecha) ?? new Date().toISOString(),
+          createdAt: utcToMxISO(row.fecha_ultimo_cobro ?? row.orden_fecha) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,
           cashierName: row.cajero_nombre,
           paymentMethod,

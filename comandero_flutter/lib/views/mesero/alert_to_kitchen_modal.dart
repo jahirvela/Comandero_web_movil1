@@ -4,6 +4,7 @@ import '../../services/auth_service.dart';
 import '../../services/kitchen_alerts_service.dart';
 import '../../services/socket_service.dart';
 import '../../models/kitchen_alert.dart';
+import '../../utils/date_utils.dart' as date_utils;
 
 class AlertToKitchenModal extends StatefulWidget {
   final String tableNumber;
@@ -377,7 +378,7 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
         type: alertType,
         message: mensaje,
         createdByUserId: 0, // Se obtendrá del token en el backend
-        createdAt: DateTime.now(),
+        createdAt: date_utils.AppDateUtils.nowCdmx(),
         priority: priority, // Incluir la prioridad seleccionada
       );
 

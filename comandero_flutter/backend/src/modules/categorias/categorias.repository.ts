@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 
 interface CategoriaRow extends RowDataPacket {
   id: number;
@@ -24,8 +25,8 @@ export const listarCategorias = async () => {
     nombre: row.nombre,
     descripcion: row.descripcion,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   }));
 };
 
@@ -45,8 +46,8 @@ export const obtenerCategoriaPorId = async (id: number) => {
     nombre: row.nombre,
     descripcion: row.descripcion,
     activo: Boolean(row.activo),
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   };
 };
 

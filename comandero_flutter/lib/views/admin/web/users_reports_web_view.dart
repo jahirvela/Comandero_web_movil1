@@ -153,6 +153,7 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
                     child: TextField(
                       decoration: InputDecoration(
                         labelText: 'Buscar por nombre o usuario...',
+                        helperText: 'Los resultados se filtran al escribir',
                         prefixIcon: const Icon(Icons.search),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
@@ -398,6 +399,35 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
       builder: (context, constraints) {
         final isDesktop = constraints.maxWidth > 1200;
         final isTablet = constraints.maxWidth > 800;
+
+        if (users.isEmpty) {
+          return Padding(
+            padding: EdgeInsets.all(isDesktop ? 32.0 : (isTablet ? 24.0 : 16.0)),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.people_outline,
+                    size: isDesktop ? 64.0 : 48.0,
+                    color: AppColors.textSecondary.withValues(alpha: 0.3),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    controller.users.isEmpty
+                        ? 'No hay usuarios para mostrar'
+                        : 'Sin coincidencias para la búsqueda',
+                    style: TextStyle(
+                      fontSize: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
 
         return Card(
           elevation: 2,
@@ -1202,15 +1232,14 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
           .toList();
     }
 
-    // Filtrar por búsqueda
-    if (_searchQuery.isNotEmpty) {
+    // Filtrar por búsqueda solo cuando hay texto
+    final q = _searchQuery.trim();
+    if (q.isNotEmpty) {
       users = users
           .where(
             (user) =>
-                user.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-                user.username.toLowerCase().contains(
-                  _searchQuery.toLowerCase(),
-                ),
+                user.name.toLowerCase().contains(q.toLowerCase()) ||
+                user.username.toLowerCase().contains(q.toLowerCase()),
           )
           .toList();
     }

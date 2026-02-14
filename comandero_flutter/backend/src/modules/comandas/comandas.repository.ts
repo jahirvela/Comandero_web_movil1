@@ -25,10 +25,22 @@ export const verificarComandaImpresa = async (ordenId: number): Promise<boolean>
     );
     return rows.length > 0;
   } catch (error: any) {
-    // Si la tabla no existe, retornar false (no impresa)
     if (error.code === 'ER_NO_SUCH_TABLE') {
       logger.debug('Tabla comanda_impresion no existe, asumiendo que no está impresa');
       return false;
+    }
+    // Columna impreso_automaticamente puede no existir en esquemas antiguos
+    if (error.code === 'ER_BAD_FIELD_ERROR') {
+      try {
+        const [rows] = await pool.query<RowDataPacket[]>(
+          'SELECT id FROM comanda_impresion WHERE orden_id = ? LIMIT 1',
+          [ordenId]
+        );
+        return rows.length > 0;
+      } catch (e) {
+        logger.warn({ err: e, ordenId }, 'Error al verificar comanda impresa (fallback)');
+        return false;
+      }
     }
     logger.warn({ err: error, ordenId }, 'Error al verificar si comanda está impresa');
     return false;
@@ -36,7 +48,8 @@ export const verificarComandaImpresa = async (ordenId: number): Promise<boolean>
 };
 
 /**
- * Marca una comanda como impresa
+ * Marca una comanda como impresa.
+ * Compatible con tablas que no tengan impreso_automaticamente ni es_reimpresion (esquema antiguo).
  */
 export const marcarComandaImpresa = async (
   ordenId: number,
@@ -50,7 +63,7 @@ export const marcarComandaImpresa = async (
        VALUES (?, ?, ?, ?, NOW())`,
       [
         ordenId,
-        impresoPorUsuarioId === null ? 1 : 0, // Si no hay usuario, es automática
+        impresoPorUsuarioId === null ? 1 : 0,
         impresoPorUsuarioId,
         esReimpresion ? 1 : 0
       ]
@@ -60,13 +73,33 @@ export const marcarComandaImpresa = async (
       '✅ Comanda marcada como impresa'
     );
   } catch (error: any) {
-    // Si la tabla no existe, intentar crearla
     if (error.code === 'ER_NO_SUCH_TABLE') {
       logger.warn('Tabla comanda_impresion no existe, creándola...');
       await crearTablaComandaImpresion();
-      // Reintentar después de crear la tabla
       await marcarComandaImpresa(ordenId, impresoPorUsuarioId, esReimpresion);
       return;
+    }
+    // Esquema antiguo sin impreso_automaticamente / es_reimpresion: insertar solo columnas básicas
+    if (error.code === 'ER_BAD_FIELD_ERROR') {
+      try {
+        await pool.query<ResultSetHeader>(
+          `INSERT INTO comanda_impresion (orden_id, impreso_por_usuario_id, creado_en)
+           VALUES (?, ?, NOW())`,
+          [ordenId, impresoPorUsuarioId]
+        );
+        logger.info(
+          { ordenId, impresoPorUsuarioId },
+          '✅ Comanda marcada como impresa (esquema reducido)'
+        );
+        return;
+      } catch (fallbackError: any) {
+        logger.warn(
+          { err: fallbackError, ordenId },
+          'No se pudo registrar la impresión en comanda_impresion (tabla con otro esquema)'
+        );
+        // No relanzar: la comanda ya se imprimió; evitar 500 y reintentos en el cliente
+        return;
+      }
     }
     logger.error({ err: error, ordenId }, 'Error al marcar comanda como impresa');
     throw error;

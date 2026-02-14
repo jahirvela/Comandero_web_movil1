@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool, withTransaction } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 
 interface RolRow extends RowDataPacket {
   id: number;
@@ -43,8 +44,8 @@ export const listarRoles = async () => {
     id: row.id,
     nombre: row.nombre,
     descripcion: row.descripcion,
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
     permisos: mapPermisos(row.permisos)
   }));
 };
@@ -75,8 +76,8 @@ export const obtenerRolPorId = async (id: number) => {
     id: row.id,
     nombre: row.nombre,
     descripcion: row.descripcion,
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
     permisos: mapPermisos(row.permisos)
   };
 };

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../controllers/admin_controller.dart';
 import '../../../models/admin_model.dart';
+import '../../../services/reportes_service.dart';
 import '../../../utils/app_colors.dart';
 
 class InventoryWebView extends StatefulWidget {
@@ -318,6 +319,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                           },
                           decoration: InputDecoration(
                             hintText: 'Buscar productos...',
+                            helperText: 'Los resultados se filtran al escribir',
                             prefixIcon: const Icon(Icons.search),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
@@ -457,6 +459,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                         },
                         decoration: InputDecoration(
                           hintText: 'Buscar productos...',
+                          helperText: 'Los resultados se filtran al escribir',
                           prefixIcon: const Icon(Icons.search),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -637,10 +640,38 @@ class _InventoryWebViewState extends State<InventoryWebView> {
             ),
           ),
 
-          // Tabla
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
+          // Contenido: mensaje vacío o tabla
+          if (filteredItems.isEmpty)
+            Padding(
+              padding: EdgeInsets.all(isDesktop ? 32.0 : (isTablet ? 24.0 : 16.0)),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.inventory_2_outlined,
+                      size: isDesktop ? 64.0 : 48.0,
+                      color: AppColors.textSecondary.withValues(alpha: 0.3),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      controller.inventoryItems.isEmpty
+                          ? 'No hay productos en inventario'
+                          : 'Sin coincidencias para la búsqueda',
+                      style: TextStyle(
+                        fontSize: isDesktop ? 16.0 : (isTablet ? 14.0 : 12.0),
+                        color: AppColors.textSecondary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
               columnSpacing: isDesktop ? 24.0 : (isTablet ? 16.0 : 12.0),
               headingRowColor: WidgetStateProperty.all(
                 AppColors.primary.withValues(alpha: 0.05),
@@ -725,8 +756,8 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                         _buildDataRow(item, controller, isTablet, isDesktop),
                   )
                   .toList(),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1099,19 +1130,16 @@ class _InventoryWebViewState extends State<InventoryWebView> {
   List<InventoryItem> _getFilteredItems(AdminController controller) {
     var items = controller.inventoryItems;
 
-    // Filtrar por búsqueda
-    if (_searchQuery.isNotEmpty) {
+    // Filtrar por búsqueda solo cuando hay texto
+    final q = _searchQuery.trim();
+    if (q.isNotEmpty) {
       items = items
           .where(
             (item) =>
-                item.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-                (item.description?.toLowerCase().contains(
-                      _searchQuery.toLowerCase(),
-                    ) ??
+                item.name.toLowerCase().contains(q.toLowerCase()) ||
+                (item.description?.toLowerCase().contains(q.toLowerCase()) ??
                     false) ||
-                item.category.toLowerCase().contains(
-                  _searchQuery.toLowerCase(),
-                ),
+                item.category.toLowerCase().contains(q.toLowerCase()),
           )
           .toList();
     }
@@ -1202,10 +1230,146 @@ class _InventoryWebViewState extends State<InventoryWebView> {
   }
 
   void _showExportDialog(AdminController controller) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de exportación en desarrollo'),
-        backgroundColor: Colors.green,
+    final now = DateTime.now();
+    DateTime fechaInicio = DateTime(now.year, now.month, 1);
+    DateTime fechaFin = now;
+
+    showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.download, color: AppColors.primary),
+                SizedBox(width: 12),
+                Text('Exportar reporte de inventario'),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Selecciona el rango de fechas para el reporte de movimientos de inventario.',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 16),
+                  ListTile(
+                    title: const Text('Desde'),
+                    subtitle: Text(
+                      '${fechaInicio.day.toString().padLeft(2, '0')}/${fechaInicio.month.toString().padLeft(2, '0')}/${fechaInicio.year}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.calendar_today),
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: fechaInicio,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setDialogState(() => fechaInicio = picked);
+                          if (fechaInicio.isAfter(fechaFin)) {
+                            setDialogState(() => fechaFin = fechaInicio);
+                          }
+                        }
+                      },
+                    ),
+                  ),
+                  ListTile(
+                    title: const Text('Hasta'),
+                    subtitle: Text(
+                      '${fechaFin.day.toString().padLeft(2, '0')}/${fechaFin.month.toString().padLeft(2, '0')}/${fechaFin.year}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.calendar_today),
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: fechaFin,
+                          firstDate: fechaInicio,
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setDialogState(() => fechaFin = picked);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  try {
+                    await ReportesService().generarReporteInventarioPDF(
+                      fechaInicio: fechaInicio,
+                      fechaFin: fechaFin,
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Reporte PDF descargado'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al descargar PDF: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.picture_as_pdf),
+                label: const Text('Descargar PDF'),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  try {
+                    await ReportesService().generarReporteInventarioCSV(
+                      fechaInicio: fechaInicio,
+                      fechaFin: fechaFin,
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Reporte CSV descargado'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al descargar CSV: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.table_chart),
+                label: const Text('Descargar CSV'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

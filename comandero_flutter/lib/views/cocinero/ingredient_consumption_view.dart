@@ -50,7 +50,7 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
 
       // Obtener órdenes del día para calcular consumo
       final ordenes = await ordenesService.getOrdenes();
-      final hoy = DateTime.now();
+      final hoy = date_utils.AppDateUtils.nowCdmx();
       final inicioDia = DateTime(hoy.year, hoy.month, hoy.day);
 
       final ordenesHoy = ordenes.where((o) {
@@ -122,10 +122,11 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
           .toList();
     }
 
-    // Filtrar por búsqueda
-    if (searchQuery.isNotEmpty) {
+    // Filtrar por búsqueda solo cuando hay texto
+    final q = searchQuery.trim();
+    if (q.isNotEmpty) {
       items = items.where((item) {
-        return item['name'].toLowerCase().contains(searchQuery.toLowerCase());
+        return item['name'].toLowerCase().contains(q.toLowerCase());
       }).toList();
     }
 
@@ -263,6 +264,7 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
         },
         decoration: InputDecoration(
           hintText: "Buscar ingrediente",
+          helperText: "Los resultados se filtran al escribir",
           hintStyle: TextStyle(
             color: AppColors.textSecondary,
             fontSize: isTablet ? 16.0 : 14.0,
@@ -406,7 +408,7 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
     final items = filteredIngredients;
 
     if (items.isEmpty) {
-      return _buildEmptyState(isTablet);
+      return _buildEmptyState(isTablet, sourceEmpty: ingredients.isEmpty);
     }
 
     return Column(
@@ -656,7 +658,7 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
     );
   }
 
-  Widget _buildEmptyState(bool isTablet) {
+  Widget _buildEmptyState(bool isTablet, {bool sourceEmpty = false}) {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isTablet ? 60.0 : 40.0),
@@ -674,7 +676,9 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No hay ingredientes que coincidan con los filtros',
+            sourceEmpty
+                ? 'No hay ingredientes'
+                : 'Sin coincidencias para la búsqueda',
             style: TextStyle(
               fontSize: isTablet ? 18.0 : 16.0,
               fontWeight: FontWeight.w600,
@@ -684,7 +688,9 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Intenta cambiar los filtros o la búsqueda',
+            sourceEmpty
+                ? 'Los ingredientes aparecerán cuando haya consumo'
+                : 'Intenta cambiar los filtros o la búsqueda',
             style: TextStyle(
               fontSize: isTablet ? 14.0 : 12.0,
               color: AppColors.textSecondary,

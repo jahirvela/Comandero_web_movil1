@@ -23,7 +23,8 @@ export const listarOrdenesController = async (req: Request, res: Response, next:
   try {
     const estadoOrdenId = req.query.estadoOrdenId ? Number(req.query.estadoOrdenId) : undefined;
     const mesaId = req.query.mesaId ? Number(req.query.mesaId) : undefined;
-    const ordenes = await obtenerOrdenes({ estadoOrdenId, mesaId });
+    const incluirCerradas = req.query.incluirCerradas === '1' || req.query.incluirCerradas === 'true';
+    const ordenes = await obtenerOrdenes({ estadoOrdenId, mesaId, incluirCerradas });
     res.json({ data: ordenes });
   } catch (error) {
     next(error);

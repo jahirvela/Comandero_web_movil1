@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/api_config.dart';
+import '../utils/date_utils.dart' as date_utils;
 import 'socket_service.dart';
 import 'auth_service.dart';
 
@@ -71,7 +72,7 @@ class AlertasService {
           'username': username,
           'rol': roles.isNotEmpty ? roles.first : 'mesero',
         },
-        'timestamp': DateTime.now().toIso8601String(),
+        'timestamp': date_utils.AppDateUtils.nowCdmx().toIso8601String(),
         if (metadata != null) 'metadata': metadata,
       };
 
@@ -93,7 +94,7 @@ class AlertasService {
         'mesaId': mesaId,
         'prioridad': prioridad,
         'emisor': {'id': usuarioId, 'username': username},
-        'timestamp': DateTime.now().toIso8601String(),
+        'timestamp': date_utils.AppDateUtils.nowCdmx().toIso8601String(),
         if (metadata != null) 'metadata': metadata,
       });
 

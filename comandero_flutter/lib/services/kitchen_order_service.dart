@@ -2,6 +2,7 @@ import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../controllers/mesero_controller.dart';
 import '../controllers/cocinero_controller.dart';
+import '../utils/date_utils.dart' as date_utils;
 import 'socket_service.dart';
 
 /// Servicio compartido para comunicar pedidos entre Mesero y Cocinero
@@ -75,7 +76,7 @@ class KitchenOrderService {
         tableNumber: tableNumber,
         items: orderItems,
         status: OrderStatus.pendiente,
-        orderTime: DateTime.now(),
+        orderTime: date_utils.AppDateUtils.nowCdmx(),
         estimatedTime: _calculateEstimatedTime(orderItems),
         waiter: waiterName,
         priority: OrderPriority.normal,
@@ -147,7 +148,7 @@ class KitchenOrderService {
           'reason': reason,
           if (details != null) 'details': details,
         },
-        'timestamp': DateTime.now().toIso8601String(),
+        'timestamp': date_utils.AppDateUtils.nowCdmx().toIso8601String(),
       };
 
       // Enviar por Socket.IO para tiempo real
@@ -172,7 +173,7 @@ class KitchenOrderService {
           reason: reason,
           details: details,
           priority: prioridadBackend,
-          timestamp: DateTime.now(),
+          timestamp: date_utils.AppDateUtils.nowCdmx(),
         );
         _cocineroController!.addAlert(alert);
         */

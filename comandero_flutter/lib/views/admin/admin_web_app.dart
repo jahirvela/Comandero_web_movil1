@@ -15,6 +15,7 @@ import 'web/inventory_web_view.dart';
 import 'web/cash_closures_web_view.dart';
 import 'web/real_time_sales_web_view.dart';
 import 'web/users_reports_web_view.dart';
+import 'web/configuracion_web_view.dart';
 
 class AdminWebApp extends StatefulWidget {
   const AdminWebApp({super.key});
@@ -211,6 +212,11 @@ class _AdminWebAppState extends State<AdminWebApp> {
         'id': 'users_reports',
         'name': 'Usuarios/Reportes',
         'icon': Icons.people_alt,
+      },
+      {
+        'id': 'configuracion',
+        'name': 'Configuración',
+        'icon': Icons.settings,
       },
     ];
 
@@ -545,7 +551,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                       ),
                     ),
                     Text(
-                      'Resumen general del puesto de barbacoa',
+                      'Resumen general de restaurante',
                       style: TextStyle(
                         fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                         color: AppColors.textSecondary,
@@ -677,6 +683,8 @@ class _AdminWebAppState extends State<AdminWebApp> {
         return const RealTimeSalesWebView();
       case 'users_reports':
         return const UsersReportsWebView();
+      case 'configuracion':
+        return const ConfiguracionWebView();
       default:
         return SingleChildScrollView(
           padding: EdgeInsets.all(isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0)),
@@ -1135,7 +1143,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                   label: Text(
                     ticket.isTakeaway
                         ? (ticket.customerName ?? 'Para llevar')
-                        : 'Mesa ${ticket.tableNumber}',
+                        : ticket.tableDisplayLabel,
                     style: TextStyle(
                       fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 8.0),
                       color: Colors.white,

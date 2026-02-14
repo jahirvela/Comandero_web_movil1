@@ -1,15 +1,32 @@
-# 🖨️ Guía: Configurar Impresora Térmica USB POS-80 en Windows
+# 🖨️ Guía: Configurar Impresora Térmica USB en Windows
 
-Esta guía explica cómo configurar una impresora térmica USB POS-80 para que funcione con el sistema Comandero.
+Esta guía explica cómo configurar una impresora térmica USB (58mm o 80mm, ESC/POS) para el sistema Comandero. Es válida para **cualquier impresora térmica** compatible con ESC/POS (por ejemplo ZKP5803, POS-80, Epson TM-T20).
+
+---
+
+## 🧪 Pruebas sin impresora (sin cambiar .env)
+
+Si estás probando en local **sin tener la impresora conectada**, no hace falta tocar el `.env` de producción:
+
+1. En la carpeta `backend`, crea un archivo **`.env.local`** (no se sube al servidor, está en .gitignore).
+2. Pon solo estas dos líneas:
+   ```env
+   PRINTER_TYPE=simulation
+   PRINTER_INTERFACE=file
+   ```
+3. El sistema cargará primero `.env` y luego `.env.local`; estas variables **sobrescriben** las del `.env`. Las impresiones se guardan en archivos en la carpeta `tickets/`.
+4. En el **servidor** no uses `.env.local`; solo tendrás `.env` con la impresora real. Así no cambias código ni config al subir.
 
 ---
 
 ## 📋 Requisitos Previos
 
-1. **Impresora térmica POS-80** compatible con comandos ESC/POS
+1. **Impresora térmica** compatible con comandos ESC/POS (58mm o 80mm)
 2. **Cable USB** para conectar la impresora a la computadora
 3. **Controladores** de la impresora instalados en Windows
 4. **Windows 10/11** (o Windows 7/8.1)
+
+En Windows, el backend envía los tickets en **modo RAW** (bytes ESC/POS directos) usando el script `scripts/print-raw-windows.ps1` y la API de impresión de Windows. No se usan paquetes nativos Node; solo PowerShell. Asegúrate de que la carpeta `scripts` (con `print-raw-windows.ps1`) esté presente al desplegar.
 
 ---
 
@@ -65,15 +82,16 @@ Después de instalar la impresora, necesitas identificar cómo Windows la recono
 Abre el archivo `.env` en la carpeta `backend` y configura las siguientes variables:
 
 ```env
-# Tipo de impresora: 'pos80' para impresora real, 'simulation' para pruebas
+# Tipo: 'pos80' para impresora real, 'simulation' para pruebas
 PRINTER_TYPE=pos80
-
-# Interfaz: 'usb' para USB, 'tcp' para red, 'file' para guardar en archivo
 PRINTER_INTERFACE=usb
 
-# Nombre de la impresora o puerto (ejemplos):
-# Opción 1: Nombre de la impresora (recomendado)
-PRINTER_DEVICE=XP-80
+# Ancho de papel: 58 (ej. ZKP5803) o 80 (80mm). Por defecto 80
+PRINTER_PAPER_WIDTH=58
+
+# Nombre de la impresora (como en Windows → Impresoras y escáneres)
+# Ejemplos: "Thermal Receipt Printer", "ZKP5803", "XP-80"
+PRINTER_DEVICE=Thermal Receipt Printer
 
 # Opción 2: Puerto USB de Windows
 # PRINTER_DEVICE=USB001

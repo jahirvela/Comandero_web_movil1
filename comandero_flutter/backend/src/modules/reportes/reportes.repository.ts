@@ -27,6 +27,7 @@ export interface TopProducto {
 export interface CorteCaja {
   fecha: Date;
   totalVentas: number;
+  totalImpuesto: number;
   totalEfectivo: number;
   totalTarjeta: number;
   totalOtros: number;
@@ -111,20 +112,20 @@ export const obtenerTopProductos = async (
   const [rows] = await pool.query<RowDataPacket[]>(
     `
     SELECT
-      p.id AS producto_id,
-      p.nombre AS producto_nombre,
-      c.nombre AS categoria_nombre,
+      COALESCE(p.id, 0) AS producto_id,
+      COALESCE(oi.producto_nombre, p.nombre, 'Producto') AS producto_nombre,
+      COALESCE(c.nombre, 'Sin categoría') AS categoria_nombre,
       SUM(oi.cantidad) AS cantidad_vendida,
       SUM(oi.total_linea) AS ingresos
     FROM orden_item oi
-    JOIN producto p ON p.id = oi.producto_id
+    LEFT JOIN producto p ON p.id = oi.producto_id
     LEFT JOIN categoria c ON c.id = p.categoria_id
     JOIN orden o ON o.id = oi.orden_id
     WHERE DATE(o.creado_en) BETWEEN DATE(:fechaInicio) AND DATE(:fechaFin)
       AND o.estado_orden_id IN (
         SELECT id FROM estado_orden WHERE nombre IN ('cerrada', 'pagada')
       )
-    GROUP BY p.id, p.nombre, c.nombre
+    GROUP BY COALESCE(oi.producto_nombre, p.nombre), COALESCE(c.nombre, 'Sin categoría'), COALESCE(p.id, 0)
     ORDER BY cantidad_vendida DESC
     LIMIT :limite
     `,
@@ -132,9 +133,9 @@ export const obtenerTopProductos = async (
   );
 
   return rows.map((row) => ({
-    productoId: row.producto_id,
-    productoNombre: row.producto_nombre,
-    categoriaNombre: row.categoria_nombre || 'Sin categoría',
+    productoId: Number(row.producto_id),
+    productoNombre: (row.producto_nombre as string) || 'Producto',
+    categoriaNombre: (row.categoria_nombre as string) || 'Sin categoría',
     cantidadVendida: Number(row.cantidad_vendida),
     ingresos: Number(row.ingresos)
   }));
@@ -160,6 +161,7 @@ export const obtenerCorteCaja = async (fecha: Date, cajeroId?: number): Promise<
       DATE(o.creado_en) AS fecha,
       COUNT(DISTINCT o.id) AS numero_ordenes,
       SUM(o.total) AS total_ventas,
+      COALESCE(SUM(o.impuesto_total), 0) AS total_impuesto,
       SUM(CASE WHEN fp.nombre = 'Efectivo' THEN p.monto ELSE 0 END) AS total_efectivo,
       SUM(CASE WHEN fp.nombre = 'Tarjeta' THEN p.monto ELSE 0 END) AS total_tarjeta,
       SUM(CASE WHEN fp.nombre NOT IN ('Efectivo', 'Tarjeta') THEN p.monto ELSE 0 END) AS total_otros,
@@ -183,6 +185,7 @@ export const obtenerCorteCaja = async (fecha: Date, cajeroId?: number): Promise<
     return {
       fecha,
       totalVentas: 0,
+      totalImpuesto: 0,
       totalEfectivo: 0,
       totalTarjeta: 0,
       totalOtros: 0,
@@ -196,6 +199,7 @@ export const obtenerCorteCaja = async (fecha: Date, cajeroId?: number): Promise<
   return {
     fecha: row.fecha,
     totalVentas: Number(row.total_ventas || 0),
+    totalImpuesto: Number(row.total_impuesto || 0),
     totalEfectivo: Number(row.total_efectivo || 0),
     totalTarjeta: Number(row.total_tarjeta || 0),
     totalOtros: Number(row.total_otros || 0),

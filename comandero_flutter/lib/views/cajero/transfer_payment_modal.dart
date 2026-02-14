@@ -146,6 +146,7 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   }
 
   Widget _buildSummaryCard(bool isTablet) {
+    final showIva = widget.controller.ivaHabilitado;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -155,6 +156,48 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
       ),
       child: Column(
         children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Subtotal:',
+                style: TextStyle(
+                  fontSize: isTablet ? 14 : 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                widget.controller.formatCurrency(widget.bill.subtotal - widget.bill.discount),
+                style: TextStyle(
+                  fontSize: isTablet ? 14 : 12,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          if (showIva) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'IVA (16%):',
+                  style: TextStyle(
+                    fontSize: isTablet ? 14 : 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                Text(
+                  widget.controller.formatCurrency(widget.bill.tax),
+                  style: TextStyle(
+                    fontSize: isTablet ? 14 : 12,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [

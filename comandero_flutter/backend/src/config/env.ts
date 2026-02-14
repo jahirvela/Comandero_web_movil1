@@ -1,7 +1,10 @@
+import path from 'path';
 import { config as loadEnv } from 'dotenv';
 import { z } from 'zod';
 
+// Cargar .env y luego .env.local (si existe) para overrides locales sin tocar .env
 loadEnv();
+loadEnv({ path: path.join(process.cwd(), '.env.local'), override: true });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -27,13 +30,17 @@ const envSchema = z.object({
   RATE_LIMIT_LOGIN_MAX: z.coerce.number().int().positive().default(5), // Más restrictivo para login
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   LOG_PRETTY: z.coerce.boolean().default(false), // Desactivado por defecto (mejor para producción)
-  // Configuración de impresora térmica
+  // Configuración de impresora(s) térmica(s) - si no se usa config/printers.json
   PRINTER_TYPE: z.enum(['pos80', 'simulation']).default('simulation'),
   PRINTER_INTERFACE: z.enum(['usb', 'tcp', 'file']).default('file'),
   PRINTER_HOST: z.string().optional(),
   PRINTER_PORT: z.coerce.number().int().positive().optional(),
-  PRINTER_DEVICE: z.string().optional(), // Para USB: ruta del dispositivo
-  PRINTER_SIMULATION_PATH: z.string().default('./tickets')
+  PRINTER_DEVICE: z.string().optional(), // USB: nombre de impresora (ej. "Thermal Receipt Printer") o puerto
+  PRINTER_SIMULATION_PATH: z.string().default('./tickets'),
+  /** Ancho de papel en mm: 57, 58, 72 u 80. Por defecto 80. */
+  PRINTER_PAPER_WIDTH: z.coerce.number().int().refine((n) => n === 57 || n === 58 || n === 72 || n === 80).optional(),
+  /** Ruta al archivo JSON de impresoras (opcional). Si no se define, se usa config/printers.json */
+  PRINTERS_CONFIG_PATH: z.string().optional()
 });
 
 type Env = z.infer<typeof envSchema>;

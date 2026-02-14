@@ -62,10 +62,13 @@ export const obtenerEstadoOrdenPorNombre = async (nombre: string) => {
 
 export const listarOrdenes = async ({
   estadoOrdenId,
-  mesaId
+  mesaId,
+  incluirCerradas = false
 }: {
   estadoOrdenId?: number;
   mesaId?: number;
+  /** Si true (p. ej. para el cajero), no se excluye "cerrada": así aparecen cuentas por cobrar */
+  incluirCerradas?: boolean;
 }) => {
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
@@ -85,9 +88,9 @@ export const listarOrdenes = async ({
     }
   }
 
-  // IMPORTANTE: Excluir órdenes pagadas/canceladas/cerradas por defecto
-  // Solo incluir órdenes activas (abierta, en_preparacion, listo, listo_para_recoger)
-  const estadoExcluidos = ['pagada', 'cancelada', 'cerrada'];
+  // Por defecto excluir pagada, cancelada y cerrada (solo órdenes activas).
+  // Con incluirCerradas=true (cajero) solo excluimos pagada y cancelada para ver cuentas por cobrar.
+  const estadoExcluidos = incluirCerradas ? ['pagada', 'cancelada'] : ['pagada', 'cancelada', 'cerrada'];
   estadoExcluidos.forEach((estado, i) => {
     params[`estadoExcluido${i}`] = estado;
   });
@@ -192,11 +195,18 @@ export const obtenerItemsOrden = async (ordenId: number) => {
   const [rows] = await pool.query<OrdenItemRow[]>(
     `
     SELECT
-      oi.*,
-      p.nombre AS producto_nombre,
-      pt.etiqueta AS producto_tamano_etiqueta
+      oi.id,
+      oi.orden_id,
+      oi.producto_id,
+      oi.producto_tamano_id,
+      oi.cantidad,
+      oi.precio_unitario,
+      oi.total_linea,
+      oi.nota,
+      COALESCE(oi.producto_nombre, p.nombre) AS producto_nombre,
+      COALESCE(oi.producto_tamano_etiqueta, pt.etiqueta) AS producto_tamano_etiqueta
     FROM orden_item oi
-    JOIN producto p ON p.id = oi.producto_id
+    LEFT JOIN producto p ON p.id = oi.producto_id
     LEFT JOIN producto_tamano pt ON pt.id = oi.producto_tamano_id
     WHERE oi.orden_id = :ordenId
     ORDER BY oi.id
@@ -207,7 +217,7 @@ export const obtenerItemsOrden = async (ordenId: number) => {
     id: row.id,
     ordenId: row.orden_id,
     productoId: row.producto_id,
-    productoNombre: row.producto_nombre,
+    productoNombre: row.producto_nombre ?? 'Producto',
     productoTamanoId: row.producto_tamano_id,
     productoTamanoEtiqueta: row.producto_tamano_etiqueta,
     cantidad: Number(row.cantidad),
@@ -323,13 +333,24 @@ export const crearOrden = async ({
     const ordenId = result.insertId;
 
     for (const item of items) {
-      // total_linea es columna generada automáticamente, no se inserta
+      const [nombreRows] = await conn.query<RowDataPacket[]>(
+        `SELECT p.nombre AS producto_nombre, pt.etiqueta AS producto_tamano_etiqueta
+         FROM producto p
+         LEFT JOIN producto_tamano pt ON pt.id = ?
+         WHERE p.id = ?`,
+        [item.productoTamanoId ?? null, item.productoId]
+      );
+      const productoNombre = (nombreRows[0]?.producto_nombre as string) ?? 'Producto';
+      const productoTamanoEtiqueta = (nombreRows[0]?.producto_tamano_etiqueta as string) ?? null;
+
       const [itemResult] = await conn.execute<ResultSetHeader>(
         `
         INSERT INTO orden_item (
           orden_id,
           producto_id,
           producto_tamano_id,
+          producto_nombre,
+          producto_tamano_etiqueta,
           cantidad,
           precio_unitario,
           nota
@@ -338,6 +359,8 @@ export const crearOrden = async ({
           :ordenId,
           :productoId,
           :productoTamanoId,
+          :productoNombre,
+          :productoTamanoEtiqueta,
           :cantidad,
           :precioUnitario,
           :nota
@@ -347,6 +370,8 @@ export const crearOrden = async ({
           ordenId,
           productoId: item.productoId,
           productoTamanoId: item.productoTamanoId ?? null,
+          productoNombre,
+          productoTamanoEtiqueta,
           cantidad: item.cantidad,
           precioUnitario: item.precioUnitario,
           nota: item.nota ?? null
@@ -479,13 +504,24 @@ export const agregarItemsAOrden = async (
 ) => {
   await withTransaction(async (conn) => {
     for (const item of items) {
-      // total_linea es columna generada automáticamente, no se inserta
+      const [nombreRows] = await conn.query<RowDataPacket[]>(
+        `SELECT p.nombre AS producto_nombre, pt.etiqueta AS producto_tamano_etiqueta
+         FROM producto p
+         LEFT JOIN producto_tamano pt ON pt.id = ?
+         WHERE p.id = ?`,
+        [item.productoTamanoId ?? null, item.productoId]
+      );
+      const productoNombre = (nombreRows[0]?.producto_nombre as string) ?? 'Producto';
+      const productoTamanoEtiqueta = (nombreRows[0]?.producto_tamano_etiqueta as string) ?? null;
+
       const [itemResult] = await conn.execute<ResultSetHeader>(
         `
         INSERT INTO orden_item (
           orden_id,
           producto_id,
           producto_tamano_id,
+          producto_nombre,
+          producto_tamano_etiqueta,
           cantidad,
           precio_unitario,
           nota
@@ -494,6 +530,8 @@ export const agregarItemsAOrden = async (
           :ordenId,
           :productoId,
           :productoTamanoId,
+          :productoNombre,
+          :productoTamanoEtiqueta,
           :cantidad,
           :precioUnitario,
           :nota
@@ -503,6 +541,8 @@ export const agregarItemsAOrden = async (
           ordenId,
           productoId: item.productoId,
           productoTamanoId: item.productoTamanoId ?? null,
+          productoNombre,
+          productoTamanoEtiqueta,
           cantidad: item.cantidad,
           precioUnitario: item.precioUnitario,
           nota: item.nota ?? null
@@ -547,7 +587,30 @@ export const listarEstadosOrden = async () => {
   }));
 };
 
-export const recalcularTotalesOrden = async (ordenId: number) => {
+/**
+ * IDs de órdenes que están en estado "listo" o "listo para recoger"
+ * (para sincronizar descuento de inventario de órdenes ya marcadas).
+ */
+export const listarOrdenIdsEnEstadoListo = async (): Promise<number[]> => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `
+    SELECT o.id
+    FROM orden o
+    JOIN estado_orden eo ON eo.id = o.estado_orden_id
+    WHERE LOWER(eo.nombre) IN ('listo', 'listo_para_recoger', 'ready')
+    ORDER BY o.id
+    `,
+    []
+  );
+  return (rows || []).map((r: RowDataPacket) => Number(r.id));
+};
+
+/**
+ * Recalcula subtotal desde ítems y opcionalmente el IVA (16%) según configuración.
+ * @param ordenId - ID de la orden
+ * @param ivaHabilitado - Si true, impuesto = (subtotal - descuento) * 0.16; si false o no se pasa, se mantiene el impuesto actual (típicamente 0)
+ */
+export const recalcularTotalesOrden = async (ordenId: number, ivaHabilitado?: boolean) => {
   const [ordenRows] = await pool.query<RowDataPacket[]>(
     `
     SELECT descuento_total, impuesto_total
@@ -586,18 +649,23 @@ export const recalcularTotalesOrden = async (ordenId: number) => {
   }
 
   const descuentoTotal = Number(orden.descuento_total ?? 0);
-  const impuestoTotal = Number(orden.impuesto_total ?? 0);
-  const total = subtotal - descuentoTotal + impuestoTotal;
+  const baseImponible = subtotal - descuentoTotal;
+  const impuestoTotal =
+    ivaHabilitado === true
+      ? Math.round(baseImponible * 0.16 * 100) / 100
+      : Number(orden.impuesto_total ?? 0);
+  const total = Math.round((baseImponible + impuestoTotal) * 100) / 100;
 
   await pool.execute(
     `
     UPDATE orden
     SET subtotal = :subtotal,
+        impuesto_total = :impuestoTotal,
         total = :total,
         actualizado_en = NOW()
     WHERE id = :ordenId
     `,
-    { subtotal, total, ordenId }
+    { subtotal, impuestoTotal, total, ordenId }
   );
 };
 

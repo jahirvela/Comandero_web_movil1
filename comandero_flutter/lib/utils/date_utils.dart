@@ -19,7 +19,7 @@ class AppDateUtils {
   /// - Timestamp (int): milisegundos o segundos desde epoch (UTC)
   static DateTime parseToLocal(dynamic fecha) {
     if (fecha == null) {
-      return AppDateUtils.now();
+      return AppDateUtils.nowCdmx();
     }
 
     try {
@@ -29,7 +29,7 @@ class AppDateUtils {
         final fechaLimpia = fecha.trim();
         
         if (fechaLimpia.isEmpty) {
-          return AppDateUtils.now();
+          return AppDateUtils.nowCdmx();
         }
 
         // Verificar si es solo fecha (sin hora) - formato YYYY-MM-DD
@@ -154,7 +154,7 @@ class AppDateUtils {
               }
             } catch (e) {
               print('⚠️ AppDateUtils: Error al parsear fecha ISO: $fechaLimpia, error: $e');
-              return AppDateUtils.now();
+              return AppDateUtils.nowCdmx();
             }
           }
         }
@@ -169,13 +169,13 @@ class AppDateUtils {
             : DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true);
         parsedDate = _utcToCdmx(utcDate);
       } else {
-        return AppDateUtils.now();
+        return AppDateUtils.nowCdmx();
       }
 
       return parsedDate;
     } catch (e) {
       print('⚠️ AppDateUtils: Error al parsear fecha: $fecha, error: $e');
-      return AppDateUtils.now();
+      return AppDateUtils.nowCdmx();
     }
   }
 
@@ -196,19 +196,16 @@ class AppDateUtils {
     return utcDate.add(Duration(hours: offsetHours));
   }
 
-  /// Obtiene la fecha/hora actual en zona horaria CDMX (America/Mexico_City)
-  /// IMPORTANTE: Calcula el offset correcto de CDMX considerando horario de verano
-  /// CDMX: UTC-6 en invierno, UTC-5 en verano (horario de verano)
-  /// 
-  /// Horario de verano en México (aproximado):
-  /// - Comienza: primer domingo de abril a las 2:00 AM
-  /// - Termina: último domingo de octubre a las 2:00 AM
-  /// Obtiene la fecha/hora actual en zona horaria local del sistema
-  /// Si el sistema está configurado con zona horaria de México, devuelve hora de CDMX
-  /// Si no, devuelve la hora local del sistema
+  /// Obtiene la fecha/hora actual en zona horaria CDMX (America/Mexico_City).
+  /// Siempre devuelve la hora de CDMX con independencia de la zona del dispositivo.
+  static DateTime nowCdmx() {
+    final utcNow = DateTime.now().toUtc();
+    return _utcToCdmx(utcNow);
+  }
+
+  /// Obtiene la fecha/hora actual en zona horaria local del sistema (legacy).
+  /// Para lógica de negocio y filtros "hoy" usa [nowCdmx].
   static DateTime now() {
-    // Usar DateTime.now() directamente que usa la zona horaria del sistema
-    // Si el sistema está configurado con zona horaria de México, ya será correcta
     return DateTime.now();
   }
   
@@ -274,6 +271,32 @@ class AppDateUtils {
       return lastDay.day; // El último día es domingo
     } else {
       return lastDay.day - weekday; // Retroceder hasta el domingo anterior
+    }
+  }
+
+  /// Parsea una fecha del backend (UTC) y la convierte a la hora local del dispositivo.
+  /// Útil para mostrar "Última actualización" y que coincida con la hora del sistema del usuario.
+  static DateTime parseUtcToDeviceLocal(dynamic fecha) {
+    if (fecha == null) return nowCdmx();
+    try {
+      if (fecha is String) {
+        final s = fecha.trim();
+        if (s.isEmpty) return nowCdmx();
+        final parsed = DateTime.parse(s);
+        return parsed.isUtc ? parsed.toLocal() : parsed;
+      }
+      if (fecha is DateTime) {
+        return fecha.isUtc ? fecha.toLocal() : fecha;
+      }
+      if (fecha is int) {
+        final utc = fecha > 1000000000000
+            ? DateTime.fromMillisecondsSinceEpoch(fecha, isUtc: true)
+            : DateTime.fromMillisecondsSinceEpoch(fecha * 1000, isUtc: true);
+        return utc.toLocal();
+      }
+      return nowCdmx();
+    } catch (_) {
+      return nowCdmx();
     }
   }
 
@@ -379,7 +402,7 @@ class AppDateUtils {
   /// Ej: "Hace 5 minutos", "Hace 2 horas", "Hace 3 días"
   /// IMPORTANTE: Usa hora CDMX para cálculos precisos
   static String getTimeAgo(DateTime fecha) {
-    final now = AppDateUtils.now(); // Usar hora CDMX
+    final now = AppDateUtils.nowCdmx();
     final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
     final difference = now.difference(localDate);
 
@@ -405,9 +428,37 @@ class AppDateUtils {
     }
   }
 
+  /// Formato corto unificado para "hace cuánto" en toda la app.
+  /// Evita mostrar "1260 min"; convierte a "Hace 21 h" o "Hace X días".
+  /// Usa [now] como referencia (default DateTime.now() para consistencia).
+  static String formatTimeAgoShort(DateTime from, {DateTime? now}) {
+    final n = now ?? DateTime.now();
+    final localFrom = from.isUtc ? from.toLocal() : from;
+    final diff = n.difference(localFrom);
+    if (diff.isNegative || diff.inSeconds < 60) return 'Recién';
+    if (diff.inMinutes < 60) return 'Hace ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'Hace ${diff.inHours} h';
+    if (diff.inDays < 30) return 'Hace ${diff.inDays} ${diff.inDays == 1 ? 'día' : 'días'}';
+    final weeks = (diff.inDays / 7).floor();
+    if (weeks < 8) return 'Hace $weeks ${weeks == 1 ? 'semana' : 'semanas'}';
+    return formatDate(localFrom);
+  }
+
+  /// Igual que [formatTimeAgoShort] pero a partir de una [Duration].
+  /// Útil cuando ya tienes la diferencia calculada (ej. cajero, capitán).
+  static String formatDurationShort(Duration d) {
+    if (d.isNegative || d.inSeconds < 60) return 'Recién';
+    if (d.inMinutes < 60) return 'Hace ${d.inMinutes} min';
+    if (d.inHours < 24) return 'Hace ${d.inHours} h';
+    if (d.inDays < 30) return 'Hace ${d.inDays} ${d.inDays == 1 ? 'día' : 'días'}';
+    final weeks = (d.inDays / 7).floor();
+    if (weeks < 8) return 'Hace $weeks ${weeks == 1 ? 'semana' : 'semanas'}';
+    return 'Hace ${d.inDays} días';
+  }
+
   /// Verifica si una fecha es de hoy (en zona CDMX)
   static bool isToday(DateTime fecha) {
-    final now = AppDateUtils.now(); // Usar hora CDMX
+    final now = AppDateUtils.nowCdmx();
     final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
     return localDate.year == now.year && 
            localDate.month == now.month && 
@@ -416,7 +467,7 @@ class AppDateUtils {
 
   /// Verifica si una fecha es de ayer (en zona CDMX)
   static bool isYesterday(DateTime fecha) {
-    final now = AppDateUtils.now(); // Usar hora CDMX
+    final now = AppDateUtils.nowCdmx();
     final yesterday = now.subtract(const Duration(days: 1));
     final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
     return localDate.year == yesterday.year && 

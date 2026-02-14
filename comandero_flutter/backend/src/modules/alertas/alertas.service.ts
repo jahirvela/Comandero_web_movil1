@@ -69,7 +69,9 @@ export const emitirAlerta = async (
       let tipoBD: 'sistema' | 'operacion' | 'inventario' | 'mensaje' = 'operacion';
       if (payload.tipo === TipoAlerta.CAJA || payload.tipo === TipoAlerta.PAGO) {
         tipoBD = 'sistema';
-      } else if (payload.tipo === TipoAlerta.COCINA || payload.tipo === TipoAlerta.MESA || 
+      } else if (payload.tipo === TipoAlerta.INVENTARIO) {
+        tipoBD = 'inventario';
+      } else if (payload.tipo === TipoAlerta.COCINA || payload.tipo === TipoAlerta.MESA ||
                  payload.tipo === TipoAlerta.MODIFICACION || payload.tipo === TipoAlerta.DEMORA ||
                  payload.tipo === TipoAlerta.CANCELACION) {
         tipoBD = 'operacion';
@@ -81,7 +83,8 @@ export const emitirAlerta = async (
         ordenId: payload.ordenId ?? null,
         mesaId: payload.mesaId ?? null,
         usuarioOrigenId: usuarioId,
-        usuarioDestinoId: null
+        usuarioDestinoId: null,
+        metadata: payload.metadata ?? undefined
       });
       logger.info({ 
         alertaId, 
@@ -98,6 +101,75 @@ export const emitirAlerta = async (
   } catch (error) {
     logger.error({ err: error, payload }, 'Error al emitir alerta');
     // No lanzar error, solo loguear
+    return null;
+  }
+};
+
+/** ID de usuario "Sistema" para alertas automáticas (inventario, etc.) */
+const SISTEMA_USUARIO_ID = 1;
+
+export interface ItemInventarioAlerta {
+  id: number;
+  nombre: string;
+  cantidadActual: number;
+  stockMinimo: number;
+  unidad: string;
+}
+
+/**
+ * Crea una alerta de inventario (stock bajo o sin stock) y la emite en tiempo real al administrador.
+ * Se llama cuando un ítem cruza el umbral (cantidad <= stock_minimo o cantidad <= 0).
+ */
+export const emitirAlertaInventario = async (
+  item: ItemInventarioAlerta,
+  usuarioId?: number
+): Promise<number | null> => {
+  const esSinStock = item.cantidadActual <= 0;
+  const mensaje = esSinStock
+    ? `Sin stock: ${item.nombre}. Reponer urgentemente.`
+    : `Stock crítico: ${item.nombre} (${item.cantidadActual} ${item.unidad}). Mínimo: ${item.stockMinimo} ${item.unidad}.`;
+  const origenId = usuarioId ?? SISTEMA_USUARIO_ID;
+
+  try {
+    const alertaId = await crearAlerta({
+      tipo: 'inventario',
+      mensaje,
+      ordenId: null,
+      mesaId: null,
+      usuarioOrigenId: origenId,
+      usuarioDestinoId: null,
+      metadata: {
+        inventarioItemId: item.id,
+        nombre: item.nombre,
+        cantidadActual: item.cantidadActual,
+        stockMinimo: item.stockMinimo,
+        unidad: item.unidad,
+        esSinStock
+      }
+    });
+
+    const io = getIO();
+    const roomAdmin = getSocketRooms.role('administrador');
+    const payload = {
+      tipo: 'alerta.inventario',
+      mensaje,
+      inventarioItemId: item.id,
+      nombre: item.nombre,
+      cantidadActual: item.cantidadActual,
+      stockMinimo: item.stockMinimo,
+      unidad: item.unidad,
+      esSinStock,
+      alertaId,
+      timestamp: nowMxISO()
+    };
+    io.to(roomAdmin).emit('alerta.inventario', payload);
+    logger.info(
+      { alertaId, inventarioItemId: item.id, nombre: item.nombre, esSinStock },
+      '🔔 Alerta de inventario emitida a administrador'
+    );
+    return alertaId;
+  } catch (error: any) {
+    logger.error({ err: error, item }, '❌ Error al crear/emitir alerta de inventario');
     return null;
   }
 };
@@ -233,7 +305,8 @@ export const emitirAlertaPedidoListo = async (
   usuarioId: number,
   username: string,
   rol: string,
-  isTakeaway: boolean = false
+  isTakeaway: boolean = false,
+  meseroNombre?: string | null
 ): Promise<void> => {
   const mensaje = isTakeaway
     ? `Pedido #${ordenId} está listo para recoger`
@@ -256,7 +329,8 @@ export const emitirAlertaPedidoListo = async (
     metadata: {
       isTakeaway,
       mesaCodigo,
-      estado: 'listo'
+      estado: 'listo',
+      ...(meseroNombre ? { meseroNombre } : {})
     }
   };
 
@@ -286,7 +360,8 @@ export const emitirAlertaPedidoEnPreparacion = async (
   usuarioId: number,
   username: string,
   rol: string,
-  isTakeaway: boolean = false
+  isTakeaway: boolean = false,
+  meseroNombre?: string | null
 ): Promise<void> => {
   // Obtener el tiempo estimado de preparación de la orden (6 minutos por defecto)
   const { obtenerOrdenBasePorId } = await import('../ordenes/ordenes.repository.js');
@@ -328,7 +403,8 @@ export const emitirAlertaPedidoEnPreparacion = async (
       isTakeaway,
       mesaCodigo,
       estado: 'preparacion',
-      tiempoEstimado: Number(tiempoEstimado)
+      tiempoEstimado: Number(tiempoEstimado),
+      ...(meseroNombre ? { meseroNombre } : {})
     }
   };
 
@@ -380,24 +456,32 @@ export const obtenerAlertas = async (usuarioId: number, rol?: string): Promise<a
       cantidad: alertas.length 
     }, 'Alertas obtenidas para mesero');
   } else if (rol === 'cocinero') {
-    // Para cocinero, obtener alertas de tipo 'operacion' que sean de meseros hacia cocina
-    // Estas son las alertas que el mesero envía directamente a cocina (demora, cancelación, etc.)
+    // Para cocinero, obtener alertas de tipo 'operacion' que sean enviadas EXPLÍCITAMENTE por mesero/capitán.
+    // NO mostrar alertas automáticas generadas al cambiar estado (ej. "Orden #11 modificada: Estado cambiado a: Entregada").
     alertas = await obtenerAlertasNoLeidas(usuarioId, rol, 'operacion');
+    
+    // Patrón: alertas automáticas de cambio de estado (emitirAlertaModificacion desde actualización de orden).
+    // El cocinero solo debe ver alertas enviadas a mano (demora, cancelación, cambio explícito).
+    const esAlertaAutomaticaEstado = (msg: string) => /orden #\d+ modificada: (estado cambiado a:|orden actualizada)/i.test(msg);
     
     // Obtener estado "cancelada" para filtrar alertas de órdenes canceladas
     const { obtenerEstadoOrdenPorNombre } = await import('../ordenes/ordenes.repository.js');
     const estadoCancelada = await obtenerEstadoOrdenPorNombre('cancelada');
     const estadoCanceladaId = estadoCancelada?.id;
     
-    // Filtrar solo las que son alertas de mesero hacia cocina (contienen palabras clave)
-    // Y que NO sean de órdenes canceladas
+    // Filtrar solo las que son alertas explícitas de mesero/capitán hacia cocina
+    // Excluir: (1) alertas automáticas de cambio de estado, (2) órdenes ya canceladas
     alertas = await Promise.all(
       alertas.map(async (alerta) => {
         const mensaje = (alerta.mensaje || '').toLowerCase();
-        // Verificar si contiene palabras clave de alertas de cocina
-        const esAlertaRelevante = mensaje.includes('demora') || 
-                                  mensaje.includes('cancel') || 
-                                  mensaje.includes('cambio') || 
+        // Excluir alertas automáticas (cambio de estado) — no las envió nadie a cocina
+        if (esAlertaAutomaticaEstado(alerta.mensaje || '')) {
+          return null;
+        }
+        // Verificar si contiene palabras clave de alertas enviadas a cocina (demora, cancelación, cambio explícito)
+        const esAlertaRelevante = mensaje.includes('demora') ||
+                                  mensaje.includes('cancel') ||
+                                  mensaje.includes('cambio') ||
                                   mensaje.includes('tiempo de espera') ||
                                   mensaje.includes('mucho tiempo');
         

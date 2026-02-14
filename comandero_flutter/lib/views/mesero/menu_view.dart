@@ -57,7 +57,9 @@ class _MenuViewState extends State<MenuView> {
     return categoryNames;
   }
 
-  // Convertir ProductModel a Map para compatibilidad con el código existente
+  // Convertir ProductModel a Map para compatibilidad con el código existente.
+  // Usar el nombre real de categoría del backend (displayCategoryName) para que
+  // cada producto aparezca en su categoría correcta (Sandwiches, Tacos, etc.).
   List<Map<String, dynamic>> get menuItems {
     return products.map((product) {
       final sizes = product.sizes
@@ -74,7 +76,7 @@ class _MenuViewState extends State<MenuView> {
         'name': product.name,
         'price': product.price,
         'description': product.description,
-        'category': ProductCategory.getCategoryName(product.category),
+        'category': product.displayCategoryName,
         'image': product.image,
         'hot': product.hot,
         'available': product.available,
@@ -94,13 +96,12 @@ class _MenuViewState extends State<MenuView> {
           .toList();
     }
 
-    // Filtrar por búsqueda
-    if (searchQuery.isNotEmpty) {
+    // Filtrar por búsqueda solo cuando hay texto
+    final q = searchQuery.trim();
+    if (q.isNotEmpty) {
       items = items.where((item) {
-        return item['name'].toLowerCase().contains(searchQuery.toLowerCase()) ||
-            item['description'].toLowerCase().contains(
-              searchQuery.toLowerCase(),
-            );
+        return item['name'].toLowerCase().contains(q.toLowerCase()) ||
+            item['description'].toLowerCase().contains(q.toLowerCase());
       }).toList();
     }
 
@@ -138,16 +139,12 @@ class _MenuViewState extends State<MenuView> {
                     _buildSearchBar(isTablet),
                     const SizedBox(height: 16),
                     _buildCategoryFilters(isTablet),
-                    const SizedBox(height: 16),
-                    _buildSpecialtyCard(isTablet),
                     const SizedBox(height: 24),
                     _buildProductsGrid(
                       constraints.maxWidth,
                       isTablet,
                       isDesktop,
                     ),
-                    const SizedBox(height: 24),
-                    _buildAvailabilityMessage(isTablet),
                   ],
                 ),
               ),
@@ -162,7 +159,7 @@ class _MenuViewState extends State<MenuView> {
     final controller = context.watch<MeseroController>();
     String tableText;
     if (controller.selectedTable != null) {
-      tableText = 'Mesa ${controller.selectedTable!.number} • Atendiendo';
+      tableText = '${controller.selectedTable!.displayLabel} • Atendiendo';
     } else if (controller.isTakeawayMode) {
       tableText = '🛍️ Para Llevar • ${controller.takeawayCustomerName ?? "Cliente"}';
     } else {
@@ -228,7 +225,8 @@ class _MenuViewState extends State<MenuView> {
           });
         },
         decoration: InputDecoration(
-          hintText: "Buscar platillo, ej. 'barbacoa'",
+          hintText: "Buscar platillo",
+          helperText: "Los resultados se filtran al escribir",
           hintStyle: TextStyle(
             color: AppColors.textSecondary,
             fontSize: isTablet ? 16.0 : 14.0,
@@ -297,61 +295,9 @@ class _MenuViewState extends State<MenuView> {
     );
   }
 
-  Widget _buildSpecialtyCard(bool isTablet) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.warning.withValues(alpha: 0.1),
-            AppColors.primary.withValues(alpha: 0.1),
-          ],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.local_fire_department,
-            color: AppColors.primary,
-            size: isTablet ? 24.0 : 20.0,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Especialidad del Día',
-                  style: TextStyle(
-                    fontSize: isTablet ? 16.0 : 14.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Mix Barbacoa con consomé - ¡Recién salido del horno!',
-                  style: TextStyle(
-                    fontSize: isTablet ? 14.0 : 12.0,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildProductsGrid(double maxWidth, bool isTablet, bool isDesktop) {
     final items = filteredItems;
-    
+
     if (items.isEmpty) {
       return Container(
         padding: EdgeInsets.all(isTablet ? 40.0 : 32.0),
@@ -364,21 +310,25 @@ class _MenuViewState extends State<MenuView> {
             ),
             const SizedBox(height: 16),
             Text(
-              'No hay productos disponibles',
+              menuItems.isEmpty
+                  ? 'No hay productos disponibles'
+                  : 'Sin coincidencias para la búsqueda',
               style: TextStyle(
                 fontSize: isTablet ? 16.0 : 14.0,
                 color: AppColors.textSecondary,
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Agrega productos desde el panel de administrador',
-              style: TextStyle(
-                fontSize: isTablet ? 14.0 : 12.0,
-                color: AppColors.textSecondary,
-              ),
               textAlign: TextAlign.center,
             ),
+            if (menuItems.isEmpty) const SizedBox(height: 8),
+            if (menuItems.isEmpty)
+              Text(
+                'Agrega productos desde el panel de administrador',
+                style: TextStyle(
+                  fontSize: isTablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
           ],
         ),
       );
@@ -532,35 +482,6 @@ class _MenuViewState extends State<MenuView> {
               fontSize: isTablet ? 11.0 : 9.5,
               color: color,
               fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAvailabilityMessage(bool isTablet) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-      decoration: BoxDecoration(
-        color: AppColors.secondary,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.access_time,
-            color: AppColors.textSecondary,
-            size: isTablet ? 20.0 : 18.0,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Barbacoa disponible hasta agotar existencias',
-            style: TextStyle(
-              fontSize: isTablet ? 14.0 : 12.0,
-              color: AppColors.textSecondary,
             ),
           ),
         ],

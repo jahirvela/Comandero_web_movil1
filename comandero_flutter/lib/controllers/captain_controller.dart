@@ -8,6 +8,7 @@ import '../models/payment_model.dart';
 import '../services/mesas_service.dart';
 import '../services/socket_service.dart';
 import '../services/ordenes_service.dart';
+import '../services/pagos_service.dart';
 import '../services/bill_repository.dart';
 import '../services/kitchen_alerts_service.dart';
 import '../config/api_config.dart';
@@ -58,12 +59,15 @@ class CaptainController extends ChangeNotifier {
   String get selectedPriority => _selectedPriority;
   List<BillModel> get pendingBills => _billRepository.pendingBills;
 
-  // Obtener alertas filtradas
+  // Obtener alertas filtradas: solo órdenes activas (enviadas a cocina, no pagadas/canceladas)
   List<CaptainAlert> get filteredAlerts {
     return _alerts.where((alert) {
       final priorityMatch =
           _selectedPriority == 'todas' || alert.priority == _selectedPriority;
-      return priorityMatch;
+      final orderNumber = alert.orderNumber;
+      final ordenSigueActiva = orderNumber == null ||
+          _activeOrders.any((o) => o.id == orderNumber);
+      return priorityMatch && ordenSigueActiva;
     }).toList();
   }
 
@@ -136,6 +140,7 @@ class CaptainController extends ChangeNotifier {
         }
         
         return CaptainTable(
+          codigo: codigo,
           number: numero,
           status: status,
           hasActiveOrder: status == CaptainTableStatus.ocupada || status == CaptainTableStatus.cuenta,
@@ -268,7 +273,7 @@ class CaptainController extends ChangeNotifier {
           orderNumber: orderIdStr,
           minutes: 0,
           priority: priority,
-          timestamp: alert.createdAt ?? DateTime.now(),
+          timestamp: alert.createdAt ?? date_utils.AppDateUtils.nowCdmx(),
         );
         
         // Mejorar lógica de detección de duplicados: verificar por ID, orden+tipo, o orden+mensaje similar
@@ -342,7 +347,7 @@ class CaptainController extends ChangeNotifier {
           orderNumber: data['ordenId']?.toString() ?? '',
           minutes: data['minutos'] as int? ?? 0,
           priority: 'high',
-          timestamp: DateTime.now(),
+          timestamp: date_utils.AppDateUtils.nowCdmx(),
         ));
         notifyListeners();
       } catch (e) {
@@ -372,7 +377,7 @@ class CaptainController extends ChangeNotifier {
             orderNumber: 'ORD-${orderId.toString().padLeft(6, '0')}',
             minutes: 0,
             priority: 'high',
-            timestamp: DateTime.now(),
+            timestamp: date_utils.AppDateUtils.nowCdmx(),
           ));
           notifyListeners();
         }
@@ -393,7 +398,7 @@ class CaptainController extends ChangeNotifier {
           orderNumber: data['ordenId']?.toString() ?? '',
           minutes: 0,
           priority: 'medium',
-          timestamp: DateTime.now(),
+          timestamp: date_utils.AppDateUtils.nowCdmx(),
         ));
         notifyListeners();
       } catch (e) {
@@ -459,14 +464,12 @@ class CaptainController extends ChangeNotifier {
     // Escuchar eventos de pagos (para estadísticas y actualizar cuentas por cobrar)
     socketService.onPaymentCreated((data) {
       try {
-        // Remover la cuenta pagada de las cuentas pendientes
         final billId = data['billId'] as String?;
         if (billId != null) {
           _billRepository.removeBill(billId);
           _updateBillsList();
         }
-        // Actualizar estadísticas cuando se crea un pago
-        _updateStats();
+        loadRealStats();
         notifyListeners();
       } catch (e) {
         print('Error al procesar pago creado en capitán: $e');
@@ -494,18 +497,13 @@ class CaptainController extends ChangeNotifier {
   }
 
   void _initializeData() {
-    // Cargar mesas desde el backend
-    loadTables();
-    
-    // Cargar órdenes activas desde el backend
-    loadActiveOrders();
-    
-    // Cargar cuentas por cobrar desde el repositorio
     _billRepository.addListener(_onBillsChanged);
-    
-    // Actualizar estadísticas
-    _updateStats();
-    
+    _billRepository.loadBills();
+
+    Future.wait([loadTables(), loadActiveOrders()]).then((_) {
+      loadRealStats();
+      notifyListeners();
+    });
     notifyListeners();
     
     /* DATOS DE EJEMPLO (mantener comentado)
@@ -581,11 +579,13 @@ class CaptainController extends ChangeNotifier {
     // Inicializar mesas de ejemplo
     _tables = [
       CaptainTable(
+        codigo: '1',
         number: 1,
         status: CaptainTableStatus.disponible,
         hasActiveOrder: false,
       ),
       CaptainTable(
+        codigo: '2',
         number: 2,
         status: CaptainTableStatus.ocupada,
         customers: 2,
@@ -595,6 +595,7 @@ class CaptainController extends ChangeNotifier {
         hasActiveOrder: true,
       ),
       CaptainTable(
+        codigo: '3',
         number: 3,
         status: CaptainTableStatus.cuenta,
         customers: 4,
@@ -605,12 +606,14 @@ class CaptainController extends ChangeNotifier {
         notes: 'Esperando pago',
       ),
       CaptainTable(
+        codigo: '4',
         number: 4,
         status: CaptainTableStatus.reservada,
         hasActiveOrder: false,
         notes: 'Reserva para 14:30 - Familia López',
       ),
       CaptainTable(
+        codigo: '5',
         number: 5,
         status: CaptainTableStatus.ocupada,
         customers: 3,
@@ -622,21 +625,56 @@ class CaptainController extends ChangeNotifier {
     ];
     */
     // Fin del comentario de datos de ejemplo
-    // Las mesas ahora se cargan desde el backend a través de loadTables()
-    // Las alertas y órdenes seguirán usando datos de ejemplo hasta que se integren completamente
-
-    // Inicializar estadísticas (estas también se pueden integrar con el backend más adelante)
-    _stats = CaptainStats(
-      todaySales: 3250.0,
-      variation: '+12.5%',
-      avgTicket: 135.42,
-      totalOrders: 24,
-      activeTables: 3,
-      pendingOrders: 2,
-      urgentOrders: 1,
-    );
-
+    // Las estadísticas reales se cargan en loadRealStats()
     notifyListeners();
+  }
+
+  /// Carga estadísticas reales del día: ventas, órdenes, ticket promedio, por cobrar.
+  Future<void> loadRealStats() async {
+    try {
+      final pagosService = PagosService();
+      final pagos = await pagosService.getPagos();
+      final now = date_utils.AppDateUtils.now();
+      final inicioHoy = DateTime(now.year, now.month, now.day);
+
+      final pagosHoy = pagos.where((p) {
+        final f = p['fechaPago'] ?? p['creadoEn'];
+        if (f == null) return false;
+        final d = date_utils.AppDateUtils.parseToLocal(f);
+        return !d.isBefore(inicioHoy) && d.isBefore(now.add(const Duration(days: 1)));
+      }).toList();
+      final ventasHoy = pagosHoy.fold<double>(
+          0.0, (s, p) => s + ((p['monto'] as num?)?.toDouble() ?? 0));
+
+      final ordenes = await _ordenesService.getOrdenes();
+      final ordenesHoy = ordenes.where((o) {
+        final data = o as Map<String, dynamic>;
+        final creado = data['creadoEn'] as String?;
+        if (creado == null) return false;
+        final d = date_utils.AppDateUtils.parseToLocal(creado);
+        return d.year == now.year && d.month == now.month && d.day == now.day;
+      }).toList();
+      final totalOrdenesHoy = ordenesHoy.length;
+
+      final ticketPromedio = pagosHoy.isNotEmpty ? ventasHoy / pagosHoy.length : 0.0;
+      final activeTablesCount = _tables.where((t) =>
+          t.status == CaptainTableStatus.ocupada ||
+          t.status == CaptainTableStatus.cuenta).length;
+
+      _stats = CaptainStats(
+        todaySales: ventasHoy,
+        variation: '+0%',
+        avgTicket: ticketPromedio,
+        totalOrders: totalOrdenesHoy,
+        activeTables: activeTablesCount,
+        pendingOrders: _activeOrders.length,
+        urgentOrders: getUrgentOrders().length,
+      );
+      notifyListeners();
+    } catch (e) {
+      print('❌ Capitán: Error al cargar estadísticas reales: $e');
+      _updateStats();
+    }
   }
 
   // Cambiar filtro de estado de mesa
@@ -851,15 +889,10 @@ class CaptainController extends ChangeNotifier {
     }
   }
 
-  // Formatear tiempo transcurrido
+  // Formatear tiempo transcurrido (unificado: min -> h -> días)
   String formatElapsedTime(int minutes) {
-    if (minutes < 60) {
-      return '$minutes min';
-    } else {
-      final hours = minutes ~/ 60;
-      final remainingMinutes = minutes % 60;
-      return '${hours}h ${remainingMinutes}min';
-    }
+    if (minutes < 0) return 'Recién';
+    return date_utils.AppDateUtils.formatDurationShort(Duration(minutes: minutes));
   }
 
   // Formatear moneda
@@ -908,7 +941,7 @@ class CaptainController extends ChangeNotifier {
   // Obtener lista de facturas pendientes (formato para UI)
   List<Map<String, dynamic>> getPendingBills() {
     final bills = _billRepository.pendingBills;
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     
     return bills.map((bill) {
       final elapsed = bill.createdAt != null 
@@ -918,6 +951,8 @@ class CaptainController extends ChangeNotifier {
       return {
         'id': bill.id,
         'tableNumber': bill.tableNumber,
+        'mesaCodigo': bill.mesaCodigo,
+        'tableDisplayLabel': bill.tableDisplayLabel,
         'total': bill.total,
         'waiter': bill.waiterName ?? 'Mesero',
         'isTakeaway': bill.isTakeaway ?? false,
@@ -1054,7 +1089,7 @@ class CaptainController extends ChangeNotifier {
             // Parsear fecha
             final timestampParsed = creadoEn != null 
               ? date_utils.AppDateUtils.parseToLocal(creadoEn)
-              : DateTime.now();
+              : date_utils.AppDateUtils.nowCdmx();
             
             // Parsear metadata para obtener prioridad y mesaCodigo
             final metadataRaw = alertaData['metadata'];
@@ -1379,13 +1414,17 @@ class CaptainController extends ChangeNotifier {
       orderTotal += totalLinea;
     }
     
+    // Usar total del backend (incluye IVA si está habilitado); si no viene, usar suma de ítems
+    final totalBackend = (data['total'] as num?)?.toDouble();
+    final totalToShow = totalBackend ?? orderTotal;
+    
     // Guardar datos adicionales para esta orden
     _orderAdditionalData[ordenIdStr] = {
       'itemsText': itemsText,
-      'total': orderTotal,
+      'total': totalToShow,
     };
     
-    print('💰 Capitán: Orden $ordenIdStr - Total calculado: \$${orderTotal.toStringAsFixed(2)} (${itemsData.length} items)');
+    print('💰 Capitán: Orden $ordenIdStr - Total: \$${totalToShow.toStringAsFixed(2)} (${itemsData.length} items)');
     
     // Obtener mesa
     final mesaId = data['mesaId'] as int?;
@@ -1406,7 +1445,7 @@ class CaptainController extends ChangeNotifier {
     // Parsear fecha
     final fechaCreacion = data['creadoEn'] as String? ?? 
                          data['createdAt'] as String? ?? 
-                         DateTime.now().toIso8601String();
+                         date_utils.AppDateUtils.nowCdmx().toIso8601String();
     final orderTime = date_utils.AppDateUtils.parseToLocal(fechaCreacion);
     
     // Prioridad
@@ -1447,7 +1486,7 @@ class CaptainController extends ChangeNotifier {
       final itemsData = ordenDetalle['items'] as List<dynamic>? ?? [];
       
       final itemsText = <String>[];
-      double orderTotal = 0.0;
+      double sumItems = 0.0;
       for (final itemJson in itemsData) {
         final cantidad = (itemJson['cantidad'] as num?)?.toInt() ?? 
                         (itemJson['quantity'] as num?)?.toInt() ?? 1;
@@ -1458,16 +1497,20 @@ class CaptainController extends ChangeNotifier {
                           (precioUnitario * cantidad);
         
         itemsText.add('${cantidad}x $nombre');
-        orderTotal += totalLinea;
+        sumItems += totalLinea;
       }
+      
+      // Usar total del backend (incluye IVA si está habilitado en configuración)
+      final totalBackend = (ordenDetalle['total'] as num?)?.toDouble();
+      final totalToShow = totalBackend ?? sumItems;
       
       // Guardar datos adicionales para esta orden
       _orderAdditionalData[ordenIdStr] = {
         'itemsText': itemsText,
-        'total': orderTotal,
+        'total': totalToShow,
       };
       
-      print('💰 Capitán: Detalles adicionales cargados para $ordenIdStr - Total: \$${orderTotal.toStringAsFixed(2)}');
+      print('💰 Capitán: Detalles adicionales cargados para $ordenIdStr - Total: \$${totalToShow.toStringAsFixed(2)}');
       
       // Notificar cambios para actualizar la UI
       notifyListeners();

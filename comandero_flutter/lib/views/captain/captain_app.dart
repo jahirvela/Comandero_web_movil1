@@ -6,6 +6,7 @@ import '../../controllers/auth_controller.dart';
 import '../../controllers/cocinero_controller.dart';
 import '../../models/captain_model.dart';
 import '../../models/order_model.dart';
+import '../../models/table_model.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../cocinero/order_detail_modal.dart';
@@ -1058,7 +1059,9 @@ class _CaptainAppState extends State<CaptainApp> {
     final total = bill['total']?.toDouble() ?? 0.0;
     final waiter = bill['waiter'] ?? 'Mesero';
     final tableNumber = bill['tableNumber'];
+    final mesaCodigo = bill['mesaCodigo'] as String?;
     final isTakeaway = bill['isTakeaway'] ?? false;
+    final tableDisplayLabel = bill['tableDisplayLabel'] as String? ?? (isTakeaway ? 'Para llevar' : TableModel.displayLabelFromCodigo(mesaCodigo, tableNumber is int ? tableNumber as int? : null));
     final customerName = bill['customerName'];
     final elapsedMinutes = bill['elapsedMinutes'] ?? 0;
 
@@ -1081,11 +1084,11 @@ class _CaptainAppState extends State<CaptainApp> {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: tableNumber != null ? Colors.red : Colors.blue,
+                  color: !isTakeaway ? Colors.red : Colors.blue,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  tableNumber != null ? 'Mesa $tableNumber' : 'Para llevar',
+                  tableDisplayLabel,
                   style: TextStyle(
                     fontSize: isTablet ? 12.0 : 10.0,
                     fontWeight: FontWeight.w600,
@@ -1241,7 +1244,7 @@ class _CaptainAppState extends State<CaptainApp> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            'Mesa ${table.number}',
+            table.displayLabel,
             style: TextStyle(
               fontSize: isTablet ? 14.0 : 12.0,
               fontWeight: FontWeight.w600,

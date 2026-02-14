@@ -1,0 +1,20 @@
+{
+  "printers": [
+    {
+      "id": "cocina",
+      "name": "Cocina - comandas",
+      "type": "usb",
+      "documents": ["comanda"],
+      "paperWidth": 58,
+      "device": "ZKP5803"
+    },
+    {
+      "id": "caja",
+      "name": "Caja - tickets de cobro",
+      "type": "usb",
+      "documents": ["ticket"],
+      "paperWidth": 58,
+      "device": "Thermal Receipt Printer"
+    }
+  ]
+}

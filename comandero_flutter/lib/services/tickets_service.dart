@@ -130,7 +130,7 @@ class TicketsService {
     if (data['createdAt'] != null) {
       createdAt = date_utils.AppDateUtils.parseToLocal(data['createdAt']);
     } else {
-      createdAt = DateTime.now();
+      createdAt = date_utils.AppDateUtils.nowCdmx();
     }
     
     // Parsear fecha de impresión si existe
@@ -174,7 +174,8 @@ class TicketsService {
       id: ticketId,
       ordenId: data['ordenId'] as int?,
       ordenIds: ordenIds, // Para cuentas agrupadas
-      tableNumber: data['tableNumber'] as int?,
+      tableNumber: data['tableNumber'] is int ? data['tableNumber'] as int? : (int.tryParse(data['tableNumber']?.toString() ?? '')),
+      mesaCodigo: data['mesaCodigo'] as String?,
       items: items,
       subtotal: (data['subtotal'] as num?)?.toDouble() ?? 0.0,
       tax: (data['tax'] as num?)?.toDouble() ?? 0.0,

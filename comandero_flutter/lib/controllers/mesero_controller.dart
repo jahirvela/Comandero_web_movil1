@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/table_model.dart';
@@ -12,6 +13,7 @@ import '../services/categorias_service.dart';
 import '../services/socket_service.dart';
 import '../services/alertas_service.dart';
 import '../services/kitchen_alerts_service.dart';
+import '../services/configuracion_service.dart';
 import '../models/kitchen_alert.dart';
 import '../utils/date_utils.dart' as date_utils;
 
@@ -22,13 +24,15 @@ class MeseroController extends ChangeNotifier {
   final ProductosService _productosService = ProductosService();
   final CategoriasService _categoriasService = CategoriasService();
   final AlertasService _alertasService = AlertasService();
+  final ConfiguracionService _configuracionService = ConfiguracionService();
 
   // Estado de las mesas
   List<TableModel> _tables = [];
   TableModel? _selectedTable;
 
-  // Estado del carrito por mesa
+  // Estado del carrito por mesa (se persiste por mesa para no perderlo al recargar/reiniciar)
   final Map<String, List<CartItem>> _tableOrders = {};
+  static const String _cartStoragePrefix = 'mesero_cart_';
 
   // Historial de pedidos por mesa (pedidos enviados a cocina)
   final Map<String, List<Map<String, dynamic>>> _tableOrderHistory = {};
@@ -127,6 +131,42 @@ class MeseroController extends ChangeNotifier {
 
     if (cartKey == null) return [];
     return _tableOrders[cartKey] ?? [];
+  }
+
+  /// Persiste el carrito de una mesa en storage (para no perderlo al recargar/reiniciar).
+  Future<void> _persistCartForTable(String tableId) async {
+    try {
+      final cart = _tableOrders[tableId] ?? [];
+      final key = '$_cartStoragePrefix$tableId';
+      if (cart.isEmpty) {
+        await _storage.delete(key: key);
+      } else {
+        final list = cart.map((e) => e.toJson()).toList();
+        await _storage.write(key: key, value: jsonEncode(list));
+      }
+    } catch (e) {
+      print('⚠️ Mesero: Error al persistir carrito mesa $tableId: $e');
+    }
+  }
+
+  /// Restaura el carrito de una mesa desde storage (solo si el carrito en memoria está vacío).
+  Future<void> _loadPersistedCartForTable(String tableId) async {
+    try {
+      final key = '$_cartStoragePrefix$tableId';
+      final raw = await _storage.read(key: key);
+      if (raw == null || raw.isEmpty) return;
+      final list = jsonDecode(raw) as List<dynamic>?;
+      if (list == null || list.isEmpty) return;
+      final cart = list
+          .map((e) => CartItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+      if (cart.isNotEmpty) {
+        _tableOrders[tableId] = cart;
+        print('✅ Mesero: Carrito de mesa $tableId restaurado (${cart.length} artículos)');
+      }
+    } catch (e) {
+      print('⚠️ Mesero: Error al cargar carrito persistido mesa $tableId: $e');
+    }
   }
 
   // Obtener total de artículos en todos los carritos
@@ -377,11 +417,18 @@ class MeseroController extends ChangeNotifier {
           } else if (mesaCodigo != null) {
             tituloNotificacion = 'Pedido Listo';
             mensajeNotificacion =
-                'Pedido #$ordenId de Mesa $mesaCodigo está listo para servir';
+                'Pedido #$ordenId de ${TableModel.displayLabelFromCodigo(mesaCodigo)} está listo para servir';
           } else {
             tituloNotificacion = 'Pedido Listo';
             mensajeNotificacion = mensaje;
           }
+        }
+
+        // Usar creadoEn de la alerta para que "Hace X min/h" sea correcto (evita mostrar 6h por zona horaria)
+        DateTime? alertaCreatedAt;
+        final creadoEnRaw = alerta['creadoEn'];
+        if (creadoEnRaw != null) {
+          alertaCreatedAt = date_utils.AppDateUtils.parseToLocal(creadoEnRaw);
         }
 
         // Agregar notificación
@@ -389,11 +436,14 @@ class MeseroController extends ChangeNotifier {
           '📝 Mesero: Agregando notificación - Título: $tituloNotificacion, Mensaje: $mensajeNotificacion, OrdenId: $ordenId, Tipo: $tipo',
         );
 
+        final meseroNombreCarga = metadata['meseroNombre'] as String?;
         addNotification(
           tituloNotificacion,
           mensajeNotificacion,
           ordenId: ordenId,
           tipo: tipo,
+          createdAt: alertaCreatedAt,
+          meseroNombre: meseroNombreCarga,
         );
 
         print(
@@ -599,6 +649,11 @@ class MeseroController extends ChangeNotifier {
     
     print('✅ Mesero: Socket.IO está conectado, configurando listeners...');
 
+    // Cuando admin habilita/deshabilita un producto (o lo edita), recargar menú para reflejar cambios
+    socketService.onProductoActualizado((_) {
+      loadProducts();
+    });
+
     // Estados FINALIZADOS que deben remover la orden del historial
     final estadosFinalizados = [
       'pagada',
@@ -716,7 +771,7 @@ class MeseroController extends ChangeNotifier {
             
             // Si el tiempo cambió, mostrar notificación
             if (tiempoAnterior != null && tiempoAnterior != tiempoEstimadoNuevo) {
-              final mesaInfo = mesaCodigo != null ? 'Mesa $mesaCodigo' : 'Para llevar';
+              final mesaInfo = mesaCodigo != null && mesaCodigo.isNotEmpty ? TableModel.displayLabelFromCodigo(mesaCodigo) : 'Para llevar';
               addNotification(
                 '⏱️ Tiempo estimado actualizado',
                 'Orden $ordenId ($mesaInfo): ${tiempoAnterior} min → ${tiempoEstimadoNuevo} min',
@@ -1060,6 +1115,7 @@ class MeseroController extends ChangeNotifier {
             }
           }
 
+          final meseroNombre = metadata?['meseroNombre'] as String?;
           // Verificar si la notificación ya fue limpiada
           if (!_isNotificationCleared(ordenId, 'preparacion')) {
             addNotification(
@@ -1067,6 +1123,7 @@ class MeseroController extends ChangeNotifier {
               mensaje,
               ordenId: ordenId,
               tipo: 'preparacion',
+              meseroNombre: meseroNombre,
             );
             print(
               '✅ Mesero: Notificación de preparación agregada desde alerta.cocina - $mensaje',
@@ -1138,16 +1195,17 @@ class MeseroController extends ChangeNotifier {
           } else if (mesaCodigo != null) {
             tituloNotificacion = 'Pedido Listo';
             mensajeNotificacion =
-                'Pedido #$ordenId de Mesa $mesaCodigo está listo para servir';
+                'Pedido #$ordenId de ${TableModel.displayLabelFromCodigo(mesaCodigo)} está listo para servir';
           } else if (mesaId != null) {
             tituloNotificacion = 'Pedido Listo';
             mensajeNotificacion =
-                'Pedido #$ordenId de Mesa $mesaId está listo para servir';
+                'Pedido #$ordenId de ${TableModel.displayLabelFromCodigo(null, mesaId)} está listo para servir';
           } else {
             tituloNotificacion = 'Pedido Listo';
             mensajeNotificacion = 'Pedido #$ordenId está listo';
           }
 
+          final meseroNombre = metadata?['meseroNombre'] as String?;
           // Verificar si la notificación ya fue limpiada antes de agregarla
           if (!_isNotificationCleared(ordenId, 'listo')) {
             // Agregar notificación INMEDIATAMENTE (esto actualiza el icono de campanita)
@@ -1158,6 +1216,7 @@ class MeseroController extends ChangeNotifier {
               ordenId: ordenId,
               tipo:
                   'listo', // Tipo fijo porque alerta.cocina siempre es para pedido listo
+              meseroNombre: meseroNombre,
             );
           } else {
             print(
@@ -1205,7 +1264,7 @@ class MeseroController extends ChangeNotifier {
 
         final titulo = '🚨 Alerta a cocina';
         final mensaje = mesaCodigo != null && mesaCodigo.isNotEmpty
-            ? 'Mesa $mesaCodigo - ${alert.message} ($senderLabel)'
+            ? '${TableModel.displayLabelFromCodigo(mesaCodigo)} - ${alert.message} ($senderLabel)'
             : '${alert.message} ($senderLabel)';
 
         addNotification(
@@ -1247,14 +1306,11 @@ class MeseroController extends ChangeNotifier {
 
   // Helper para mapear datos del backend a TableModel
   TableModel _mapBackendToTableModel(Map<String, dynamic> data) {
-    final codigo = data['codigo'] as String?;
-    final numero = codigo != null
-        ? int.tryParse(codigo) ?? 0
-        : (data['id'] as int? ?? 0);
+    final codigo = (data['codigo'] as String?)?.trim() ?? data['id']?.toString() ?? '0';
+    final numero = int.tryParse(codigo) ?? 0;
     final estadoNombre =
         (data['estadoNombre'] as String?)?.toLowerCase() ?? 'libre';
 
-    // Mapear estado del backend a estado del frontend
     String status = TableStatus.libre;
     final estadoLower = estadoNombre.toLowerCase().trim();
 
@@ -1270,15 +1326,14 @@ class MeseroController extends ChangeNotifier {
       status = TableStatus.libre;
     }
 
-    // Calcular posición basada en el número de mesa (simple grid layout)
     final tableId = data['id'] as int;
-    final tableNumber = numero;
-    final x = ((tableNumber - 1) % 3) + 1;
-    final y = ((tableNumber - 1) ~/ 3) + 1;
+    final x = ((numero - 1) % 3) + 1;
+    final y = ((numero - 1) ~/ 3) + 1;
 
     return TableModel(
       id: tableId,
-      number: tableNumber,
+      codigo: codigo,
+      number: numero,
       status: status,
       seats: data['capacidad'] as int? ?? 4,
       customers: null,
@@ -1287,6 +1342,69 @@ class MeseroController extends ChangeNotifier {
       position: TablePosition(x: x, y: y),
       section: data['ubicacion'] as String?,
     );
+  }
+
+  /// Áreas (secciones) existentes a partir de las mesas cargadas (para agregar/editar mesa)
+  List<String> get tableAreas {
+    final areas = _tables
+        .map((t) => t.section)
+        .whereType<String>()
+        .where((s) => s.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (areas.isEmpty) return ['Área Principal'];
+    return areas;
+  }
+
+  /// True si ya existe una mesa con ese código/nombre (comparación sin distinguir mayúsculas). excludeTableId para edición.
+  bool tableCodigoExists(String codigo, {int? excludeTableId}) {
+    final c = codigo.trim().toLowerCase();
+    if (c.isEmpty) return false;
+    for (final t in _tables) {
+      if (excludeTableId != null && t.id == excludeTableId) continue;
+      if (t.codigo.trim().toLowerCase() == c) return true;
+    }
+    return false;
+  }
+
+  /// Crear nueva mesa (mesero puede agregar, no eliminar).
+  Future<void> addTable(TableModel table) async {
+    try {
+      final estados = await _mesasService.getEstadosMesa();
+      final estadoLibre = estados.firstWhere(
+        (e) => (e['nombre'] as String).toLowerCase() == 'libre',
+        orElse: () => estados.isNotEmpty ? estados[0] : {'id': 1},
+      );
+      final data = {
+        'codigo': table.codigo.trim(),
+        'nombre': table.codigo.trim().isNotEmpty ? table.codigo.trim() : null,
+        'capacidad': table.seats,
+        'ubicacion': table.section,
+        'estadoMesaId': estadoLibre['id'] as int,
+        'activo': true,
+      };
+      await _mesasService.createMesa(data);
+      await loadTables();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Actualizar mesa (mesero puede editar/renombrar).
+  Future<void> updateTable(TableModel table) async {
+    try {
+      final data = {
+        'codigo': table.codigo.trim(),
+        'nombre': table.codigo.trim().isNotEmpty ? table.codigo.trim() : null,
+        'capacidad': table.seats,
+        'ubicacion': table.section,
+      };
+      await _mesasService.updateMesa(table.id, data);
+      await loadTables();
+    } catch (e) {
+      rethrow;
+    }
   }
 
   // Inicializar mesas (ahora desde el backend)
@@ -1332,13 +1450,14 @@ class MeseroController extends ChangeNotifier {
 
   // Mapear producto del backend a ProductModel
   ProductModel _mapBackendToProductModel(Map<String, dynamic> data) {
-    // Obtener el nombre de la categoría
+    // Usar el nombre real de la categoría del backend para que cada producto
+    // aparezca en su categoría correcta (ej. Sandwiches, Tacos, etc.)
     final categoriaNombre =
         data['categoriaNombre'] as String? ??
         data['categoria'] as String? ??
         'Otros';
 
-    // Mapear nombre de categoría a ID de categoría
+    // Mantener un ID de categoría para compatibilidad (usado si no hay categoryName)
     int categoryId = _getCategoryIdFromName(categoriaNombre);
 
     final tamanosRaw = data['tamanos'] as List<dynamic>? ?? [];
@@ -1361,6 +1480,7 @@ class MeseroController extends ChangeNotifier {
       price: price,
       image: null,
       category: categoryId,
+      categoryName: categoriaNombre,
       available: data['disponible'] as bool? ?? true,
       hot: data['picante'] as bool? ?? false,
       extras: null,
@@ -1370,7 +1490,7 @@ class MeseroController extends ChangeNotifier {
     );
   }
 
-  // Obtener ID de categoría desde el nombre
+  // Obtener ID de categoría desde el nombre (solo para compatibilidad cuando no se usa categoryName)
   int _getCategoryIdFromName(String categoryName) {
     final normalized = categoryName.toLowerCase();
     if (normalized.contains('taco')) {
@@ -1389,12 +1509,16 @@ class MeseroController extends ChangeNotifier {
     } else if (normalized.contains('salsa') || normalized.contains('extra')) {
       return ProductCategory.extras;
     }
-    return ProductCategory.tacos; // Default
+    return ProductCategory.tacos; // Default (ya no se usa para mostrar; se usa categoryName)
   }
 
   // Cambiar vista actual
   void setCurrentView(String view) {
     _currentView = view;
+    // Al abrir el menú, recargar productos para reflejar disponibilidad (habilitar/deshabilitar)
+    if (view == 'menu') {
+      loadProducts();
+    }
     notifyListeners();
   }
 
@@ -1408,10 +1532,16 @@ class MeseroController extends ChangeNotifier {
 
     // Cargar historial de forma asíncrona respetando los flags
     await _loadHistoryForTable(table.id);
+
+    final tableId = table.id.toString();
+    // Restaurar carrito persistido si en memoria está vacío (evita perder productos al recargar/reiniciar)
+    if ((_tableOrders[tableId] ?? []).isEmpty) {
+      await _loadPersistedCartForTable(tableId);
+      if ((_tableOrders[tableId] ?? []).isNotEmpty) notifyListeners();
+    }
     
     // Después de cargar el historial, verificar si hay órdenes en modo dividido
     // y restaurar el modo dividido si es necesario
-    final tableId = table.id.toString();
     final history = _tableOrderHistory[tableId] ?? [];
     final hasDividedOrders = history.any((order) => order['isDividedAccount'] == true);
     
@@ -1575,6 +1705,7 @@ class MeseroController extends ChangeNotifier {
         final mesaActual = _tables[mesaIndex];
         final mesaActualizada = TableModel(
           id: mesaActual.id,
+          codigo: mesaActual.codigo,
           number: mesaActual.number,
           status: newStatus,
           seats: mesaActual.seats,
@@ -1646,6 +1777,7 @@ class MeseroController extends ChangeNotifier {
 
     _tableOrders[cartKey] = [...(_tableOrders[cartKey] ?? []), cartItem];
     notifyListeners();
+    _persistCartForTable(cartKey);
   }
 
   // Remover producto del carrito
@@ -1676,7 +1808,42 @@ class MeseroController extends ChangeNotifier {
           .where((item) => item.id != itemId)
           .toList();
       notifyListeners();
+      _persistCartForTable(cartKey);
     }
+  }
+
+  /// Actualiza las customizations de un ítem del carrito (ej. cantidad, nota).
+  /// [customizationsOverride] se fusiona sobre las existentes (solo las claves indicadas).
+  void updateCartItem(String itemId, Map<String, dynamic> customizationsOverride) {
+    String? cartKey;
+    if (_selectedTable != null) {
+      cartKey = _selectedTable!.id.toString();
+    } else if (isTakeawayMode) {
+      cartKey = 'takeaway';
+    }
+    if (cartKey == null || _tableOrders[cartKey] == null) return;
+
+    final list = _tableOrders[cartKey]!;
+    final index = list.indexWhere((item) => item.id == itemId);
+    if (index == -1) return;
+
+    final item = list[index];
+    final merged = Map<String, dynamic>.from(item.customizations);
+    merged.addAll(customizationsOverride);
+
+    final updated = CartItem(
+      id: item.id,
+      product: item.product,
+      customizations: merged,
+      tableId: item.tableId,
+    );
+    _tableOrders[cartKey] = [
+      ...list.sublist(0, index),
+      updated,
+      ...list.sublist(index + 1),
+    ];
+    notifyListeners();
+    _persistCartForTable(cartKey);
   }
 
   // ========== MÉTODOS PARA CUENTA DIVIDIDA POR PERSONA ==========
@@ -1701,19 +1868,11 @@ class MeseroController extends ChangeNotifier {
         item.customizations.remove('personId');
       }
     } else {
-      // Al activar, crear primera persona por defecto si no existe ninguna
+      // Al activar, solo inicializar estructuras; no crear persona hasta que el usuario pulse "Agregar Persona"
       if (!_personNamesByTable.containsKey(tableId)) {
         _personNamesByTable[tableId] = {};
         _personCartItemsByTable[tableId] = {};
         _nextPersonIdByTable[tableId] = 1;
-      }
-      final personNames = _personNamesByTable[tableId]!;
-      if (personNames.isEmpty) {
-        final nextId = _nextPersonIdByTable[tableId]!;
-        final firstPersonId = 'person_$nextId';
-        personNames[firstPersonId] = 'Persona 1';
-        _personCartItemsByTable[tableId]![firstPersonId] = [];
-        _nextPersonIdByTable[tableId] = nextId + 1;
       }
     }
     
@@ -1865,6 +2024,7 @@ class MeseroController extends ChangeNotifier {
     if (cartKey == null) return;
 
     _tableOrders[cartKey] = [];
+    _persistCartForTable(cartKey);
     
     // Si está en modo dividida, limpiar también asignaciones de personas para esta mesa
     if (isDividedAccountMode && _selectedTable != null) {
@@ -2122,6 +2282,16 @@ class MeseroController extends ChangeNotifier {
     }
   }
 
+  /// IVA habilitado en configuración (para mostrar IVA en Cerrar cuenta aunque las órdenes tengan 0).
+  Future<bool> getIvaHabilitado() async {
+    try {
+      final config = await _configuracionService.getConfiguracion();
+      return config.ivaHabilitado;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Limpiar historial de una mesa
   // IMPORTANTE: Marca TODAS las órdenes activas como cerradas en el backend
   // para que no vuelvan a aparecer después de login/logout
@@ -2357,10 +2527,10 @@ class MeseroController extends ChangeNotifier {
           try {
             fecha = date_utils.AppDateUtils.parseToLocal(createdAt);
           } catch (e) {
-            fecha = DateTime.now();
+            fecha = date_utils.AppDateUtils.nowCdmx();
           }
         } else {
-          fecha = DateTime.now();
+          fecha = date_utils.AppDateUtils.nowCdmx();
         }
 
         // Cargar items de la orden desde el backend
@@ -2693,7 +2863,7 @@ class MeseroController extends ChangeNotifier {
         if (createdAt != null) {
           fecha = date_utils.AppDateUtils.parseToLocal(createdAt);
         } else {
-          fecha = DateTime.now();
+          fecha = date_utils.AppDateUtils.nowCdmx();
         }
 
         history.add({
@@ -2804,6 +2974,33 @@ class MeseroController extends ChangeNotifier {
         return false;
       });
 
+      // Preservar metadata de cuenta dividida desde el historial local anterior:
+      // las órdenes del backend no traen isDividedAccount/personNames/personAssignments,
+      // así que los copiamos del historial local para que al volver a cuenta dividida sigan apareciendo las personas.
+      final historialLocalPrev = _tableOrderHistory[tableKey] ?? [];
+      for (final orden in history) {
+        final ordenId = orden['ordenId'] as int?;
+        if (ordenId == null) continue;
+        Map<String, dynamic>? ordenLocal;
+        for (final o in historialLocalPrev) {
+          if ((o['ordenId'] as int?) == ordenId) {
+            ordenLocal = o;
+            break;
+          }
+        }
+        if (ordenLocal != null) {
+          if (ordenLocal['isDividedAccount'] != null) {
+            orden['isDividedAccount'] = ordenLocal['isDividedAccount'];
+          }
+          if (ordenLocal['personNames'] != null) {
+            orden['personNames'] = ordenLocal['personNames'];
+          }
+          if (ordenLocal['personAssignments'] != null) {
+            orden['personAssignments'] = ordenLocal['personAssignments'];
+          }
+        }
+      }
+
       // Guardar historial
       _tableOrderHistory[tableKey] = history;
 
@@ -2811,19 +3008,13 @@ class MeseroController extends ChangeNotifier {
         '✅ Historial mesa $tableId cargado: ${history.length} órdenes activas',
       );
 
-      // Verificar si hay órdenes en modo dividido y restaurar el modo si es necesario
+      // Verificar si hay órdenes en modo dividido y restaurar/sincronizar modo y personas
       final hasDividedOrders = history.any((order) => order['isDividedAccount'] == true);
-      if (hasDividedOrders && !(_isDividedAccountModeByTable[tableKey] ?? false)) {
-        // Restaurar modo dividido si hay órdenes en modo dividido
-        _isDividedAccountModeByTable[tableKey] = true;
-        
-        // Restaurar información de personas desde el historial
-        final personNamesFromHistory = <String, String>{};
-        
+      final personNamesFromHistory = <String, String>{};
+      if (hasDividedOrders) {
         for (var order in history) {
           if (order['isDividedAccount'] == true) {
             final personNames = order['personNames'] as Map<String, dynamic>?;
-            
             if (personNames != null) {
               personNames.forEach((personId, name) {
                 if (!personNamesFromHistory.containsKey(personId)) {
@@ -2833,34 +3024,30 @@ class MeseroController extends ChangeNotifier {
             }
           }
         }
-        
-        // Restaurar nombres de personas si existen
-        if (personNamesFromHistory.isNotEmpty) {
-          _personNamesByTable[tableKey] = personNamesFromHistory;
-          
-          // Inicializar listas de items por persona si no existen
-          if (!_personCartItemsByTable.containsKey(tableKey)) {
-            _personCartItemsByTable[tableKey] = {};
-          }
-          
-          // Restaurar el siguiente ID de persona
-          if (personNamesFromHistory.isNotEmpty) {
-            final maxId = personNamesFromHistory.keys
-                .map((id) {
-                  final match = RegExp(r'person_(\d+)').firstMatch(id);
-                  return match != null ? int.tryParse(match.group(1) ?? '0') ?? 0 : 0;
-                })
-                .fold(0, (max, id) => id > max ? id : max);
-            _nextPersonIdByTable[tableKey] = maxId + 1;
-          }
-          
-          // Seleccionar la primera persona si no hay ninguna seleccionada
-          if (_selectedPersonIdByTable[tableKey] == null && personNamesFromHistory.isNotEmpty) {
-            _selectedPersonIdByTable[tableKey] = personNamesFromHistory.keys.first;
-          }
-        }
-        
+      }
+
+      if (hasDividedOrders && !(_isDividedAccountModeByTable[tableKey] ?? false)) {
+        // Restaurar modo dividido si hay órdenes en modo dividido
+        _isDividedAccountModeByTable[tableKey] = true;
         print('✅ Modo dividido restaurado para mesa $tableId');
+      }
+
+      // Siempre sincronizar lista de personas cuando hay cuenta dividida (restaurar o quitar quienes ya cerraron)
+      if (hasDividedOrders && personNamesFromHistory.isNotEmpty) {
+        _personNamesByTable[tableKey] = personNamesFromHistory;
+        if (!_personCartItemsByTable.containsKey(tableKey)) {
+          _personCartItemsByTable[tableKey] = {};
+        }
+        final maxId = personNamesFromHistory.keys
+            .map((id) {
+              final match = RegExp(r'person_(\d+)').firstMatch(id);
+              return match != null ? int.tryParse(match.group(1) ?? '0') ?? 0 : 0;
+            })
+            .fold(0, (max, id) => id > max ? id : max);
+        _nextPersonIdByTable[tableKey] = maxId + 1;
+        if (_selectedPersonIdByTable[tableKey] == null || !personNamesFromHistory.containsKey(_selectedPersonIdByTable[tableKey])) {
+          _selectedPersonIdByTable[tableKey] = personNamesFromHistory.keys.first;
+        }
       }
 
       notifyListeners();
@@ -3791,6 +3978,7 @@ class MeseroController extends ChangeNotifier {
         final bill = BillModel(
           id: billId,
           tableNumber: selectedTable.number,
+          mesaCodigo: selectedTable.codigo,
           ordenId: lastOrdenId,
           items: allBillItems, // Mantener items planos para compatibilidad
           subtotal: totalConsumo,
@@ -3817,6 +4005,7 @@ class MeseroController extends ChangeNotifier {
         socketService.emit('cuenta.enviada', {
           'id': bill.id,
           'tableNumber': bill.tableNumber,
+          'mesaCodigo': bill.mesaCodigo ?? bill.tableNumber?.toString(),
           'ordenId': lastOrdenId, // Orden principal para compatibilidad
           'ordenIds': ordenIdsList, // TODAS las órdenes agrupadas
           'items': allBillItems
@@ -4056,6 +4245,7 @@ class MeseroController extends ChangeNotifier {
       final bill = BillModel(
         id: billId,
         tableNumber: selectedTable.number,
+        mesaCodigo: selectedTable.codigo,
         ordenId: ordenId, // Incluir ordenId de la orden creada
         items: billItems,
         subtotal: total,
@@ -4075,6 +4265,7 @@ class MeseroController extends ChangeNotifier {
       socketService.emit('cuenta.enviada', {
         'id': bill.id,
         'tableNumber': bill.tableNumber,
+        'mesaCodigo': bill.mesaCodigo ?? bill.tableNumber?.toString(),
         'ordenId': ordenId,
         'items': billItems
             .map(
@@ -4090,7 +4281,7 @@ class MeseroController extends ChangeNotifier {
         'tax': 0.0,
         'total': total,
         'status': 'pending',
-        'createdAt': DateTime.now().toIso8601String(),
+        'createdAt': date_utils.AppDateUtils.nowCdmx().toIso8601String(),
         'waiterName': bill.waiterName,
         'splitCount': bill.splitCount,
       });
@@ -4114,8 +4305,8 @@ class MeseroController extends ChangeNotifier {
           return '${qty}x ${item.product.name}';
         }).toList(),
         'status': 'Enviado al Cajero',
-        'time': date_utils.AppDateUtils.formatTime(DateTime.now()),
-        'date': DateTime.now().toIso8601String(),
+        'time': date_utils.AppDateUtils.formatTime(date_utils.AppDateUtils.nowCdmx()),
+        'date': date_utils.AppDateUtils.nowCdmx().toIso8601String(),
         'total': total,
       };
 
@@ -4171,6 +4362,7 @@ class MeseroController extends ChangeNotifier {
       final bill = BillModel(
         id: 'BILL-${DateTime.now().millisecondsSinceEpoch}',
         tableNumber: selectedTable.number,
+        mesaCodigo: selectedTable.codigo,
         ordenId: ordenIdParaBill,
         items: billItems,
         subtotal: subtotal,
@@ -4400,6 +4592,7 @@ class MeseroController extends ChangeNotifier {
     final bill = BillModel(
       id: billId,
       tableNumber: selectedTable.number,
+      mesaCodigo: selectedTable.codigo,
       items: allBillItems,
       subtotal: personSubtotal,
       tax: 0.0,
@@ -4423,6 +4616,7 @@ class MeseroController extends ChangeNotifier {
     socketService.emit('cuenta.enviada', {
       'id': bill.id,
       'tableNumber': bill.tableNumber,
+      'mesaCodigo': bill.mesaCodigo ?? bill.tableNumber?.toString(),
       'ordenId': lastOrdenId,
       'ordenIds': ordenIdsList,
       'items': allBillItems.map((item) => ({
@@ -4664,19 +4858,31 @@ class MeseroController extends ChangeNotifier {
         }
       }
 
-      // Calcular total con propina
-      totalConPropina = subtotalAfterDiscount + tip;
+      // IVA México CDMX (16%): solo si está habilitado en configuración por el admin.
+      // Si falla la config, el backend recalcula el IVA al crear la orden según su configuración.
+      double impuestoTotal = 0.0;
+      try {
+        final config = await _configuracionService.getConfiguracion();
+        if (config.ivaHabilitado) {
+          impuestoTotal = (subtotal - discountAmount) * 0.16;
+        }
+      } catch (e) {
+        // El backend aplica IVA según su configuración al crear la orden si la app envía 0
+        assert(() {
+          debugPrint('Mesero: no se pudo cargar config IVA: $e');
+          return true;
+        }());
+      }
+      totalConPropina = subtotalAfterDiscount + impuestoTotal + tip;
 
       // IMPORTANTE: Siempre guardar el mesaId si hay una mesa seleccionada
-      // Esto permite que las órdenes "para llevar" creadas desde una mesa
-      // aparezcan en el historial de esa mesa después del logout/login
       final ordenData = {
         'mesaId': _selectedTable?.id,
         'clienteNombre': customerName,
         'clienteTelefono': customerPhone,
         'subtotal': subtotal,
         'descuentoTotal': discountAmount,
-        'impuestoTotal': 0,
+        'impuestoTotal': impuestoTotal,
         'propinaSugerida': tip > 0 ? tip : null,
         'total': totalConPropina,
         'items': items,
@@ -5014,7 +5220,7 @@ class MeseroController extends ChangeNotifier {
     // Información de ubicación
     final ubicacion = esParaLlevar
         ? 'Para llevar'
-        : (mesaCodigo != null ? 'Mesa $mesaCodigo' : 'Mesa $mesaId');
+        : TableModel.displayLabelFromCodigo(mesaCodigo, mesaId is int ? mesaId : null);
 
     // Determinar título y mensaje según el estado
     if (estadoLower.contains('listo') || estadoLower.contains('ready')) {
@@ -5065,13 +5271,21 @@ class MeseroController extends ChangeNotifier {
 
   // Métodos de notificaciones
   // ordenId es opcional pero si se proporciona, se usa para evitar duplicados
+  // createdAt: opcional; si se pasa (ej. al cargar desde API), se usa para mostrar "hace cuánto" correcto
   void addNotification(
     String title,
     String message, {
     int? ordenId,
     String? tipo,
+    DateTime? createdAt,
+    String? meseroNombre,
   }) {
     final now = DateTime.now();
+    // Siempre usar "now" como timestamp para notificaciones en tiempo real (socket).
+    // Si viene createdAt (carga desde API), usarlo parseado a local para evitar desfase de 6h.
+    final DateTime timestampToStore = createdAt != null
+        ? (createdAt.isUtc ? createdAt.toLocal() : createdAt)
+        : now;
 
     // Evitar duplicados: si hay ordenId, verificar que no exista una notificación
     // para la misma orden con el mismo tipo en los últimos 30 segundos
@@ -5103,10 +5317,11 @@ class MeseroController extends ChangeNotifier {
       _pendingNotifications.insert(0, {
         'title': title,
         'message': message,
-        'timestamp': now,
+        'timestamp': timestampToStore,
         'ordenId': ordenId,
         'tipo': tipo,
         'read': false, // Para marcar si fue leída
+        if (meseroNombre != null && meseroNombre.isNotEmpty) 'meseroNombre': meseroNombre,
       });
 
       // Mantener máximo 50 notificaciones
@@ -5128,16 +5343,31 @@ class MeseroController extends ChangeNotifier {
   void removeNotification(int index) async {
     if (index >= 0 && index < _pendingNotifications.length) {
       final notif = _pendingNotifications[index];
-      final ordenId = notif['ordenId'] as int?;
-      final tipo = notif['tipo'] as String? ?? 'general';
+      removeNotificationByOrderAndType(
+        notif['ordenId'] as int?,
+        notif['tipo'] as String? ?? 'general',
+      );
+    }
+  }
 
-      // Marcar como limpiada antes de remover
-      if (ordenId != null) {
-        await _markNotificationAsCleared(ordenId, tipo);
-      }
+  /// Elimina una notificación por ordenId y tipo (estable). Evita errores por índice
+  /// al hacer clic en la X. Actualización optimista: quita de la lista al instante.
+  void removeNotificationByOrderAndType(int? ordenId, String tipo) {
+    final idx = _pendingNotifications.indexWhere((n) {
+      final oid = n['ordenId'] as int?;
+      final t = n['tipo'] as String? ?? 'general';
+      return oid == ordenId && t == tipo;
+    });
+    if (idx < 0) return;
 
-      _pendingNotifications.removeAt(index);
-      notifyListeners();
+    _pendingNotifications.removeAt(idx);
+    notifyListeners();
+
+    // Marcar como limpiada en backend en segundo plano (no bloquear la UI)
+    if (ordenId != null) {
+      _markNotificationAsCleared(ordenId, tipo).catchError((e) {
+        print('⚠️ Mesero: Error al marcar notificación como limpiada: $e');
+      });
     }
   }
 

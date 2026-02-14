@@ -32,9 +32,14 @@ Este repositorio contiene únicamente la carpeta `comandero_flutter` que incluye
    CREATE DATABASE comandero CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    EXIT;
    
-   # Importar el script SQL
+   # Importar el script SQL completo (estructura + datos semilla)
    mysql -u root -p comandero < comandero_flutter/backend/backups/comandero.sql
    ```
+
+   Incluye todos los datos semilla: roles, permisos, estados de mesa/orden, formas de pago,
+   configuración e impresoras. Usuario admin: admin / Demo1234.
+
+   Si solo necesitas datos semilla: `mysql -u root -p comandero < comandero_flutter/backend/scripts/seed-datos-iniciales.sql`
 
 3. **Configurar el Backend**
    ```bash
@@ -45,25 +50,20 @@ Este repositorio contiene únicamente la carpeta `comandero_flutter` que incluye
    cp .env.example .env
    
    # Editar .env con tus credenciales de base de datos
-   # DB_HOST=localhost
-   # DB_USER=root
-   # DB_PASSWORD=tu_password
-   # DB_NAME=comandero
+   # DATABASE_HOST=127.0.0.1
+   # DATABASE_USER=root
+   # DATABASE_PASSWORD=tu_password
+   # DATABASE_NAME=comandero
    ```
 
-4. **Crear usuarios demo y credenciales (recomendado)**
+4. **Usuarios demo adicionales (opcional)**
 
-   El script SQL crea la estructura + catálogos base (estados, formas de pago, roles, etc.).
-   Para que el login funcione “listo” en otra laptop (porque `password_hash` debe ser bcrypt),
-   ejecuta uno de estos scripts:
+   El script SQL ya incluye admin (admin / Demo1234). Para más usuarios demo:
+   Ejecuta:
 
    ```bash
    cd comandero_flutter/backend
 
-   # Opción A: crear/actualizar admin (usuario: admin / pass: Demo1234)
-   npm run create-admin
-
-   # Opción B: crear usuarios demo por rol (admin, cajero1, capitan1, mesero1, cocinero1)
    npx tsx scripts/seed-users.ts
    ```
 
@@ -98,9 +98,9 @@ Este script incluye:
 
 ## 🔐 Credenciales por Defecto
 
-**Usuario Administrador:**
+**Usuario Administrador (incluido en comandero.sql):**
 - Username: `admin`
-- Password: `Demo1234` (después de ejecutar `npm run create-admin` o `npx tsx scripts/seed-users.ts`)
+- Password: `Demo1234`
 
 ## 📝 Notas Importantes
 

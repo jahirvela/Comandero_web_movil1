@@ -14,6 +14,8 @@ import '../services/tickets_service.dart';
 import '../services/cierres_service.dart';
 import '../services/ordenes_service.dart';
 import '../services/pagos_service.dart';
+import '../services/configuracion_service.dart';
+import '../services/impresoras_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
@@ -39,6 +41,8 @@ class AdminController extends ChangeNotifier {
   final CierresService _cierresService = CierresService();
   final OrdenesService _ordenesService = OrdenesService();
   final PagosService _pagosService = PagosService();
+  final ConfiguracionService _configuracionService = ConfiguracionService();
+  final ImpresorasService _impresorasService = ImpresorasService();
 
   String _normalizeInventoryCategory(String? value) {
     final raw = value?.trim() ?? '';
@@ -85,6 +89,19 @@ class AdminController extends ChangeNotifier {
   List<String> _customCategories =
       []; // Categorías creadas por el admin además de las predeterminadas
 
+  // Alertas de inventario pendientes de mostrar (stock crítico / sin stock)
+  final List<Map<String, dynamic>> _pendingInventoryAlerts = [];
+
+  /// Alertas de inventario recibidas por socket que aún no se han mostrado al usuario.
+  List<Map<String, dynamic>> get pendingInventoryAlerts =>
+      List.unmodifiable(_pendingInventoryAlerts);
+
+  void markInventoryAlertsAsShown() {
+    if (_pendingInventoryAlerts.isEmpty) return;
+    _pendingInventoryAlerts.clear();
+    notifyListeners();
+  }
+
   // Estado de mesas
   List<TableModel> _tables = [];
 
@@ -125,6 +142,35 @@ class AdminController extends ChangeNotifier {
   String _selectedConsumptionFilter =
       'todos'; // 'todos', 'para_llevar', 'mesas'
   String _searchQuery = '';
+  String _menuSearchQuery = '';
+  String _inventorySearchQuery = '';
+  String _usersSearchQuery = '';
+  String _ticketsSearchQuery = '';
+
+  TextEditingController? _menuSearchController;
+  TextEditingController? _inventorySearchController;
+  TextEditingController? _usersSearchController;
+  TextEditingController? _ticketsSearchController;
+
+  TextEditingController get menuSearchController {
+    _menuSearchController ??= TextEditingController(text: _menuSearchQuery);
+    return _menuSearchController!;
+  }
+
+  TextEditingController get inventorySearchController {
+    _inventorySearchController ??= TextEditingController(text: _inventorySearchQuery);
+    return _inventorySearchController!;
+  }
+
+  TextEditingController get usersSearchController {
+    _usersSearchController ??= TextEditingController(text: _usersSearchQuery);
+    return _usersSearchController!;
+  }
+
+  TextEditingController get ticketsSearchController {
+    _ticketsSearchController ??= TextEditingController(text: _ticketsSearchQuery);
+    return _ticketsSearchController!;
+  }
 
   // Estado de consumo del día (órdenes/pedidos)
   List<OrderModel> _dailyConsumption = [];
@@ -146,6 +192,17 @@ class AdminController extends ChangeNotifier {
 
   // Vista actual
   String _currentView = 'dashboard';
+
+  // Configuración (IVA México CDMX y cajón de dinero)
+  bool _ivaHabilitado = false;
+  ConfiguracionCajonModel _configuracionCajon = ConfiguracionCajonModel();
+  bool _isSavingConfiguracion = false;
+  String? _configuracionError;
+
+  // Impresoras térmicas
+  List<ImpresoraModel> _impresoras = [];
+  bool _isLoadingImpresoras = false;
+  String? _impresorasError;
 
   // Getters
   List<AdminUser> get users => _users;
@@ -181,8 +238,19 @@ class AdminController extends ChangeNotifier {
   DateTime? get cashCloseEndDate => _cashCloseEndDate;
   String get cashCloseSearchQuery => _cashCloseSearchQuery;
   String get searchQuery => _searchQuery;
+  String get menuSearchQuery => _menuSearchQuery;
+  String get inventorySearchQuery => _inventorySearchQuery;
+  String get usersSearchQuery => _usersSearchQuery;
+  String get ticketsSearchQuery => _ticketsSearchQuery;
   String get currentView => _currentView;
   List<OrderModel> get dailyConsumption => _dailyConsumption;
+  bool get ivaHabilitado => _ivaHabilitado;
+  ConfiguracionCajonModel get configuracionCajon => _configuracionCajon;
+  bool get isSavingConfiguracion => _isSavingConfiguracion;
+  String? get configuracionError => _configuracionError;
+  List<ImpresoraModel> get impresoras => _impresoras;
+  bool get isLoadingImpresoras => _isLoadingImpresoras;
+  String? get impresorasError => _impresorasError;
 
   // Obtener usuarios filtrados
   List<AdminUser> get filteredUsers {
@@ -195,9 +263,9 @@ class AdminController extends ChangeNotifier {
           (_selectedUserStatus == 'activos' && user.isActive) ||
           (_selectedUserStatus == 'inactivos' && !user.isActive);
       final searchMatch =
-          _searchQuery.isEmpty ||
-          user.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          user.username.toLowerCase().contains(_searchQuery.toLowerCase());
+          _usersSearchQuery.trim().isEmpty ||
+          user.name.toLowerCase().contains(_usersSearchQuery.toLowerCase()) ||
+          user.username.toLowerCase().contains(_usersSearchQuery.toLowerCase());
       return roleMatch && statusMatch && searchMatch;
     }).toList();
   }
@@ -212,11 +280,15 @@ class AdminController extends ChangeNotifier {
           _selectedInventoryStatus == 'todos' ||
           item.status == _selectedInventoryStatus;
       final searchMatch =
-          _searchQuery.isEmpty ||
-          item.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          _inventorySearchQuery.trim().isEmpty ||
+          item.name.toLowerCase().contains(_inventorySearchQuery.toLowerCase()) ||
           (item.supplier != null &&
               item.supplier!.toLowerCase().contains(
-                _searchQuery.toLowerCase(),
+                _inventorySearchQuery.toLowerCase(),
+              )) ||
+          (item.codigoBarras != null &&
+              item.codigoBarras!.toLowerCase().contains(
+                _inventorySearchQuery.toLowerCase(),
               ));
       return categoryMatch && statusMatch && searchMatch;
     }).toList();
@@ -230,8 +302,8 @@ class AdminController extends ChangeNotifier {
           _selectedMenuCategory == 'todos' ||
           item.category.toLowerCase() == _selectedMenuCategory.toLowerCase();
       final searchMatch =
-          _searchQuery.isEmpty ||
-          item.name.toLowerCase().contains(_searchQuery.toLowerCase());
+          _menuSearchQuery.trim().isEmpty ||
+          item.name.toLowerCase().contains(_menuSearchQuery.toLowerCase());
       return categoryMatch && searchMatch;
     }).toList();
   }
@@ -261,7 +333,7 @@ class AdminController extends ChangeNotifier {
 
   // Obtener tickets del día actual filtrados (para consumo del día)
   List<payment_models.BillModel> get filteredDailyTickets {
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     return _tickets.where((ticket) {
       // Filtrar por día actual
       final ticketDate = ticket.createdAt;
@@ -371,24 +443,24 @@ class AdminController extends ChangeNotifier {
 
       // Filtro por búsqueda
       final searchMatch =
-          _searchQuery.isEmpty ||
-          ticket.id.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          _ticketsSearchQuery.trim().isEmpty ||
+          ticket.id.toLowerCase().contains(_ticketsSearchQuery.toLowerCase()) ||
           (ticket.tableNumber != null &&
-              ticket.tableNumber.toString().contains(_searchQuery)) ||
+              ticket.tableNumber.toString().contains(_ticketsSearchQuery)) ||
           (ticket.waiterName != null &&
               ticket.waiterName!.toLowerCase().contains(
-                _searchQuery.toLowerCase(),
+                _ticketsSearchQuery.toLowerCase(),
               )) ||
           (ticket.printedBy != null &&
               ticket.printedBy!.toLowerCase().contains(
-                _searchQuery.toLowerCase(),
+                _ticketsSearchQuery.toLowerCase(),
               ));
 
       // Filtro por período de fecha
       bool periodMatch = true;
       if (_selectedTicketPeriod != 'todos') {
         final ticketDate = ticket.createdAt;
-        final now = DateTime.now();
+        final now = date_utils.AppDateUtils.nowCdmx();
 
         switch (_selectedTicketPeriod) {
           case 'hoy':
@@ -435,7 +507,8 @@ class AdminController extends ChangeNotifier {
       }
 
       return statusMatch && searchMatch && periodMatch;
-    }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt)); // Cobros más recientes primero
   }
 
   // Cargar datos desde el backend
@@ -539,6 +612,7 @@ class AdminController extends ChangeNotifier {
           // Usar el estado local en lugar del del backend
           nuevasMesas[i] = TableModel(
             id: nuevaMesa.id,
+            codigo: nuevaMesa.codigo,
             number: nuevaMesa.number,
             status: mesaExistente.status,
             seats: nuevaMesa.seats,
@@ -584,6 +658,120 @@ class AdminController extends ChangeNotifier {
       print('Error al cargar permisos: $e');
       _permisos = [];
       notifyListeners();
+    }
+  }
+
+  /// Cargar configuración (IVA habilitado, etc.). Usado en vista Configuración.
+  Future<void> loadConfiguracion() async {
+    try {
+      _configuracionError = null;
+      final config = await _configuracionService.getConfiguracion();
+      _ivaHabilitado = config.ivaHabilitado;
+      _configuracionCajon = config.cajon;
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar configuración: $e');
+      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+      _ivaHabilitado = false;
+      _configuracionCajon = ConfiguracionCajonModel();
+      notifyListeners();
+    }
+  }
+
+  /// Actualizar configuración del cajón de dinero (solo admin).
+  Future<void> actualizarConfiguracionCajon(Map<String, dynamic> cajon) async {
+    try {
+      _isSavingConfiguracion = true;
+      _configuracionError = null;
+      notifyListeners();
+      final config = await _configuracionService.actualizarConfiguracionCajon(cajon);
+      _configuracionCajon = config.cajon;
+    } catch (e) {
+      print('Error al actualizar configuración cajón: $e');
+      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+    } finally {
+      _isSavingConfiguracion = false;
+      notifyListeners();
+    }
+  }
+
+  /// Actualizar IVA habilitado (solo admin). México CDMX.
+  Future<void> actualizarIvaHabilitado(bool value) async {
+    try {
+      _isSavingConfiguracion = true;
+      _configuracionError = null;
+      notifyListeners();
+      final config = await _configuracionService.actualizarIvaHabilitado(value);
+      _ivaHabilitado = config.ivaHabilitado;
+    } catch (e) {
+      print('Error al actualizar IVA: $e');
+      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+    } finally {
+      _isSavingConfiguracion = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadImpresoras() async {
+    try {
+      _isLoadingImpresoras = true;
+      _impresorasError = null;
+      notifyListeners();
+      _impresoras = await _impresorasService.getImpresoras();
+    } catch (e) {
+      print('Error al cargar impresoras: $e');
+      _impresorasError = e.toString().replaceFirst('Exception: ', '');
+      _impresoras = [];
+    } finally {
+      _isLoadingImpresoras = false;
+      notifyListeners();
+    }
+  }
+
+  Future<ImpresoraModel?> createImpresora(Map<String, dynamic> body) async {
+    try {
+      _impresorasError = null;
+      final created = await _impresorasService.createImpresora(body);
+      if (created != null) {
+        await loadImpresoras();
+        return created;
+      }
+    } catch (e) {
+      print('Error al crear impresora: $e');
+      _impresorasError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+    }
+    return null;
+  }
+
+  Future<ImpresoraModel?> updateImpresora(int id, Map<String, dynamic> body) async {
+    try {
+      _impresorasError = null;
+      final updated = await _impresorasService.updateImpresora(id, body);
+      if (updated != null) {
+        await loadImpresoras();
+        return updated;
+      }
+    } catch (e) {
+      print('Error al actualizar impresora: $e');
+      _impresorasError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+    }
+    return null;
+  }
+
+  Future<bool> deleteImpresora(int id) async {
+    try {
+      _impresorasError = null;
+      final ok = await _impresorasService.deleteImpresora(id);
+      if (ok) await loadImpresoras();
+      notifyListeners();
+      return ok;
+    } catch (e) {
+      print('Error al eliminar impresora: $e');
+      _impresorasError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+      return false;
     }
   }
 
@@ -683,6 +871,10 @@ class AdminController extends ChangeNotifier {
       }),
       loadCashClosures().catchError((e) {
         print('⚠️ Error al cargar cierres: $e');
+        return null;
+      }),
+      loadConfiguracion().catchError((e) {
+        print('⚠️ Error al cargar configuración (IVA): $e');
         return null;
       }),
       loadDailyConsumption().catchError((e) {
@@ -851,11 +1043,17 @@ class AdminController extends ChangeNotifier {
       }
     });
 
-    // Escuchar alertas de inventario
+    // Escuchar alertas de inventario (stock crítico / sin stock) en tiempo real
     socketService.onAlerta((String tipo, dynamic data) {
       try {
-        if (tipo.contains('inventario') || tipo.contains('stock')) {
-          // Recargar inventario cuando hay alertas
+        if (tipo == 'alerta.inventario' && data is Map<String, dynamic>) {
+          // Guardar para mostrar notificación al admin (máx. 5 pendientes)
+          if (_pendingInventoryAlerts.length >= 5) _pendingInventoryAlerts.removeAt(0);
+          _pendingInventoryAlerts.add(Map<String, dynamic>.from(data));
+          notifyListeners();
+          // Recargar inventario para que el recuadro Stock crítico se actualice al instante
+          loadInventory();
+        } else if (tipo.contains('inventario') || tipo.contains('stock')) {
           loadInventory();
         }
       } catch (e) {
@@ -1116,7 +1314,7 @@ class AdminController extends ChangeNotifier {
   List<payment_models.PaymentModel> get payments => _paymentRepository.payments;
 
   List<payment_models.PaymentModel> get todayPayments {
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     return payments.where((payment) {
       final timestamp = payment.timestamp;
       return timestamp.year == now.year &&
@@ -1239,7 +1437,7 @@ class AdminController extends ChangeNotifier {
 
   // Calcular ventas de ayer para comparación
   double get yesterdayTotalSales {
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
     final yesterday = now.subtract(const Duration(days: 1));
     return payments
         .where((payment) {
@@ -1328,9 +1526,29 @@ class AdminController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Cambiar consulta de búsqueda
+  // Cambiar consulta de búsqueda genérica (por compatibilidad; usar setter por vista cuando sea posible)
   void setSearchQuery(String query) {
     _searchQuery = query;
+    notifyListeners();
+  }
+
+  void setMenuSearchQuery(String query) {
+    _menuSearchQuery = query;
+    notifyListeners();
+  }
+
+  void setInventorySearchQuery(String query) {
+    _inventorySearchQuery = query;
+    notifyListeners();
+  }
+
+  void setUsersSearchQuery(String query) {
+    _usersSearchQuery = query;
+    notifyListeners();
+  }
+
+  void setTicketsSearchQuery(String query) {
+    _ticketsSearchQuery = query;
     notifyListeners();
   }
 
@@ -1513,14 +1731,10 @@ class AdminController extends ChangeNotifier {
       // Datos
       for (final ticket in ticketsFiltrados) {
         final fecha = date_utils.AppDateUtils.formatDateTime(ticket.createdAt);
-        final tipo = ticket.isTakeaway
-            ? 'Para llevar'
-            : (ticket.tableNumber != null ? 'En mesa' : 'N/A');
+        final tipo = ticket.isTakeaway ? 'Para llevar' : 'En mesa';
         final mesaCliente = ticket.isTakeaway
             ? (ticket.customerName ?? 'N/A')
-            : (ticket.tableNumber != null
-                  ? 'Mesa ${ticket.tableNumber}'
-                  : 'N/A');
+            : ticket.tableDisplayLabel;
 
         final estadoStr = formatStatus(ticket.status);
         final impresoPor = ticket.printedBy ?? 'No impreso';
@@ -1578,7 +1792,7 @@ class AdminController extends ChangeNotifier {
 
       // Generar nombre de archivo basado en el período seleccionado
       String filename;
-      final now = DateTime.now();
+      final now = date_utils.AppDateUtils.nowCdmx();
       if (_selectedTicketPeriod == 'hoy') {
         filename =
             'tickets_${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}.csv';
@@ -1639,7 +1853,7 @@ class AdminController extends ChangeNotifier {
 
       // Aplicar filtros según el período seleccionado
       // IMPORTANTE: Usar hora CDMX para filtros precisos
-      final now = date_utils.AppDateUtils.now();
+      final now = date_utils.AppDateUtils.nowCdmx();
       switch (_selectedCashClosePeriod) {
         case 'hoy':
           fechaInicio = date_utils.AppDateUtils.startOfDay(now);
@@ -1713,47 +1927,48 @@ class AdminController extends ChangeNotifier {
 
   // Obtener cierres de caja filtrados
   // Obtener la apertura de caja del día actual
-  // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo)
-  // Nota: No usamos pedidosParaLlevar porque se mapea incorrectamente desde el backend (usa numeroOrdenes)
+  // Una apertura explícita se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo)
+  // Si no hay apertura explícita pero sí un cierre con ventas del día, usamos el efectivoInicial
+  // de ese cierre (el cierre incluye el efectivo inicial de la apertura; si la caja ya fue cerrada,
+  // la apertura pudo haberse sobrescrito en BD por el cierre del mismo día)
   CashCloseModel? getTodayCashOpening() {
-    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
-    final hoy = date_utils.AppDateUtils.now();
+    final hoy = date_utils.AppDateUtils.nowCdmx();
     print('🔍 Admin.getTodayCashOpening: Buscando apertura para hoy ${hoy.year}-${hoy.month}-${hoy.day} (hora: ${hoy.hour}:${hoy.minute})');
     print('🔍 Admin.getTodayCashOpening: Total de cierres cargados: ${_cashClosures.length}');
     
-    // Buscar aperturas del día de hoy o del día anterior (para manejar zonas horarias)
-    // Una apertura es válida si fue creada hoy o si fue creada ayer después de las 6pm
     final inicioHoy = DateTime(hoy.year, hoy.month, hoy.day);
     final ayer = hoy.subtract(const Duration(days: 1));
-    final inicioAyer18h = DateTime(ayer.year, ayer.month, ayer.day, 18); // 6pm de ayer
-    
-    final aperturas = _cashClosures.where((cierre) {
-      // Verificar que sea del día de hoy (comparar año, mes y día)
-      final esHoy =
-          cierre.fecha.year == hoy.year &&
-          cierre.fecha.month == hoy.month &&
-          cierre.fecha.day == hoy.day;
-      
-      // También considerar como "hoy" si fue creado ayer después de las 6pm
-      // (esto maneja el caso de zonas horarias y cierres nocturnos)
+    final inicioAyer18h = DateTime(ayer.year, ayer.month, ayer.day, 18);
+
+    // 1. Buscar apertura explícita (efectivoInicial > 0 y sin ventas)
+    final aperturasExplicitas = _cashClosures.where((cierre) {
+      final esHoy = cierre.fecha.year == hoy.year &&
+          cierre.fecha.month == hoy.month && cierre.fecha.day == hoy.day;
       final esAyerNoche = cierre.fecha.isAfter(inicioAyer18h) && cierre.fecha.isBefore(inicioHoy);
-
-      // Verificar que sea una apertura: tiene efectivo inicial y no tiene ventas significativas
-      // No usamos pedidosParaLlevar porque se mapea con numeroOrdenes del backend
-      final esApertura =
-          cierre.efectivoInicial > 0 &&
-          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0);
-
-      print('🔍 Admin.getTodayCashOpening: Cierre ${cierre.id} - Fecha: ${cierre.fecha.year}-${cierre.fecha.month}-${cierre.fecha.day} ${cierre.fecha.hour}:${cierre.fecha.minute}, esHoy: $esHoy, esAyerNoche: $esAyerNoche, efectivoInicial: ${cierre.efectivoInicial}, totalNeto: ${cierre.totalNeto}, esApertura: $esApertura');
-
+      final esApertura = cierre.efectivoInicial > 0 && (cierre.totalNeto == 0 || cierre.totalNeto < 1.0);
       return (esHoy || esAyerNoche) && esApertura;
     }).toList();
 
-    // Retornar la más reciente (última apertura del día)
-    if (aperturas.isEmpty) return null;
+    if (aperturasExplicitas.isNotEmpty) {
+      aperturasExplicitas.sort((a, b) => b.fecha.compareTo(a.fecha));
+      return aperturasExplicitas.first;
+    }
 
-    aperturas.sort((a, b) => b.fecha.compareTo(a.fecha));
-    return aperturas.first;
+    // 2. Si no hay apertura explícita pero sí cierres del día con efectivoInicial > 0,
+    // la caja ya fue cerrada y la apertura pudo haberse sobrescrito. Usamos el cierre
+    // más temprano del día que tenga efectivoInicial para mostrar la apertura.
+    final cierresHoyConEfectivoInicial = _cashClosures.where((cierre) {
+      final esHoy = cierre.fecha.year == hoy.year &&
+          cierre.fecha.month == hoy.month && cierre.fecha.day == hoy.day;
+      return esHoy && cierre.efectivoInicial > 0;
+    }).toList();
+
+    if (cierresHoyConEfectivoInicial.isNotEmpty) {
+      cierresHoyConEfectivoInicial.sort((a, b) => a.fecha.compareTo(b.fecha));
+      return cierresHoyConEfectivoInicial.first;
+    }
+
+    return null;
   }
 
   // Verificar si la caja está abierta hoy
@@ -1761,35 +1976,28 @@ class AdminController extends ChangeNotifier {
     final apertura = getTodayCashOpening();
     if (apertura == null) return false; // No hay apertura, caja cerrada
 
-    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
+    // Si la "apertura" que obtuvimos es en realidad un cierre con ventas
+    // (porque no había apertura explícita y usamos el cierre del día),
+    // entonces la caja está CERRADA.
+    if (apertura.totalNeto >= 1) return false;
+
+    // Hay apertura explícita (totalNeto ~ 0). Buscar si hay cierres con ventas más recientes
     final hoy = date_utils.AppDateUtils.now();
-    // Buscar cierres de caja del día con ventas significativas (totalNeto > 0)
-    // que sean más recientes que la apertura
     final cierresConVentas = _cashClosures.where((cierre) {
       final esHoy =
           cierre.fecha.year == hoy.year &&
           cierre.fecha.month == hoy.month &&
           cierre.fecha.day == hoy.day;
-
-      // Verificar que sea un cierre con ventas (no una apertura)
-      final esCierreConVentas =
-          cierre.totalNeto > 0 &&
-          cierre.fecha.isAfter(apertura.fecha); // Más reciente que la apertura
-
+      final esCierreConVentas = cierre.totalNeto > 0 && cierre.fecha.isAfter(apertura.fecha);
       return esHoy && esCierreConVentas;
     }).toList();
 
-    // Si hay un cierre con ventas más reciente que la apertura, la caja está cerrada
     if (cierresConVentas.isNotEmpty) {
-      // Ordenar por fecha descendente para obtener el más reciente
       cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
-      final cierreMasReciente = cierresConVentas.first;
-      // Si el cierre más reciente tiene ventas, la caja está cerrada
-      return cierreMasReciente.totalNeto <= 0;
+      return cierresConVentas.first.totalNeto <= 0; // Cerrada si el más reciente tiene ventas
     }
 
-    // Si no hay cierres con ventas, la caja está abierta
-    return true;
+    return true; // No hay cierres con ventas, caja abierta
   }
 
   // Cargar pagos desde el backend
@@ -1829,7 +2037,7 @@ class AdminController extends ChangeNotifier {
                       password: '',
                       roles: [],
                       isActive: true,
-                      createdAt: DateTime.now(),
+                      createdAt: date_utils.AppDateUtils.nowCdmx(),
                     ),
                   );
                   cashierName = usuario.name;
@@ -1894,7 +2102,7 @@ class AdminController extends ChangeNotifier {
 
       // Filtro por período
       bool periodMatch = false;
-      final now = DateTime.now();
+      final now = date_utils.AppDateUtils.nowCdmx();
       switch (_selectedCashClosePeriod) {
         case 'hoy':
           periodMatch =
@@ -1944,7 +2152,7 @@ class AdminController extends ChangeNotifier {
 
       // Filtro por búsqueda
       final searchMatch =
-          _cashCloseSearchQuery.isEmpty ||
+          _cashCloseSearchQuery.trim().isEmpty ||
           closure.usuario.toLowerCase().contains(
             _cashCloseSearchQuery.toLowerCase(),
           ) ||
@@ -1985,10 +2193,13 @@ class AdminController extends ChangeNotifier {
 
       // Construir contenido CSV
       final csvLines = <String>[];
+      final showIva = ivaHabilitado;
 
-      // Encabezados
+      // Encabezados (incluir Subtotal e IVA si está habilitado)
       csvLines.add(
-        'ID,Fecha,Hora,Cajero,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+        showIva
+            ? 'ID,Fecha,Hora,Cajero,Total Ventas,Subtotal,IVA (16%),Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas'
+            : 'ID,Fecha,Hora,Cajero,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
       );
 
       // Función helper para formatear estado en español
@@ -2018,25 +2229,32 @@ class AdminController extends ChangeNotifier {
         final notas = (cierre.notaCajero ?? '')
             .replaceAll(',', ';')
             .replaceAll('\n', ' ');
+        final subtotal = showIva && cierre.totalNeto > 0
+            ? cierre.totalNeto / 1.16
+            : 0.0;
+        final iva = showIva && cierre.totalNeto > 0
+            ? cierre.totalNeto - subtotal
+            : 0.0;
 
-        csvLines.add(
-          [
-            cierre.id,
-            fechaStr,
-            horaStr,
-            cierre.usuario.replaceAll(',', ';'),
-            cierre.totalNeto.toStringAsFixed(2),
-            cierre.efectivo.toStringAsFixed(2),
-            cierre.tarjeta.toStringAsFixed(2),
-            cierre.otrosIngresos.toStringAsFixed(2),
-            (cierre.propinasTarjeta + cierre.propinasEfectivo).toStringAsFixed(
-              2,
-            ),
-            estadoStr,
-            cierre.efectivoInicial.toStringAsFixed(2),
-            notas,
-          ].join(','),
-        );
+        final rowData = [
+          cierre.id,
+          fechaStr,
+          horaStr,
+          cierre.usuario.replaceAll(',', ';'),
+          cierre.totalNeto.toStringAsFixed(2),
+          if (showIva) ...[
+            subtotal.toStringAsFixed(2),
+            iva.toStringAsFixed(2),
+          ],
+          cierre.efectivo.toStringAsFixed(2),
+          cierre.tarjeta.toStringAsFixed(2),
+          cierre.otrosIngresos.toStringAsFixed(2),
+          (cierre.propinasTarjeta + cierre.propinasEfectivo).toStringAsFixed(2),
+          estadoStr,
+          cierre.efectivoInicial.toStringAsFixed(2),
+          notas,
+        ];
+        csvLines.add(rowData.join(','));
       }
 
       // Agregar resumen al final
@@ -2066,6 +2284,12 @@ class AdminController extends ChangeNotifier {
       csvLines.add('RESUMEN');
       csvLines.add('Total Cierres,$totalCierres');
       csvLines.add('Total Ventas,${totalVentas.toStringAsFixed(2)}');
+      if (showIva && totalVentas > 0) {
+        final totalSubtotal = totalVentas / 1.16;
+        final totalIva = totalVentas - totalSubtotal;
+        csvLines.add('Subtotal (base gravable),${totalSubtotal.toStringAsFixed(2)}');
+        csvLines.add('IVA (16%),${totalIva.toStringAsFixed(2)}');
+      }
       csvLines.add('Total Efectivo,${totalEfectivo.toStringAsFixed(2)}');
       csvLines.add('Total Tarjeta,${totalTarjeta.toStringAsFixed(2)}');
       csvLines.add('Total Otros Ingresos,${totalOtros.toStringAsFixed(2)}');
@@ -2075,7 +2299,7 @@ class AdminController extends ChangeNotifier {
 
       // Generar nombre de archivo basado en el período seleccionado
       String filename;
-      final now = DateTime.now();
+      final now = date_utils.AppDateUtils.nowCdmx();
       if (_selectedCashClosePeriod == 'hoy') {
         filename =
             'cierres_caja_${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}.csv';
@@ -2144,6 +2368,9 @@ class AdminController extends ChangeNotifier {
 
       // Crear documento PDF
       final pdfDoc = pdf_widgets.Document();
+      final showIvaPdf = ivaHabilitado;
+      final totalVentasPdf =
+          cierresOrdenados.fold(0.0, (sum, c) => sum + c.totalNeto);
 
       pdfDoc.addPage(
         pdf_widgets.MultiPage(
@@ -2165,7 +2392,7 @@ class AdminController extends ChangeNotifier {
                       ),
                     ),
                     pdf_widgets.Text(
-                      date_utils.AppDateUtils.formatDateTime(DateTime.now()),
+                      date_utils.AppDateUtils.formatDateTime(date_utils.AppDateUtils.nowCdmx()),
                       style: const pdf_widgets.TextStyle(fontSize: 12),
                     ),
                   ],
@@ -2242,13 +2469,43 @@ class AdminController extends ChangeNotifier {
                         children: [
                           pdf_widgets.Text('Total Ventas:'),
                           pdf_widgets.Text(
-                            '\$${cierresOrdenados.fold(0.0, (sum, c) => sum + c.totalNeto).toStringAsFixed(2)}',
+                            '\$${totalVentasPdf.toStringAsFixed(2)}',
                             style: pdf_widgets.TextStyle(
                               fontWeight: pdf_widgets.FontWeight.bold,
                             ),
                           ),
                         ],
                       ),
+                      if (showIvaPdf && totalVentasPdf > 0) ...[
+                        pdf_widgets.SizedBox(height: 5.0),
+                        pdf_widgets.Row(
+                          mainAxisAlignment:
+                              pdf_widgets.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pdf_widgets.Text('Subtotal (base gravable):'),
+                            pdf_widgets.Text(
+                              '\$${(totalVentasPdf / 1.16).toStringAsFixed(2)}',
+                              style: pdf_widgets.TextStyle(
+                                fontWeight: pdf_widgets.FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        pdf_widgets.SizedBox(height: 5.0),
+                        pdf_widgets.Row(
+                          mainAxisAlignment:
+                              pdf_widgets.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pdf_widgets.Text('IVA (16%):'),
+                            pdf_widgets.Text(
+                              '\$${(totalVentasPdf - totalVentasPdf / 1.16).toStringAsFixed(2)}',
+                              style: pdf_widgets.TextStyle(
+                                fontWeight: pdf_widgets.FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       pdf_widgets.SizedBox(height: 5.0),
                       pdf_widgets.Row(
                         mainAxisAlignment:
@@ -2334,6 +2591,26 @@ class AdminController extends ChangeNotifier {
                           ),
                         ),
                       ),
+                      if (showIvaPdf) ...[
+                        pdf_widgets.Padding(
+                          padding: const pdf_widgets.EdgeInsets.all(5),
+                          child: pdf_widgets.Text(
+                            'Subtotal',
+                            style: pdf_widgets.TextStyle(
+                              fontWeight: pdf_widgets.FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        pdf_widgets.Padding(
+                          padding: const pdf_widgets.EdgeInsets.all(5),
+                          child: pdf_widgets.Text(
+                            'IVA (16%)',
+                            style: pdf_widgets.TextStyle(
+                              fontWeight: pdf_widgets.FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                       pdf_widgets.Padding(
                         padding: const pdf_widgets.EdgeInsets.all(5),
                         child: pdf_widgets.Text(
@@ -2347,6 +2624,12 @@ class AdminController extends ChangeNotifier {
                   ),
                   // Datos
                   ...cierresOrdenados.map((cierre) {
+                    final cSubtotal = showIvaPdf && cierre.totalNeto > 0
+                        ? cierre.totalNeto / 1.16
+                        : 0.0;
+                    final cIva = showIvaPdf && cierre.totalNeto > 0
+                        ? cierre.totalNeto - cSubtotal
+                        : 0.0;
                     return pdf_widgets.TableRow(
                       children: [
                         pdf_widgets.Padding(
@@ -2367,6 +2650,20 @@ class AdminController extends ChangeNotifier {
                             '\$${cierre.totalNeto.toStringAsFixed(2)}',
                           ),
                         ),
+                        if (showIvaPdf) ...[
+                          pdf_widgets.Padding(
+                            padding: const pdf_widgets.EdgeInsets.all(5),
+                            child: pdf_widgets.Text(
+                              '\$${cSubtotal.toStringAsFixed(2)}',
+                            ),
+                          ),
+                          pdf_widgets.Padding(
+                            padding: const pdf_widgets.EdgeInsets.all(5),
+                            child: pdf_widgets.Text(
+                              '\$${cIva.toStringAsFixed(2)}',
+                            ),
+                          ),
+                        ],
                         pdf_widgets.Padding(
                           padding: const pdf_widgets.EdgeInsets.all(5),
                           child: pdf_widgets.Text(formatStatus(cierre.estado)),
@@ -2386,7 +2683,7 @@ class AdminController extends ChangeNotifier {
       await Printing.sharePdf(
         bytes: bytes,
         filename:
-            'cierres_caja_${DateTime.now().year}_${DateTime.now().month.toString().padLeft(2, '0')}_${DateTime.now().day.toString().padLeft(2, '0')}.pdf',
+            'cierres_caja_${date_utils.AppDateUtils.nowCdmx().year}_${date_utils.AppDateUtils.nowCdmx().month.toString().padLeft(2, '0')}_${date_utils.AppDateUtils.nowCdmx().day.toString().padLeft(2, '0')}.pdf',
       );
 
       print('✅ PDF de cierres de caja generado correctamente');
@@ -2448,7 +2745,7 @@ class AdminController extends ChangeNotifier {
         ..add(
           AuditLogEntry(
             id: 'log_${DateTime.now().millisecondsSinceEpoch}',
-            timestamp: DateTime.now(),
+            timestamp: date_utils.AppDateUtils.nowCdmx(),
             action: 'verificado',
             usuario: 'Admin',
             mensaje: 'Cierre verificado por administrador',
@@ -2473,7 +2770,7 @@ class AdminController extends ChangeNotifier {
         ..add(
           AuditLogEntry(
             id: 'log_${DateTime.now().millisecondsSinceEpoch}',
-            timestamp: DateTime.now(),
+            timestamp: date_utils.AppDateUtils.nowCdmx(),
             action: 'aclaracion_solicitada',
             usuario: 'Admin',
             mensaje: reason,
@@ -2487,32 +2784,32 @@ class AdminController extends ChangeNotifier {
     }
   }
 
-  // Imprimir ticket
+  // Imprimir ticket (misma estructura backend: para llevar vs mesa según orden)
   Future<void> printTicket(String ticketId, String printedBy) async {
     final index = _tickets.indexWhere((ticket) => ticket.id == ticketId);
     if (index != -1) {
       final ticket = _tickets[index];
       final ordenId = ticket.ordenId;
 
-      // Si hay ordenId, imprimir el ticket en el backend
       if (ordenId != null) {
         try {
+          final ordenIds = ticket.ordenIds != null && ticket.ordenIds!.length > 1
+              ? ticket.ordenIds
+              : (ticket.ordenIdsFromBillIdInt.length > 1 ? ticket.ordenIdsFromBillIdInt : null);
           final result = await _ticketsService.imprimirTicket(
             ordenId: ordenId,
+            ordenIds: ordenIds,
             incluirCodigoBarras: true,
           );
 
           if (!result['success']) {
             print('Error al imprimir ticket: ${result['error']}');
-            // Continuar de todas formas para marcar como impreso localmente
           }
         } catch (e) {
           print('Error al imprimir ticket: $e');
-          // Continuar de todas formas para marcar como impreso localmente
         }
       }
 
-      // Marcar como impreso localmente
       _tickets[index] = ticket.copyWith(
         status: payment_models.BillStatus.printed,
         isPrinted: true,
@@ -2538,17 +2835,21 @@ class AdminController extends ChangeNotifier {
     _currentView = view;
     // Recargar datos cuando se cambia a vistas específicas
     // SIEMPRE forzar recarga para asegurar datos frescos después de logout/login
-    if (view == 'tickets') {
+    if (view == 'dashboard') {
+      // Actualizar inventario para que Alertas de inventario y Stock crítico muestren datos al día
+      loadInventory().catchError((e) {
+        print('⚠️ Error al recargar inventario en Panel de control: $e');
+        return null;
+      });
+    } else if (view == 'tickets') {
       print(
         '🔄 AdminController: Cambiando a vista tickets, forzando recarga...',
       );
-      // Usar force: true para forzar la recarga aunque ya esté cargando
       loadTickets(force: true);
     } else if (view == 'cash_closures') {
       print(
         '🔄 AdminController: Cambiando a vista cash_closures, forzando recarga...',
       );
-      // Usar force: true para forzar la recarga aunque ya esté cargando
       loadCashClosures(force: true);
     }
     notifyListeners();
@@ -2818,6 +3119,7 @@ class AdminController extends ChangeNotifier {
     try {
       final Map<String, dynamic> data = {
         'nombre': item.name,
+        if (item.codigoBarras != null && item.codigoBarras!.trim().isNotEmpty) 'codigoBarras': item.codigoBarras!.trim(),
         'categoria': _normalizeInventoryCategory(item.category),
         'unidad': item.unit,
         'cantidadActual': item.currentStock,
@@ -2826,6 +3128,11 @@ class AdminController extends ChangeNotifier {
         'costoUnitario': item.cost,
         'proveedor': item.supplier,
         'activo': true,
+        if (item.contenidoPorPieza != null && item.contenidoPorPieza! > 0 && item.unidadContenido != null && item.unidadContenido!.trim().isNotEmpty)
+          ...{
+            'contenidoPorPieza': item.contenidoPorPieza,
+            'unidadContenido': item.unidadContenido!.trim(),
+          },
       };
       await _inventarioService.createItem(data);
       // Recargar inventario y categorías desde el backend para asegurar sincronización
@@ -2850,6 +3157,7 @@ class AdminController extends ChangeNotifier {
 
       final Map<String, dynamic> data = {
         'nombre': item.name,
+        if (item.codigoBarras != null) 'codigoBarras': item.codigoBarras!.trim().isEmpty ? null : item.codigoBarras!.trim(),
         'categoria': _normalizeInventoryCategory(item.category),
         'unidad': item.unit,
         'cantidadActual': item.currentStock,
@@ -2858,6 +3166,8 @@ class AdminController extends ChangeNotifier {
         'costoUnitario': item.cost,
         'proveedor': item.supplier,
         'activo': item.status != InventoryStatus.expired,
+        'contenidoPorPieza': item.contenidoPorPieza,
+        'unidadContenido': item.unidadContenido,
       };
       await _inventarioService.updateItem(itemId, data);
       // Recargar inventario desde el backend para asegurar sincronización
@@ -2933,6 +3243,7 @@ class AdminController extends ChangeNotifier {
     return InventoryItem(
       id: data['id'].toString(),
       name: data['nombre'] as String,
+      codigoBarras: data['codigoBarras'] as String?,
       category: normalizedCategory,
       currentStock: cantidadActual,
       minStock: stockMinimo,
@@ -2951,6 +3262,13 @@ class AdminController extends ChangeNotifier {
       notes: null,
       description: null,
     );
+  }
+
+  /// Busca un ítem de inventario por código de barras (para escanear y registrar entrada/ajuste).
+  Future<InventoryItem?> getInventoryItemByCodigoBarras(String codigo) async {
+    final data = await _inventarioService.getItemByCodigoBarras(codigo);
+    if (data == null) return null;
+    return _mapBackendToInventoryItem(data);
   }
 
   // Gestión de menú
@@ -3088,6 +3406,20 @@ class AdminController extends ChangeNotifier {
     }
   }
 
+  /// Obtiene un producto desde el backend por ID (incluye ingredientes de receta actualizados).
+  /// Útil para mostrar la receta guardada al abrir el modal.
+  Future<MenuItem?> fetchProductoForRecipe(String itemId) async {
+    try {
+      final id = int.tryParse(itemId);
+      if (id == null) return null;
+      final data = await _productosService.getProducto(id);
+      if (data == null) return null;
+      return _mapBackendToMenuItem(data);
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Helper para obtener ID de categoría por nombre
   Future<int> _getCategoriaIdByName(String categoryName) async {
     try {
@@ -3203,7 +3535,7 @@ class AdminController extends ChangeNotifier {
       notes: null,
       createdAt: data['creadoEn'] != null
           ? date_utils.AppDateUtils.parseToLocal(data['creadoEn'])
-          : DateTime.now(),
+          : date_utils.AppDateUtils.nowCdmx(),
       updatedAt: data['actualizadoEn'] != null
           ? date_utils.AppDateUtils.parseToLocal(data['actualizadoEn'])
           : null,
@@ -3506,6 +3838,7 @@ class AdminController extends ChangeNotifier {
         if (mesaIndex != -1) {
           _tables[mesaIndex] = TableModel(
             id: mesa.id,
+            codigo: mesa.codigo,
             number: mesa.number,
             status: mesa.status,
             seats: mesa.seats,
@@ -3575,8 +3908,8 @@ class AdminController extends ChangeNotifier {
         await Future.wait(
           chunk.map((mesa) {
             final data = {
-              'codigo': mesa.number.toString(),
-              'nombre': 'Mesa ${mesa.number}',
+              'codigo': mesa.codigo,
+              'nombre': mesa.codigo,
               'capacidad': mesa.seats,
               'ubicacion': replacementArea,
             };
@@ -3614,12 +3947,11 @@ class AdminController extends ChangeNotifier {
     }
   }
 
-  // Agregar nueva categoría de inventario
+  // Agregar nueva categoría de inventario (solo en memoria, para compatibilidad)
   void addInventoryCategory(String categoryName) {
     final trimmedCategory = categoryName.trim();
     if (trimmedCategory.isNotEmpty &&
         !_inventoryCategories.contains(trimmedCategory)) {
-      // Agregar después de 'todos' si existe, sino al inicio
       if (_inventoryCategories.contains('todos')) {
         _inventoryCategories.insert(1, trimmedCategory);
       } else {
@@ -3627,6 +3959,15 @@ class AdminController extends ChangeNotifier {
       }
       notifyListeners();
     }
+  }
+
+  /// Crea una categoría de inventario en el backend (persistida, no desaparece al recargar).
+  Future<void> createInventoryCategory(String categoryName) async {
+    final trimmed = categoryName.trim();
+    if (trimmed.isEmpty) return;
+    final categorias = await _inventarioService.createCategory(trimmed);
+    _inventoryCategories = ['todos', ...categorias];
+    notifyListeners();
   }
 
   // Cargar consumo del día desde el backend
@@ -3742,10 +4083,10 @@ class AdminController extends ChangeNotifier {
       try {
         orderTime = date_utils.AppDateUtils.parseToLocal(data['creadoEn']);
       } catch (e) {
-        orderTime = DateTime.now();
+        orderTime = date_utils.AppDateUtils.nowCdmx();
       }
     } else {
-      orderTime = DateTime.now();
+      orderTime = date_utils.AppDateUtils.nowCdmx();
     }
 
     // Mapear prioridad
@@ -3776,7 +4117,6 @@ class AdminController extends ChangeNotifier {
   // Gestión de mesas
   Future<void> addTable(TableModel table) async {
     try {
-      // Obtener estado inicial (libre)
       final estados = await _mesasService.getEstadosMesa();
       final estadoLibre = estados.firstWhere(
         (e) => (e['nombre'] as String).toLowerCase() == 'libre',
@@ -3784,8 +4124,8 @@ class AdminController extends ChangeNotifier {
       );
 
       final data = {
-        'codigo': table.number.toString(),
-        'nombre': 'Mesa ${table.number}',
+        'codigo': table.codigo.trim(),
+        'nombre': table.codigo.trim().isNotEmpty ? table.codigo.trim() : null,
         'capacidad': table.seats,
         'ubicacion': table.section,
         'estadoMesaId': estadoLibre['id'] as int,
@@ -3803,8 +4143,8 @@ class AdminController extends ChangeNotifier {
   Future<void> updateTable(TableModel table) async {
     try {
       final data = {
-        'codigo': table.number.toString(),
-        'nombre': 'Mesa ${table.number}',
+        'codigo': table.codigo.trim(),
+        'nombre': table.codigo.trim().isNotEmpty ? table.codigo.trim() : null,
         'capacidad': table.seats,
         'ubicacion': table.section,
       };
@@ -3892,6 +4232,7 @@ class AdminController extends ChangeNotifier {
       if (mesaIndex != -1) {
         final mesaActualizada = TableModel(
           id: _tables[mesaIndex].id,
+          codigo: _tables[mesaIndex].codigo,
           number: _tables[mesaIndex].number,
           status: newStatus,
           seats: _tables[mesaIndex].seats,
@@ -3926,7 +4267,7 @@ class AdminController extends ChangeNotifier {
 
   // Helper para mapear datos del backend a TableModel
   TableModel _mapBackendToTableModel(Map<String, dynamic> data) {
-    final codigo = data['codigo'] as String;
+    final codigo = (data['codigo'] as String?)?.trim() ?? data['number']?.toString() ?? '0';
     final numero = int.tryParse(codigo) ?? 0;
     final estadoNombreRaw = data['estadoNombre'] as String?;
     final estadoNombre = estadoNombreRaw?.toLowerCase().trim() ?? 'libre';
@@ -3968,6 +4309,7 @@ class AdminController extends ChangeNotifier {
 
     return TableModel(
       id: data['id'] as int,
+      codigo: codigo,
       number: numero,
       status: status,
       seats: data['capacidad'] as int? ?? 4,
@@ -3986,13 +4328,20 @@ class AdminController extends ChangeNotifier {
     return _tables.map((t) => t.id).reduce((a, b) => a > b ? a : b) + 1;
   }
 
-  // Verificar si existe una mesa con ese número
-  bool tableNumberExists(int number, {int? excludeId}) {
+  // Verificar si existe una mesa con ese código/nombre (permite letras y números)
+  bool tableCodigoExists(String codigo, {int? excludeId}) {
+    final c = codigo.trim();
+    if (c.isEmpty) return false;
     return _tables.any(
       (table) =>
-          table.number == number &&
+          table.codigo.trim().toLowerCase() == c.toLowerCase() &&
           (excludeId == null || table.id != excludeId),
     );
+  }
+
+  @Deprecated('Use tableCodigoExists(codigo) instead')
+  bool tableNumberExists(int number, {int? excludeId}) {
+    return tableCodigoExists(number.toString(), excludeId: excludeId);
   }
 
   // Gestión de categorías personalizadas (ahora conectado al backend)

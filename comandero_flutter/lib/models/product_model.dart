@@ -5,6 +5,9 @@ class ProductModel {
   final double price;
   final String? image;
   final int category;
+  /// Nombre real de la categoría del backend (ej. "Sandwiches", "Tacos").
+  /// Si está presente, se usa para mostrar y filtrar en el menú del mesero.
+  final String? categoryName;
   final bool available;
   final bool hot;
   final List<String>? extras;
@@ -19,6 +22,7 @@ class ProductModel {
     required this.price,
     this.image,
     required this.category,
+    this.categoryName,
     required this.available,
     this.hot = false,
     this.extras,
@@ -26,6 +30,12 @@ class ProductModel {
     this.sizes = const [],
     this.hasSizes = false,
   });
+
+  /// Nombre de categoría para mostrar: el del backend si existe, si no el del enum.
+  String get displayCategoryName =>
+      (categoryName != null && categoryName!.isNotEmpty)
+          ? categoryName!
+          : ProductCategory.getCategoryName(category);
 
   factory ProductModel.fromJson(Map<String, dynamic> json) {
     final sizes = (json['sizes'] as List<dynamic>?)
@@ -39,6 +49,7 @@ class ProductModel {
       price: json['price'].toDouble(),
       image: json['image'],
       category: json['category'],
+      categoryName: json['categoryName'] as String?,
       available: json['available'],
       hot: json['hot'] ?? false,
       extras: json['extras'] != null ? List<String>.from(json['extras']) : null,
@@ -56,6 +67,7 @@ class ProductModel {
       'price': price,
       'image': image,
       'category': category,
+      if (categoryName != null) 'categoryName': categoryName,
       'available': available,
       'hot': hot,
       'extras': extras,
@@ -72,6 +84,7 @@ class ProductModel {
     double? price,
     String? image,
     int? category,
+    String? categoryName,
     bool? available,
     bool? hot,
     List<String>? extras,
@@ -86,6 +99,7 @@ class ProductModel {
       price: price ?? this.price,
       image: image ?? this.image,
       category: category ?? this.category,
+      categoryName: categoryName ?? this.categoryName,
       available: available ?? this.available,
       hot: hot ?? this.hot,
       extras: extras ?? this.extras,

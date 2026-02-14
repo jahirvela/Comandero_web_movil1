@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { withTransaction, pool } from '../../db/pool.js';
+import { utcToMxISO } from '../../config/time.js';
 
 interface UsuarioRow extends RowDataPacket {
   id: number;
@@ -60,9 +61,9 @@ export const listarUsuarios = async () => {
     username: row.username,
     telefono: row.telefono,
     activo: Boolean(row.activo),
-    ultimoAcceso: row.ultimo_acceso,
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en,
+    ultimoAcceso: row.ultimo_acceso != null ? utcToMxISO(row.ultimo_acceso) ?? null : null,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
     password: row.password || '', // Contraseña en texto plano (solo para administrador)
     roles: mapRoles(row.roles)
   }));
@@ -95,10 +96,10 @@ export const obtenerUsuarioPorId = async (id: number) => {
     passwordHash: row.password_hash,
     password: row.password || '', // Contraseña en texto plano (solo para administrador)
     activo: Boolean(row.activo),
-    ultimoAcceso: row.ultimo_acceso,
-    creadoEn: row.creado_en,
-    actualizadoEn: row.actualizado_en,
-    passwordActualizadaEn: row.password_actualizada_en,
+    ultimoAcceso: row.ultimo_acceso != null ? utcToMxISO(row.ultimo_acceso) ?? null : null,
+    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
+    passwordActualizadaEn: row.password_actualizada_en != null ? utcToMxISO(row.password_actualizada_en) ?? null : null,
     roles: mapRoles(row.roles)
   };
 };

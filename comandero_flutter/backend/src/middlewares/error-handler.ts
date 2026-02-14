@@ -47,12 +47,20 @@ export const errorHandler = (err: ApiError, _req: Request, res: Response, _next:
 
     const rawMessage = err.message || 'No se puede eliminar porque existen registros relacionados';
     const isUsuarioMesaHist = rawMessage.includes('mesa_estado_hist') || rawMessage.includes('fk_meh_usuario');
+    const isProductoEnOrden = rawMessage.includes('orden_item') || rawMessage.includes('fk_item_producto');
+
+    let message: string;
+    if (isUsuarioMesaHist) {
+      message = 'No se puede eliminar este usuario porque está referenciado en el historial de mesas. Puedes desactivarlo (activo=0) en lugar de eliminarlo permanentemente.';
+    } else if (isProductoEnOrden) {
+      message = 'No se puede eliminar porque el producto está en una o más órdenes. Use "Deshabilitar" para ocultarlo del menú.';
+    } else {
+      message = 'No se puede eliminar este registro porque tiene información relacionada en el sistema.';
+    }
 
     return res.status(409).json({
       error: 'reference_constraint',
-      message: isUsuarioMesaHist
-        ? 'No se puede eliminar este usuario porque está referenciado en el historial de mesas. Puedes desactivarlo (activo=0) en lugar de eliminarlo permanentemente.'
-        : 'No se puede eliminar este registro porque tiene información relacionada en el sistema.'
+      message
     });
   }
 

@@ -42,12 +42,14 @@ export const generarPDFVentas = (datos: VentasReporte[]): PDFDocument => {
 
   // Totales
   const totalVentas = datos.reduce((sum, v) => sum + v.total, 0);
+  const totalImpuesto = datos.reduce((sum, v) => sum + v.impuestoTotal, 0);
   const totalPropinas = datos.reduce((sum, v) => sum + v.propinaTotal, 0);
 
   doc.fontSize(12).font('Helvetica-Bold').text('Resumen:', 50);
   doc.font('Helvetica').fontSize(10);
   doc.text(`Total de órdenes: ${datos.length}`, 70);
   doc.text(`Total de ventas: $${totalVentas.toFixed(2)}`, 70);
+  doc.text(`Total IVA (16%): $${totalImpuesto.toFixed(2)}`, 70);
   doc.text(`Total de propinas: $${totalPropinas.toFixed(2)}`, 70);
   doc.moveDown();
 
@@ -55,10 +57,11 @@ export const generarPDFVentas = (datos: VentasReporte[]): PDFDocument => {
   doc.fontSize(10).font('Helvetica-Bold');
   let y = doc.y;
   doc.text('Folio', 50, y);
-  doc.text('Fecha', 120, y);
-  doc.text('Mesa', 180, y);
-  doc.text('Total', 230, y);
-  doc.text('Forma Pago', 280, y);
+  doc.text('Fecha', 100, y);
+  doc.text('Mesa', 160, y); // Código o nombre de mesa (ej: "1", "Terraza"); "Para llevar" si no hay mesa
+  doc.text('IVA', 210, y);
+  doc.text('Total', 260, y);
+  doc.text('Forma Pago', 320, y);
 
   doc.moveTo(50, y + 15).lineTo(550, y + 15).stroke();
   doc.moveDown(0.5);
@@ -69,12 +72,16 @@ export const generarPDFVentas = (datos: VentasReporte[]): PDFDocument => {
       doc.addPage();
       y = doc.y;
     }
+    const mesaCol = venta.mesaCodigo?.trim()
+      ? venta.mesaCodigo.trim()
+      : (venta.clienteNombre ? 'Para llevar' : 'N/A');
 
     doc.text(venta.folio, 50);
-    doc.text(formatMxDate(venta.fecha), 120);
-    doc.text(venta.mesaCodigo || 'N/A', 180);
-    doc.text(`$${venta.total.toFixed(2)}`, 230);
-    doc.text(venta.formaPago, 280);
+    doc.text(formatMxDate(venta.fecha), 100);
+    doc.text(mesaCol, 160);
+    doc.text(`$${venta.impuestoTotal.toFixed(2)}`, 210);
+    doc.text(`$${venta.total.toFixed(2)}`, 260);
+    doc.text(venta.formaPago, 320);
     doc.moveDown(0.3);
   }
 
@@ -160,6 +167,7 @@ export const generarPDFCorteCaja = (datos: CorteCaja): PDFDocument => {
   doc.fontSize(12);
   doc.font('Helvetica').text(`Número de órdenes: ${datos.numeroOrdenes}`, 70);
   doc.text(`Total de ventas: $${datos.totalVentas.toFixed(2)}`, 70);
+  doc.text(`Total IVA (16%): $${datos.totalImpuesto.toFixed(2)}`, 70);
   doc.moveDown();
   doc.text(`Efectivo: $${datos.totalEfectivo.toFixed(2)}`, 70);
   doc.text(`Tarjeta: $${datos.totalTarjeta.toFixed(2)}`, 70);

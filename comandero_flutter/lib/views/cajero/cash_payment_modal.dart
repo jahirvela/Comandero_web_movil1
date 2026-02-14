@@ -112,10 +112,10 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
                         color: AppColors.primary,
                       ),
                     ),
-                    if (widget.bill.tableNumber != null) ...[
+                    if (!widget.bill.isTakeaway) ...[
                       const SizedBox(height: 4),
                       Text(
-                        'Mesa: ${widget.bill.tableNumber}',
+                        widget.bill.tableDisplayLabel,
                         style: TextStyle(
                           fontSize: widget.isTablet ? 14.0 : 12.0,
                           color: AppColors.textSecondary,
@@ -157,7 +157,7 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
               ),
               const SizedBox(height: 8),
               
-              // Checkbox propina entregada
+              // Checkbox propina entregada: palomita y fondo en naranja fuerte
               CheckboxListTile(
                 title: const Text('Propina ya entregada al cajero'),
                 value: _tipDelivered,
@@ -167,6 +167,14 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
                   });
                 },
                 contentPadding: EdgeInsets.zero,
+                activeColor: AppColors.primary,
+                checkColor: Colors.white,
+                fillColor: WidgetStateProperty.resolveWith<Color>((Set<WidgetState> states) {
+                  if (states.contains(WidgetState.selected)) {
+                    return AppColors.primary;
+                  }
+                  return Colors.grey.shade300;
+                }),
               ),
               const SizedBox(height: 16),
 
@@ -390,10 +398,10 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
                 color: AppColors.textPrimary,
               ),
             ),
-            if (widget.bill.tableNumber != null) ...[
+            if (!widget.bill.isTakeaway) ...[
               const SizedBox(height: 8),
               Text(
-                'Mesa ${widget.bill.tableNumber}',
+                widget.bill.tableDisplayLabel,
                 style: TextStyle(
                   fontSize: widget.isTablet ? 14.0 : 12.0,
                   color: AppColors.textSecondary,

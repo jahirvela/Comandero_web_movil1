@@ -18,6 +18,7 @@ import 'cash_payment_modal.dart';
 import 'card_payment_modal.dart';
 import 'transfer_payment_modal.dart';
 import 'mixed_payment_modal.dart';
+import '../../services/tickets_service.dart';
 
 class CajeroApp extends StatelessWidget {
   const CajeroApp({super.key});
@@ -512,7 +513,7 @@ class CajeroApp extends StatelessWidget {
     );
   }
 
-  // Resumen de consumo del día
+  // Resumen de consumo del día (datos reales del día, se actualiza al hacer cobros)
   Widget _buildDailyConsumptionSummary(
     BuildContext context,
     CajeroController controller,
@@ -520,7 +521,12 @@ class CajeroApp extends StatelessWidget {
   ) {
     return Consumer<CajeroController>(
       builder: (context, ctrl, child) {
-        final stats = ctrl.getPaymentStats();
+        final stats = ctrl.getDailyConsumptionStats();
+        final ventasLocal = stats['totalLocal'] ?? 0.0;
+        final ventasParaLlevar = stats['totalParaLlevar'] ?? 0.0;
+        final efectivo = stats['totalCash'] ?? 0.0;
+        final tarjetaDebito = stats['totalDebit'] ?? 0.0;
+        final tarjetaCredito = stats['totalCredit'] ?? 0.0;
 
         return Card(
           elevation: 2,
@@ -547,7 +553,6 @@ class CajeroApp extends StatelessWidget {
                     TextButton.icon(
                       onPressed: () {
                         ctrl.setCurrentView('closures');
-                        // Cargar cierres al cambiar de vista
                         ctrl.loadCashClosures();
                       },
                       icon: const Icon(Icons.open_in_new),
@@ -567,9 +572,7 @@ class CajeroApp extends StatelessWidget {
                           Expanded(
                             child: _buildConsumptionCard(
                               'Ventas en Local',
-                              stats['totalCash']! +
-                                  stats['totalCard']! -
-                                  (stats['totalCash']! * 0.4),
+                              ventasLocal,
                               Colors.green,
                               isTablet,
                             ),
@@ -578,7 +581,7 @@ class CajeroApp extends StatelessWidget {
                           Expanded(
                             child: _buildConsumptionCard(
                               'Ventas Para llevar',
-                              stats['totalCard']! * 0.5,
+                              ventasParaLlevar,
                               Colors.blue,
                               isTablet,
                             ),
@@ -587,8 +590,8 @@ class CajeroApp extends StatelessWidget {
                           Expanded(
                             child: _buildConsumptionCard(
                               'Efectivo',
-                              stats['totalCash']!,
-                              Colors.yellow,
+                              efectivo,
+                              Colors.amber.shade700,
                               isTablet,
                             ),
                           ),
@@ -596,7 +599,7 @@ class CajeroApp extends StatelessWidget {
                           Expanded(
                             child: _buildConsumptionCard(
                               'Tarjeta Débito',
-                              stats['totalCard']! * 0.55,
+                              tarjetaDebito,
                               Colors.purple.shade300,
                               isTablet,
                             ),
@@ -605,7 +608,7 @@ class CajeroApp extends StatelessWidget {
                           Expanded(
                             child: _buildConsumptionCard(
                               'Tarjeta Crédito',
-                              stats['totalCard']! * 0.45,
+                              tarjetaCredito,
                               Colors.purple.shade400,
                               isTablet,
                             ),
@@ -620,9 +623,7 @@ class CajeroApp extends StatelessWidget {
                               Expanded(
                                 child: _buildConsumptionCard(
                                   'Ventas en Local',
-                                  stats['totalCash']! +
-                                      stats['totalCard']! -
-                                      (stats['totalCash']! * 0.4),
+                                  ventasLocal,
                                   Colors.green,
                                   isTablet,
                                 ),
@@ -631,7 +632,7 @@ class CajeroApp extends StatelessWidget {
                               Expanded(
                                 child: _buildConsumptionCard(
                                   'Para llevar',
-                                  stats['totalCard']! * 0.5,
+                                  ventasParaLlevar,
                                   Colors.blue,
                                   isTablet,
                                 ),
@@ -644,8 +645,8 @@ class CajeroApp extends StatelessWidget {
                               Expanded(
                                 child: _buildConsumptionCard(
                                   'Efectivo',
-                                  stats['totalCash']!,
-                                  Colors.yellow,
+                                  efectivo,
+                                  Colors.amber.shade700,
                                   isTablet,
                                 ),
                               ),
@@ -653,7 +654,7 @@ class CajeroApp extends StatelessWidget {
                               Expanded(
                                 child: _buildConsumptionCard(
                                   'Débito',
-                                  stats['totalCard']! * 0.55,
+                                  tarjetaDebito,
                                   Colors.purple.shade300,
                                   isTablet,
                                 ),
@@ -664,7 +665,7 @@ class CajeroApp extends StatelessWidget {
                           Expanded(
                             child: _buildConsumptionCard(
                               'Crédito',
-                              stats['totalCard']! * 0.45,
+                              tarjetaCredito,
                               Colors.purple.shade400,
                               isTablet,
                             ),
@@ -730,6 +731,7 @@ class CajeroApp extends StatelessWidget {
     );
   }
 
+  /// Botón compacto por método de pago: al hacer clic se abre el modal con la lista de cobros.
   Widget _buildPaymentMethodCard(
     BuildContext context,
     String methodName,
@@ -742,58 +744,45 @@ class CajeroApp extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return Expanded(
-      child: Card(
-        elevation: 1,
-        color: color.withValues(alpha: 0.05),
-        child: InkWell(
-          onTap: payments.isNotEmpty
-              ? () => _showPaymentMethodDetails(context, methodName, payments, color, isTablet)
-              : null,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      methodName,
-                      style: TextStyle(
-                        fontSize: isTablet ? 14.0 : 12.0,
-                        fontWeight: FontWeight.w600,
-                        color: color,
-                      ),
-                    ),
-                    if (payments.isNotEmpty)
-                      Icon(
-                        Icons.arrow_forward_ios,
-                        size: isTablet ? 14.0 : 12.0,
-                        color: color,
-                      ),
-                  ],
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: payments.isNotEmpty
+            ? () => _showPaymentMethodDetails(context, methodName, payments, color, isTablet)
+            : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: isTablet ? 14.0 : 10.0, vertical: isTablet ? 10.0 : 8.0),
+          decoration: BoxDecoration(
+            border: Border.all(color: color.withValues(alpha: 0.4)),
+            borderRadius: BorderRadius.circular(8),
+            color: color.withValues(alpha: 0.06),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                methodName,
+                style: TextStyle(
+                  fontSize: isTablet ? 13.0 : 12.0,
+                  fontWeight: FontWeight.w600,
+                  color: color,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '\$${total.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 20.0 : 18.0,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '\$${total.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: isTablet ? 13.0 : 12.0,
+                  fontWeight: FontWeight.bold,
+                  color: color,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${payments.length} ${payments.length == 1 ? 'pago' : 'pagos'}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 11.0 : 10.0,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+              ),
+              if (payments.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Icon(Icons.list_alt, size: isTablet ? 16.0 : 14.0, color: color),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -849,9 +838,12 @@ class CajeroApp extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 ...payments.map((payment) {
-                  final waiterName = payment['waiterName'] as String? ?? 'N/A';
-                  final ordenId = payment['ordenId'] as String? ?? 'N/A';
-                  final mesaInfo = payment['mesa'] as String? ?? 'N/A';
+                  final waiterName = payment['waiterName'] as String?;
+                  final ordenId = payment['ordenId'] as String? ?? '—';
+                  final mesaInfo = payment['mesa'] as String? ?? '—';
+                  final meseroLabel = (waiterName != null && waiterName.trim().isNotEmpty)
+                      ? waiterName
+                      : '—';
                   
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -873,7 +865,7 @@ class CajeroApp extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'Mesero ${waiterName != 'N/A' ? waiterName : 'Desconocido'}',
+                                      meseroLabel == '—' ? 'Mesero: —' : 'Mesero: $meseroLabel',
                                       style: TextStyle(
                                         fontSize: isTablet ? 14.0 : 13.0,
                                         fontWeight: FontWeight.w600,
@@ -1091,11 +1083,8 @@ extension _CajeroAppExtension on CajeroApp {
     CajeroController controller,
     bool isTablet,
   ) {
-    // IMPORTANTE: Usar hora CDMX para cálculos precisos
-    final now = date_utils.AppDateUtils.now();
     final billDate = bill.createdAt;
-    final elapsedMinutes = now.difference(billDate).inMinutes;
-    final displayMinutes = elapsedMinutes < 0 ? 0 : elapsedMinutes;
+    final timeAgo = date_utils.AppDateUtils.formatTimeAgoShort(billDate);
 
     return Container(
       margin: EdgeInsets.only(bottom: isTablet ? 24.0 : 20.0),
@@ -1132,7 +1121,7 @@ extension _CajeroAppExtension on CajeroApp {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (!bill.isTakeaway && bill.tableNumber != null)
+                      if (!bill.isTakeaway)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 12,
@@ -1143,7 +1132,7 @@ extension _CajeroAppExtension on CajeroApp {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            'Mesa ${bill.tableNumber}',
+                            bill.tableDisplayLabel,
                             style: TextStyle(
                               fontSize: isTablet ? 13.0 : 11.0,
                               fontWeight: FontWeight.bold,
@@ -1236,9 +1225,7 @@ extension _CajeroAppExtension on CajeroApp {
                       ),
                     ),
                     Text(
-                      displayMinutes < 1 
-                          ? 'Recién' 
-                          : 'Hace $displayMinutes min',
+                      timeAgo,
                       style: TextStyle(
                         fontSize: isTablet ? 11.0 : 9.0,
                         color: AppColors.textSecondary,
@@ -1396,6 +1383,28 @@ extension _CajeroAppExtension on CajeroApp {
                                 ],
                               ),
                             ],
+                            if (controller.ivaHabilitado) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'IVA (16%):',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 13.0 : 11.0,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                  Text(
+                                    controller.formatCurrency(personAccount.tax),
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 13.0 : 11.0,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ],
                         ],
                       ),
@@ -1474,7 +1483,29 @@ extension _CajeroAppExtension on CajeroApp {
                   ),
                   child: Column(
                     children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Subtotal:',
+                            style: TextStyle(
+                              fontSize: isTablet ? 15.0 : 13.0,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          Text(
+                            controller.formatCurrency(
+                              bill.items.fold<double>(0, (sum, i) => sum + i.total),
+                            ),
+                            style: TextStyle(
+                              fontSize: isTablet ? 15.0 : 13.0,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
                       if (bill.discount > 0) ...[
+                        const SizedBox(height: 8),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -1495,8 +1526,30 @@ extension _CajeroAppExtension on CajeroApp {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
                       ],
+                      if (controller.ivaHabilitado) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'IVA (16%):',
+                              style: TextStyle(
+                                fontSize: isTablet ? 15.0 : 13.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            Text(
+                              controller.formatCurrency(bill.tax),
+                              style: TextStyle(
+                                fontSize: isTablet ? 15.0 : 13.0,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         decoration: BoxDecoration(
@@ -1717,7 +1770,7 @@ extension _CajeroAppExtension on CajeroApp {
                       Icons.attach_money,
                       size: isTablet ? 18.0 : 16.0,
                     ),
-                    label: const Text('\$ Cobrar'),
+                    label: const Text('Pago en efectivo'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
                       foregroundColor: Colors.white,
@@ -1809,29 +1862,79 @@ extension _CajeroAppExtension on CajeroApp {
     CajeroController controller,
     bool isTablet,
   ) {
+    final scaffoldContext = context;
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Imprimir Ticket'),
         content: Text(
-          '¿Deseas imprimir el ticket de la ${bill.tableNumber != null ? 'Mesa ${bill.tableNumber}' : 'orden para llevar'}?',
+          '¿Deseas imprimir el ticket de la ${bill.tableDisplayLabel}?',
           style: TextStyle(fontSize: isTablet ? 14.0 : 13.0),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              // TODO: Implementar impresión real
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Ticket impreso (simulado)'),
-                  backgroundColor: AppColors.success,
-                ),
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              final ordenIdsList = bill.ordenIds ?? (bill.ordenIdsFromBillIdInt.isNotEmpty ? bill.ordenIdsFromBillIdInt : (bill.ordenId != null ? [bill.ordenId!] : <int>[]));
+              final ordenIdPrincipal = bill.ordenId ?? (ordenIdsList.isNotEmpty ? ordenIdsList.first : null);
+              if (ordenIdPrincipal == null) {
+                if (scaffoldContext.mounted) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('No se pudo obtener el ID de la orden para imprimir'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                }
+                return;
+              }
+              showDialog(
+                context: scaffoldContext,
+                barrierDismissible: false,
+                builder: (_) => const Center(child: CircularProgressIndicator()),
               );
+              try {
+                final ticketsService = TicketsService();
+                final result = await ticketsService.imprimirTicket(
+                  ordenId: ordenIdPrincipal,
+                  ordenIds: ordenIdsList.length > 1 ? ordenIdsList : null,
+                  incluirCodigoBarras: true,
+                );
+                if (scaffoldContext.mounted) {
+                  if (result['success'] == true) {
+                    ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                      SnackBar(
+                        content: Text(result['mensaje'] as String? ?? 'Ticket impreso'),
+                        backgroundColor: AppColors.success,
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                      SnackBar(
+                        content: Text(result['error'] as String? ?? 'Error al imprimir'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              } catch (e) {
+                if (scaffoldContext.mounted) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+                    SnackBar(
+                      content: Text('Error al imprimir: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } finally {
+                if (scaffoldContext.mounted) {
+                  Navigator.of(scaffoldContext).pop();
+                }
+              }
             },
             child: const Text('Imprimir'),
           ),
@@ -1906,38 +2009,35 @@ extension _CajeroAppExtension on CajeroApp {
 
   void _showDownloadPDFDialog(BuildContext context, bool isTablet) {
     final controller = Provider.of<CajeroController>(context, listen: false);
-    
+    // Usar el contexto del widget (padre) para mostrar/cerrar el loading; el context del builder
+    // del diálogo se invalida al hacer pop y deja el loading atrapado.
+    final scaffoldContext = context;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Generar PDF'),
         content: const Text('¿Deseas generar el reporte de cierres de caja en formato PDF?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.of(context).pop();
+              Navigator.of(dialogContext).pop();
+              // Mostrar indicador de carga con contexto que sigue válido (no el del diálogo)
+              showDialog(
+                context: scaffoldContext,
+                barrierDismissible: false,
+                builder: (_) => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              );
               try {
-                // Mostrar indicador de carga
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-                
                 await controller.generateCashClosuresPDF();
-                
-                // Cerrar indicador de carga
-                if (context.mounted) {
-                  Navigator.of(context).pop();
-                  
-                  // Mostrar mensaje de éxito
-                  ScaffoldMessenger.of(context).showSnackBar(
+                if (scaffoldContext.mounted) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
                     const SnackBar(
                       content: Text('✅ PDF generado correctamente'),
                       backgroundColor: Colors.green,
@@ -1946,18 +2046,19 @@ extension _CajeroAppExtension on CajeroApp {
                   );
                 }
               } catch (e) {
-                // Cerrar indicador de carga si está abierto
-                if (context.mounted) {
-                  Navigator.of(context).pop();
-                  
-                  // Mostrar mensaje de error
-                  ScaffoldMessenger.of(context).showSnackBar(
+                if (scaffoldContext.mounted) {
+                  ScaffoldMessenger.of(scaffoldContext).showSnackBar(
                     SnackBar(
                       content: Text('❌ Error al generar PDF: $e'),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 3),
                     ),
                   );
+                }
+              } finally {
+                // Cerrar indicador de carga siempre (éxito, error o cancelación del diálogo de impresión)
+                if (scaffoldContext.mounted) {
+                  Navigator.of(scaffoldContext).pop();
                 }
               }
             },
@@ -2012,12 +2113,47 @@ class _CollectionHistoryWidget extends StatefulWidget {
 
 class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
   String _selectedPeriod = 'hoy';
+  DateTime? _customStart;
+  DateTime? _customEnd;
+
+  Future<void> _pickDate(BuildContext context, bool isStart) async {
+    final now = date_utils.AppDateUtils.nowCdmx();
+    final initial = isStart
+        ? (_customStart ?? now.subtract(const Duration(days: 7)))
+        : (_customEnd ?? now);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 1),
+      lastDate: now,
+      locale: const Locale('es', 'MX'),
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) {
+          _customStart = picked;
+          if (_customEnd != null && _customEnd!.isBefore(picked)) {
+            _customEnd = DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
+          }
+        } else {
+          _customEnd = picked;
+          if (_customStart != null && _customStart!.isAfter(picked)) {
+            _customStart = DateTime(picked.year, picked.month, picked.day);
+          }
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<CajeroController>(
       builder: (context, ctrl, child) {
-        final history = ctrl.getCollectionHistory(periodo: _selectedPeriod);
+        final history = ctrl.getCollectionHistory(
+          periodo: _selectedPeriod,
+          fechaInicioCustom: _selectedPeriod == 'personalizado' ? _customStart : null,
+          fechaFinCustom: _selectedPeriod == 'personalizado' ? _customEnd : null,
+        );
         final efectivo = history['efectivo'] as Map<String, dynamic>;
         final tarjeta = history['tarjeta'] as Map<String, dynamic>;
         final transferencia = history['transferencia'] as Map<String, dynamic>;
@@ -2026,9 +2162,9 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
         final totalGeneral = history['totalGeneral'] as double;
 
         return Card(
-          elevation: 2,
+          elevation: 1,
           child: Padding(
-            padding: EdgeInsets.all(widget.isTablet ? 20.0 : 16.0),
+            padding: EdgeInsets.all(widget.isTablet ? 12.0 : 10.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2040,13 +2176,13 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
                         Icon(
                           Icons.history,
                           color: AppColors.primary,
-                          size: widget.isTablet ? 24.0 : 20.0,
+                          size: widget.isTablet ? 20.0 : 18.0,
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Text(
                           'Historial de cobros',
                           style: TextStyle(
-                            fontSize: widget.isTablet ? 20.0 : 18.0,
+                            fontSize: widget.isTablet ? 16.0 : 14.0,
                             fontWeight: FontWeight.w600,
                             color: AppColors.textPrimary,
                           ),
@@ -2056,46 +2192,59 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
                     Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
                           decoration: BoxDecoration(
                             border: Border.all(color: AppColors.border),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           child: DropdownButtonHideUnderline(
                             child: DropdownButton<String>(
                               value: _selectedPeriod,
+                              isDense: true,
                               items: const [
                                 DropdownMenuItem(value: 'hoy', child: Text('Hoy')),
                                 DropdownMenuItem(value: 'ayer', child: Text('Ayer')),
                                 DropdownMenuItem(value: 'semana', child: Text('En la semana')),
                                 DropdownMenuItem(value: 'mes', child: Text('Hace un mes')),
+                                DropdownMenuItem(value: 'personalizado', child: Text('Rango personalizado')),
                               ],
                               onChanged: (value) {
                                 if (value != null) {
+                                  final openCalendar = value == 'personalizado';
                                   setState(() {
                                     _selectedPeriod = value;
+                                    if (value == 'personalizado' && _customStart == null && _customEnd == null) {
+                                      final now = date_utils.AppDateUtils.nowCdmx();
+                                      _customStart = now.subtract(const Duration(days: 7));
+                                      _customEnd = now;
+                                    }
                                   });
+                                  if (openCalendar && context.mounted) {
+                                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                                      if (mounted && context.mounted) _pickDate(context, true);
+                                    });
+                                  }
                                 }
                               },
                               style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                fontSize: widget.isTablet ? 12.0 : 11.0,
                                 color: AppColors.textPrimary,
                               ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: AppColors.success.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
                           ),
                           child: Text(
                             'Total: \$${totalGeneral.toStringAsFixed(2)}',
                             style: TextStyle(
-                              fontSize: widget.isTablet ? 16.0 : 14.0,
+                              fontSize: widget.isTablet ? 13.0 : 12.0,
                               fontWeight: FontWeight.bold,
                               color: AppColors.success,
                             ),
@@ -2105,11 +2254,112 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                // Resumen por método de pago
+                if (_selectedPeriod == 'personalizado') ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Selecciona el rango de fechas (toca para abrir calendario)',
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 11.0 : 10.0,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => _pickDate(context, true),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
+                              borderRadius: BorderRadius.circular(8),
+                              color: AppColors.primary.withValues(alpha: 0.05),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.calendar_month, size: 22, color: AppColors.primary),
+                                const SizedBox(width: 8),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'Desde',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                    Text(
+                                      _customStart != null
+                                          ? date_utils.AppDateUtils.formatDate(_customStart!)
+                                          : 'Toca para calendario',
+                                      style: TextStyle(
+                                        fontSize: widget.isTablet ? 13.0 : 12.0,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => _pickDate(context, false),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
+                              borderRadius: BorderRadius.circular(8),
+                              color: AppColors.primary.withValues(alpha: 0.05),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.calendar_month, size: 22, color: AppColors.primary),
+                                const SizedBox(width: 8),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'Hasta',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                    Text(
+                                      _customEnd != null
+                                          ? date_utils.AppDateUtils.formatDate(_customEnd!)
+                                          : 'Toca para calendario',
+                                      style: TextStyle(
+                                        fontSize: widget.isTablet ? 13.0 : 12.0,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 10),
                 Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     widget.buildPaymentMethodCard(
                       context,
@@ -2145,92 +2395,23 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                // Sección de propinas
                 if ((propinas['total'] as double) > 0) ...[
-                  Divider(height: 32),
+                  const SizedBox(height: 10),
+                  Divider(height: 20),
                   Row(
                     children: [
-                      Icon(
-                        Icons.attach_money,
-                        color: AppColors.success,
-                        size: widget.isTablet ? 20.0 : 18.0,
-                      ),
-                      const SizedBox(width: 8),
+                      Icon(Icons.attach_money, color: AppColors.success, size: 16),
+                      const SizedBox(width: 6),
                       Text(
-                        'Propinas acumuladas',
+                        'Propinas: \$${(propinas['total'] as double).toStringAsFixed(2)}',
                         style: TextStyle(
-                          fontSize: widget.isTablet ? 18.0 : 16.0,
+                          fontSize: widget.isTablet ? 13.0 : 12.0,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textPrimary,
                         ),
                       ),
-                      const Spacer(),
-                      Text(
-                        '\$${(propinas['total'] as double).toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 18.0 : 16.0,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.success,
-                        ),
-                      ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  ...((propinas['detalles'] as List).cast<Map<String, dynamic>>()).map((tip) {
-                    final waiterName = tip['waiterName'] as String? ?? 'N/A';
-                    final ordenId = tip['ordenId'] as String? ?? 'N/A';
-                    final mesaInfo = tip['mesa'] as String? ?? 'N/A';
-                    final metodo = tip['metodo'] as String? ?? 'N/A';
-                    final monto = (tip['monto'] as double? ?? 0.0).toStringAsFixed(2);
-                    
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Mesero ${waiterName != 'N/A' ? waiterName : 'Desconocido'} - ${ordenId != 'N/A' ? ordenId : 'Sin orden'}',
-                                  style: TextStyle(
-                                    fontSize: widget.isTablet ? 13.0 : 12.0,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  mesaInfo,
-                                  style: TextStyle(
-                                    fontSize: widget.isTablet ? 11.0 : 10.0,
-                                    color: AppColors.textSecondary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            metodo != 'N/A' ? metodo : '',
-                            style: TextStyle(
-                              fontSize: widget.isTablet ? 12.0 : 11.0,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '\$$monto',
-                            style: TextStyle(
-                              fontSize: widget.isTablet ? 13.0 : 12.0,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.success,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
                 ],
               ],
             ),
@@ -2388,11 +2569,16 @@ class _CashOpenModalState extends State<_CashOpenModal> {
     }
 
     try {
+      final authController = Provider.of<AuthController>(context, listen: false);
+      final userName = authController.userName.isNotEmpty
+          ? authController.userName
+          : null;
       await widget.controller.openCashRegister(
         efectivoInicial: efectivoInicial,
         nota: _notaController.text.trim().isEmpty
             ? null
             : _notaController.text.trim(),
+        usuario: userName,
       );
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2478,6 +2664,47 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             ),
             const SizedBox(height: 24),
 
+            // Mostrar efectivo inicial si hay apertura del día (información)
+            Builder(
+              builder: (context) {
+                final apertura = widget.controller.getTodayCashOpening();
+                if (apertura == null || apertura.efectivoInicial <= 0) {
+                  return const SizedBox.shrink();
+                }
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.success.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.success.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Efectivo inicial (apertura):',
+                        style: TextStyle(
+                          fontSize: widget.isTablet ? 14.0 : 12.0,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      Text(
+                        widget.controller.formatCurrency(apertura.efectivoInicial),
+                        style: TextStyle(
+                          fontSize: widget.isTablet ? 14.0 : 12.0,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.success,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
             // Campos del formulario
             TextFormField(
               controller: _efectivoContadoController,
@@ -2531,7 +2758,7 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             ),
             const SizedBox(height: 16),
 
-            // Total declarado
+            // Total declarado (con desglose IVA si está habilitado)
             Builder(
               builder: (context) {
                 final efectivo =
@@ -2541,6 +2768,14 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                 final otros =
                     double.tryParse(_otrosIngresosController.text) ?? 0;
                 final totalDeclarado = efectivo + tarjeta + otros;
+                final showIva = widget.controller.ivaHabilitado;
+                // IVA 16% México: si total incluye IVA, subtotal = total/1.16, iva = total - subtotal
+                final subtotal = showIva && totalDeclarado > 0
+                    ? totalDeclarado / 1.16
+                    : 0.0;
+                final iva = showIva && totalDeclarado > 0
+                    ? totalDeclarado - subtotal
+                    : 0.0;
 
                 return Container(
                   padding: const EdgeInsets.all(16),
@@ -2551,24 +2786,73 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                       color: AppColors.primary.withValues(alpha: 0.3),
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        'Total declarado:',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 16.0 : 14.0,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
+                      if (showIva && totalDeclarado > 0) ...[
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Subtotal (base gravable):',
+                              style: TextStyle(
+                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            Text(
+                              widget.controller.formatCurrency(subtotal),
+                              style: TextStyle(
+                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      Text(
-                        widget.controller.formatCurrency(totalDeclarado),
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 18.0 : 16.0,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'IVA (16%):',
+                              style: TextStyle(
+                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            Text(
+                              widget.controller.formatCurrency(iva),
+                              style: TextStyle(
+                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
                         ),
+                        const SizedBox(height: 8),
+                        Divider(color: AppColors.primary.withValues(alpha: 0.3)),
+                        const SizedBox(height: 8),
+                      ],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Total declarado:',
+                            style: TextStyle(
+                              fontSize: widget.isTablet ? 16.0 : 14.0,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            widget.controller.formatCurrency(totalDeclarado),
+                            style: TextStyle(
+                              fontSize: widget.isTablet ? 18.0 : 16.0,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -2629,14 +2913,19 @@ class _CashCloseModalState extends State<_CashCloseModal> {
         ? authController.userName
         : 'Cajero';
 
+    // Obtener efectivo inicial de la apertura del día (para verificación contable)
+    final apertura = widget.controller.getTodayCashOpening();
+    final efectivoInicial = apertura?.efectivoInicial ?? 0.0;
+
     final cashClose = CashCloseModel(
       id: 'close_${DateTime.now().millisecondsSinceEpoch}',
-      fecha: DateTime.now(),
+      fecha: date_utils.AppDateUtils.nowCdmx(),
       periodo: 'Día',
       usuario: userName,
       totalNeto: totalDeclarado,
       efectivo: efectivo,
       tarjeta: tarjeta,
+      efectivoInicial: efectivoInicial,
       propinasTarjeta: 0,
       propinasEfectivo: 0,
       pedidosParaLlevar: 0,
@@ -2654,7 +2943,7 @@ class _CashCloseModalState extends State<_CashCloseModal> {
       auditLog: [
         AuditLogEntry(
           id: 'log_${DateTime.now().millisecondsSinceEpoch}',
-          timestamp: DateTime.now(),
+          timestamp: date_utils.AppDateUtils.nowCdmx(),
           action: 'enviado',
           usuario: userName,
           mensaje: 'Cierre enviado por $userName',

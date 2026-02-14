@@ -14,8 +14,10 @@ import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../../utils/app_theme.dart';
 import '../../utils/date_utils.dart' as date_utils;
+import '../../utils/closure_utils.dart' as closure_utils;
 import '../cocinero/order_detail_modal.dart';
 import '../../services/ordenes_service.dart';
+import 'web/configuracion_web_view.dart';
 
 class AdminApp extends StatelessWidget {
   const AdminApp({super.key});
@@ -102,12 +104,19 @@ class AdminApp extends StatelessWidget {
                       authController,
                       isTablet,
                     ),
-                    body: _buildBody(
-                      context,
-                      adminController,
-                      cocineroController,
-                      isTablet,
-                      isDesktop,
+                    body: Stack(
+                      children: [
+                        _buildBody(
+                          context,
+                          adminController,
+                          cocineroController,
+                          isTablet,
+                          isDesktop,
+                        ),
+                        _InventoryAlertSnackBarListener(
+                          controller: adminController,
+                        ),
+                      ],
                     ),
                     bottomNavigationBar: _buildBottomNavigationBar(
                       context,
@@ -280,6 +289,8 @@ class AdminApp extends StatelessWidget {
           isTablet,
           isDesktop,
         );
+      case 'configuracion':
+        return const ConfiguracionWebView();
       default:
         return _buildDashboardView(
           context,
@@ -362,7 +373,7 @@ class AdminApp extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Resumen general del puesto de barbacoa',
+              'Resumen general de restaurante',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: AppTheme.fontWeightBold,
                 color: AppColors.textPrimary,
@@ -613,7 +624,9 @@ class AdminApp extends StatelessWidget {
                   ),
                 ],
               ),
-              if (apertura.notaCajero != null &&
+              // Mostrar notas solo cuando es apertura real (no del cierre)
+              if (apertura.totalNeto < 1 &&
+                  apertura.notaCajero != null &&
                   apertura.notaCajero!.isNotEmpty) ...[
                 SizedBox(height: AppTheme.spacingMD),
                 Container(
@@ -634,6 +647,39 @@ class AdminApp extends StatelessWidget {
                       Expanded(
                         child: Text(
                           apertura.notaCajero!,
+                          style: TextStyle(
+                            fontSize: isTablet ? 13.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (!isOpen) ...[
+                SizedBox(height: AppTheme.spacingMD),
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.warning.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: isTablet ? 18.0 : 16.0,
+                        color: AppColors.warning,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'La caja fue cerrada. Los detalles del cierre están en la tabla inferior.',
                           style: TextStyle(
                             fontSize: isTablet ? 13.0 : 12.0,
                             color: AppColors.textSecondary,
@@ -838,7 +884,7 @@ class AdminApp extends StatelessWidget {
             ),
             DataColumn(
               label: Text(
-                'Productos',
+                'Detalle del pago',
                 style: TextStyle(
                   fontSize: isTablet
                       ? AppTheme.fontSizeSM
@@ -925,12 +971,12 @@ class AdminApp extends StatelessWidget {
                 ),
                 DataCell(
                   SizedBox(
-                    width: 240,
+                    width: 320,
                     child: Text(
                       record.products.isEmpty
                           ? 'Sin detalles'
                           : record.products.join(', '),
-                      maxLines: 2,
+                      maxLines: 5,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -1167,7 +1213,7 @@ class AdminApp extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              'Mesa ${table.number}',
+              table.displayLabel,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: AppTheme.fontWeightBold,
               ),
@@ -1869,7 +1915,7 @@ class AdminApp extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Mesa ${table.number}',
+                    table.displayLabel,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: AppTheme.fontWeightBold,
                       color: textColor,
@@ -1892,14 +1938,16 @@ class AdminApp extends StatelessWidget {
                       constraints: const BoxConstraints(),
                     ),
                     SizedBox(width: AppTheme.spacingXS),
-                    IconButton(
-                      icon: Icon(Icons.delete, size: isTablet ? 20 : 18),
-                      color: textColor,
-                      onPressed: () =>
-                          _showDeleteTableDialog(context, table, controller),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
+                    // Solo administrador puede eliminar mesas; mesero puede editar pero no eliminar
+                    if (Provider.of<AuthController>(context, listen: false).userRole != 'mesero')
+                      IconButton(
+                        icon: Icon(Icons.delete, size: isTablet ? 20 : 18),
+                        color: textColor,
+                        onPressed: () =>
+                            _showDeleteTableDialog(context, table, controller),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
                   ],
                 ),
               ],
@@ -2046,32 +2094,21 @@ class AdminApp extends StatelessWidget {
                 ),
               ),
             ],
-            if (table.currentTotal != null) ...[
-              SizedBox(height: AppTheme.spacingXS),
-              Text(
-                '\$${table.currentTotal!.toStringAsFixed(2)}',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: textColor,
-                  fontWeight: AppTheme.fontWeightBold,
-                ),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  // Modal para agregar mesa
+  // Modal para agregar mesa (nombre o número: acepta letras y números)
   void _showAddTableModal(
     BuildContext context,
     AdminController controller,
     bool isTablet,
   ) {
     final formKey = GlobalKey<FormState>();
-    final numberController = TextEditingController();
+    final nameOrNumberController = TextEditingController();
     final seatsController = TextEditingController();
-    // Obtener áreas disponibles (excluyendo 'todos')
     final availableAreas = controller.tableAreas
         .where((a) => a != 'todos')
         .toList();
@@ -2098,22 +2135,19 @@ class AdminApp extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                   TextFormField(
-                    controller: numberController,
+                    controller: nameOrNumberController,
                     decoration: const InputDecoration(
-                      labelText: 'Número de Mesa *',
+                      labelText: 'Nombre o número de Mesa *',
+                      hintText: 'Ej: 1, Terraza, VIP 1',
                       border: OutlineInputBorder(),
                     ),
-                    keyboardType: TextInputType.number,
+                    textCapitalization: TextCapitalization.words,
                     validator: (value) {
-                      if (value == null || value.isEmpty) {
+                      if (value == null || value.trim().isEmpty) {
                         return 'Campo obligatorio';
                       }
-                      final number = int.tryParse(value);
-                      if (number == null || number <= 0) {
-                        return 'Debe ser un número válido';
-                      }
-                      if (controller.tableNumberExists(number)) {
-                        return 'Ya existe una mesa con ese número';
+                      if (controller.tableCodigoExists(value.trim())) {
+                        return 'Ya existe una mesa con ese nombre o número';
                       }
                       return null;
                     },
@@ -2163,7 +2197,7 @@ class AdminApp extends StatelessWidget {
                 ],
               ),
             ),
-            ),
+          ),
           ),
           actions: [
             TextButton(
@@ -2173,10 +2207,11 @@ class AdminApp extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 if (formKey.currentState!.validate()) {
-                  // El ID se asignará desde el backend
+                  final codigo = nameOrNumberController.text.trim();
                   final newTable = TableModel(
-                    id: 0, // Temporal, se actualizará desde el backend
-                    number: int.parse(numberController.text),
+                    id: 0,
+                    codigo: codigo,
+                    number: int.tryParse(codigo) ?? 0,
                     status: TableStatus.libre,
                     seats: int.parse(seatsController.text),
                     section: selectedSection,
@@ -2236,7 +2271,7 @@ class AdminApp extends StatelessWidget {
     );
   }
 
-  // Modal para editar mesa
+  // Modal para editar mesa (nombre o número: acepta letras y números)
   void _showEditTableModal(
     BuildContext context,
     TableModel table,
@@ -2244,18 +2279,16 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
   ) {
     final formKey = GlobalKey<FormState>();
-    final numberController = TextEditingController(
-      text: table.number.toString(),
+    final nameOrNumberController = TextEditingController(
+      text: table.codigo,
     );
     final seatsController = TextEditingController(text: table.seats.toString());
-    // Obtener áreas disponibles (excluyendo 'todos')
     final availableAreas = controller.tableAreas
         .where((a) => a != 'todos')
         .toList();
     String selectedSection =
         table.section ??
         (availableAreas.isNotEmpty ? availableAreas.first : 'Área Principal');
-    // Si el área de la mesa no está en la lista, usar la primera disponible
     if (!availableAreas.contains(selectedSection)) {
       selectedSection = availableAreas.isNotEmpty
           ? availableAreas.first
@@ -2291,25 +2324,22 @@ class AdminApp extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                   TextFormField(
-                    controller: numberController,
+                    controller: nameOrNumberController,
                     decoration: const InputDecoration(
-                      labelText: 'Número de Mesa *',
+                      labelText: 'Nombre o número de Mesa *',
+                      hintText: 'Ej: 1, Terraza, VIP 1',
                       border: OutlineInputBorder(),
                     ),
-                    keyboardType: TextInputType.number,
+                    textCapitalization: TextCapitalization.words,
                     validator: (value) {
-                      if (value == null || value.isEmpty) {
+                      if (value == null || value.trim().isEmpty) {
                         return 'Campo obligatorio';
                       }
-                      final number = int.tryParse(value);
-                      if (number == null || number <= 0) {
-                        return 'Debe ser un número válido';
-                      }
-                      if (controller.tableNumberExists(
-                        number,
+                      if (controller.tableCodigoExists(
+                        value.trim(),
                         excludeId: table.id,
                       )) {
-                        return 'Ya existe una mesa con ese número';
+                        return 'Ya existe una mesa con ese nombre o número';
                       }
                       return null;
                     },
@@ -2378,8 +2408,10 @@ class AdminApp extends StatelessWidget {
                   );
 
                   try {
+                    final codigo = nameOrNumberController.text.trim();
                     final updatedTable = table.copyWith(
-                      number: int.parse(numberController.text),
+                      codigo: codigo,
+                      number: int.tryParse(codigo) ?? 0,
                       seats: int.parse(seatsController.text),
                       section: selectedSection,
                     );
@@ -2439,7 +2471,7 @@ class AdminApp extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Eliminar Mesa'),
-        content: Text('¿Estás seguro de eliminar la Mesa ${table.number}?'),
+        content: Text('¿Estás seguro de eliminar la ${table.displayLabel}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -2467,7 +2499,7 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Mesa ${table.number} eliminada'),
+                      content: Text('${table.displayLabel} eliminada'),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -2617,8 +2649,10 @@ class AdminApp extends StatelessWidget {
       children: [
         // Barra de búsqueda
         TextField(
+          controller: controller.menuSearchController,
           decoration: InputDecoration(
             hintText: 'Buscar producto...',
+            helperText: 'Los resultados se filtran al escribir',
             prefixIcon: const Icon(Icons.search),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusMD),
@@ -2626,7 +2660,7 @@ class AdminApp extends StatelessWidget {
             filled: true,
             fillColor: AppColors.inputBackground,
           ),
-          onChanged: (value) => controller.setSearchQuery(value),
+          onChanged: (value) => controller.setMenuSearchQuery(value),
         ),
         SizedBox(height: AppTheme.spacingMD),
 
@@ -2735,10 +2769,13 @@ class AdminApp extends StatelessWidget {
               ),
               SizedBox(height: AppTheme.spacingMD),
               Text(
-                'No hay productos para mostrar',
+                controller.menuItems.isEmpty
+                    ? 'No hay productos para mostrar'
+                    : 'Sin coincidencias para la búsqueda',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -2935,12 +2972,14 @@ class AdminApp extends StatelessWidget {
                       ),
                       color: Colors.orange,
                       tooltip: 'Configurar receta',
-                      onPressed: () => _showRecipeModal(
-                        context,
-                        product,
-                        controller,
-                        isTablet,
-                      ),
+                      onPressed: () async {
+                        await _showRecipeModal(
+                          context,
+                          product,
+                          controller,
+                          isTablet,
+                        );
+                      },
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
@@ -3169,12 +3208,14 @@ class AdminApp extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _showRecipeModal(
-                      context,
-                      product,
-                      controller,
-                      isTablet,
-                    ),
+                    onPressed: () async {
+                      await _showRecipeModal(
+                        context,
+                        product,
+                        controller,
+                        isTablet,
+                      );
+                    },
                     icon: const Icon(Icons.restaurant_menu, size: 16),
                     label: const Text('Receta'),
                     style: OutlinedButton.styleFrom(
@@ -3426,12 +3467,20 @@ class AdminApp extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextFormField(
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: TextFormField(
                       controller: nameController,
                       textAlign: TextAlign.start,
                       decoration: const InputDecoration(
                         labelText: 'Nombre del Producto *',
                         border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
+                        ),
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                        alignLabelWithHint: true,
                       ),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
@@ -3440,12 +3489,17 @@ class AdminApp extends StatelessWidget {
                         return null;
                       },
                     ),
+                  ),
                   SizedBox(height: AppTheme.spacingMD),
                   DropdownButtonFormField<String>(
                     initialValue: selectedCategory,
                     decoration: const InputDecoration(
                       labelText: 'Categoría *',
                       border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 16,
+                      ),
                     ),
                     items: [
                       for (final category in controller.getAllCategories())
@@ -3626,16 +3680,48 @@ class AdminApp extends StatelessWidget {
                     );
                     return;
                   }
+                  // Sincronizar tamaños desde los controladores (precio puede tener "2'0", "2,5", etc.)
+                  if (hasSizes &&
+                      sizePriceControllers.length == sizes.length &&
+                      sizeNameControllers.length == sizes.length) {
+                    for (var i = 0; i < sizes.length; i++) {
+                      final name = sizeNameControllers[i].text.trim();
+                      final price = _parsePrice(sizePriceControllers[i].text);
+                      sizes[i] = MenuSize(name: name, price: price);
+                    }
+                  }
+                  if (hasSizes) {
+                    final invalidName = sizes.any((s) => s.name.isEmpty);
+                    final invalidPrice = sizes.any((s) => s.price <= 0);
+                    if (invalidName) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Cada tamaño debe tener un nombre',
+                          ),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                    if (invalidPrice) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Cada tamaño debe tener un precio mayor a 0',
+                          ),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                  }
                   // El ID se asignará desde el backend
                   // Limpiar y validar el precio antes de parsear
                   double? precio;
                   if (!hasSizes) {
-                    final precioTexto = priceController.text.trim().replaceAll(
-                      ',',
-                      '.',
-                    );
-                    precio = double.tryParse(precioTexto);
-                    if (precio == null || precio <= 0) {
+                    precio = _parsePrice(priceController.text);
+                    if (precio <= 0) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
@@ -3658,7 +3744,7 @@ class AdminApp extends StatelessWidget {
                     ingredients: [],
                     allergens: [],
                     preparationTime: 0,
-                    createdAt: DateTime.now(),
+                    createdAt: date_utils.AppDateUtils.nowCdmx(),
                     hasSizes: hasSizes,
                     sizes: hasSizes ? sizes : null,
                     serveHot: serveHot,
@@ -3783,8 +3869,7 @@ class AdminApp extends StatelessWidget {
                     ),
                     controller: sizePriceControllers[index],
                     onChanged: (value) {
-                      final cleanValue = value.trim().replaceAll(',', '.');
-                      final price = double.tryParse(cleanValue) ?? 0.0;
+                      final price = _parsePrice(value);
                       sizes[index] = MenuSize(
                         name: sizes[index].name,
                         price: price,
@@ -3802,13 +3887,21 @@ class AdminApp extends StatelessWidget {
               ],
             ),
           ),
-        ElevatedButton.icon(
-          onPressed: onAddSize,
-          icon: const Icon(Icons.add),
-          label: const Text('Añadir tamaño'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.secondary,
-            foregroundColor: Colors.white,
+        Padding(
+          padding: const EdgeInsets.only(top: AppTheme.spacingSM),
+          child: ElevatedButton.icon(
+            onPressed: onAddSize,
+            icon: const Icon(Icons.add, size: 20),
+            label: const Text('Añadir tamaño'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.spacingLG,
+                vertical: AppTheme.spacingMD,
+              ),
+              elevation: 2,
+            ),
           ),
         ),
       ],
@@ -4138,7 +4231,7 @@ class AdminApp extends StatelessWidget {
                     isSpicy: isSpicy,
                     allowSauces: allowSauces,
                     allowExtraIngredients: allowExtraIngredients,
-                    updatedAt: DateTime.now(),
+                    updatedAt: date_utils.AppDateUtils.nowCdmx(),
                   );
                   
                   // Mostrar indicador de carga
@@ -4200,17 +4293,32 @@ class AdminApp extends StatelessWidget {
   }
 
   // Modal para configurar receta de producto
-  void _showRecipeModal(
+  Future<void> _showRecipeModal(
     BuildContext context,
     MenuItem product,
     AdminController controller,
     bool isTablet,
-  ) {
-    // Obtener el producto actualizado del controller para asegurar que tenga los ingredientes más recientes
-    final currentProduct = controller.menuItems.firstWhere(
-      (item) => item.id == product.id,
-      orElse: () => product,
-    );
+  ) async {
+    // Cargar el producto desde el backend para tener siempre los ingredientes de receta actualizados
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      );
+    }
+    MenuItem? productWithRecipe = await controller.fetchProductoForRecipe(product.id);
+    if (productWithRecipe == null && context.mounted) {
+      await controller.loadMenuItems();
+      final list = controller.menuItems.where((item) => item.id == product.id).toList();
+      if (list.isNotEmpty) productWithRecipe = list.first;
+    }
+    if (context.mounted) Navigator.of(context).pop(); // Cerrar loading
+    final currentProduct = productWithRecipe ??
+        controller.menuItems.firstWhere(
+          (item) => item.id == product.id,
+          orElse: () => product,
+        );
     List<RecipeIngredient> recipeIngredients =
         currentProduct.recipeIngredients?.toList() ?? [];
     final hasSizes =
@@ -4221,9 +4329,20 @@ class AdminApp extends StatelessWidget {
     final canUseSizeRecipes = hasSizes && sizesWithId.isNotEmpty;
     final hasGeneralIngredients =
         recipeIngredients.any((ingredient) => ingredient.sizeId == null);
-    MenuSize? selectedSize = canUseSizeRecipes
-        ? (hasGeneralIngredients ? null : sizesWithId.first)
-        : null;
+    // Por defecto: si hay tamaños, elegir el primer tamaño que aún no tenga ingredientes (para guiar a configurar Chico, Mediano, Grande)
+    MenuSize? selectedSize = null;
+    if (canUseSizeRecipes) {
+      if (hasGeneralIngredients) {
+        selectedSize = null;
+      } else {
+        final sizesWithoutIngredients = sizesWithId.where(
+          (size) => !recipeIngredients.any((ing) => ing.sizeId == size.id),
+        ).toList();
+        selectedSize = sizesWithoutIngredients.isNotEmpty
+            ? sizesWithoutIngredients.first
+            : sizesWithId.first;
+      }
+    }
     final sizeNameById = {
       for (final size in currentProduct.sizes ?? [])
         if (size.id != null) size.id!: size.name
@@ -4311,7 +4430,53 @@ class AdminApp extends StatelessWidget {
                             }
                           : null,
                     ),
-                    if (!canUseSizeRecipes) ...[
+                    if (canUseSizeRecipes) ...[
+                      SizedBox(height: AppTheme.spacingXS),
+                      Text(
+                        'Selecciona el tamaño y agrega ingredientes con "Desde Inventario". Cada tamaño tiene su propia receta; al cambiar de tamaño no se pierden los ingredientes ya configurados.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      Wrap(
+                        spacing: AppTheme.spacingSM,
+                        runSpacing: AppTheme.spacingXS,
+                        children: [
+                          _recipeSizeChip(
+                            context,
+                            'General',
+                            null,
+                            selectedSize,
+                            recipeIngredients,
+                            setState,
+                            (s) => selectedSize = s,
+                          ),
+                          ...sizesWithId.map(
+                            (size) => _recipeSizeChip(
+                              context,
+                              size.name,
+                              size,
+                              selectedSize,
+                              recipeIngredients,
+                              setState,
+                              (s) => selectedSize = s,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      Text(
+                        selectedSize == null
+                            ? 'Configurando receta para: General (aplica a todos los tamaños)'
+                            : 'Configurando receta para: ${selectedSize!.name}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontWeight: AppTheme.fontWeightMedium,
+                              color: AppColors.primary,
+                            ),
+                      ),
+                    ],
+                    if (!canUseSizeRecipes && hasSizes) ...[
                       SizedBox(height: AppTheme.spacingXS),
                       Text(
                         'Guarda el producto para poder configurar recetas por tamaño.',
@@ -4323,24 +4488,28 @@ class AdminApp extends StatelessWidget {
                     SizedBox(height: AppTheme.spacingMD),
                   ],
                   
-                  // Lista de ingredientes actuales
-                  if (recipeIngredients.isNotEmpty) ...[
-                    if (filteredEntries.isEmpty)
-                      Text(
-                        'No hay ingredientes configurados para este tamaño.',
+                  // Lista de ingredientes actuales (siempre visible para editar/eliminar)
+                  Text(
+                    'Ingredientes configurados:',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingSM),
+                  if (filteredEntries.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppTheme.spacingSM),
+                      child: Text(
+                        recipeIngredients.isEmpty
+                            ? 'Aún no hay ingredientes. Usa «Desde Inventario» para agregar.'
+                            : 'No hay ingredientes configurados para este tamaño.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: AppColors.textSecondary,
                             ),
                       ),
-                    Text(
-                      'Ingredientes configurados:',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                      ),
-                    ),
-                    SizedBox(height: AppTheme.spacingSM),
+                    )
+                  else ...[
                     ...filteredEntries.map((entry) {
-                      final index = entry.key;
                       final ingredient = entry.value;
                       return Card(
                         margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
@@ -4391,7 +4560,6 @@ class AdminApp extends StatelessWidget {
                                 onPressed: () => _showEditIngredientDialog(
                                   context,
                                   ingredient,
-                                  index,
                                   recipeIngredients,
                                   setState,
                                   isTablet,
@@ -4408,7 +4576,7 @@ class AdminApp extends StatelessWidget {
                                 ),
                                 onPressed: () {
                                   setState(() {
-                                    recipeIngredients.removeAt(index);
+                                    recipeIngredients.remove(ingredient);
                                   });
                                 },
                                 padding: EdgeInsets.zero,
@@ -4435,6 +4603,7 @@ class AdminApp extends StatelessWidget {
                             setState,
                             isTablet,
                             selectedSize?.id,
+                            selectedSize?.name,
                             );
                           },
                           icon: const Icon(Icons.inventory_2),
@@ -4534,6 +4703,7 @@ class AdminApp extends StatelessWidget {
     StateSetter setState,
     bool isTablet,
     int? sizeId,
+    String? sizeName,
   ) async {
     final quantityController = TextEditingController();
     final unitController = TextEditingController();
@@ -4561,7 +4731,23 @@ class AdminApp extends StatelessWidget {
         builder: (context, dialogSetState) => ValueListenableBuilder<bool>(
           valueListenable: isOptionalNotifier,
           builder: (context, isOptional, _) => AlertDialog(
-            title: const Text('Agregar Ingrediente desde Inventario'),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Agregar Ingrediente desde Inventario'),
+                if (sizeName != null && sizeName.isNotEmpty) ...[
+                  SizedBox(height: AppTheme.spacingXS),
+                  Text(
+                    'Para tamaño: $sizeName',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           content: SizedBox(
             width: isTablet ? 500 : double.maxFinite,
             child: Column(
@@ -4571,13 +4757,16 @@ class AdminApp extends StatelessWidget {
                     builder: (context) {
                       final filteredItems = controller.inventory
                           .where((item) {
-                            // Excluir solo items realmente expirados (no los que tienen stock 0)
                             if (item.status == InventoryStatus.expired) return false;
-                            // Verificar si el item ya está en la receta por inventarioItemId
-                            final alreadyInRecipe = recipeIngredients.any(
-                              (ing) => ing.inventoryItemId == item.id,
+                            // Excluir solo si este ingrediente ya está en la receta PARA EL TAMAÑO ACTUAL.
+                            // Así el mismo ingrediente (ej. chocolate) puede agregarse para Chico, Mediano y Grande por separado.
+                            final itemIdStr = item.id.toString();
+                            final alreadyInRecipeForThisSize = recipeIngredients.any(
+                              (ing) =>
+                                  (ing.inventoryItemId ?? '').toString() == itemIdStr &&
+                                  ing.sizeId == sizeId,
                             );
-                            return !alreadyInRecipe;
+                            return !alreadyInRecipeForThisSize;
                           })
                           .toList();
                       filteredItems.sort((a, b) => a.name.compareTo(b.name));
@@ -4598,19 +4787,13 @@ class AdminApp extends StatelessWidget {
                   onChanged: (value) {
                     dialogSetState(() {
                       selectedItem = value;
-                            // Sugerir una unidad más pequeña si el inventario está en kg o L
-                            if (value != null) {
-                              final unidadInventario = value.unit.toLowerCase();
-                              if (unidadInventario == 'kg' || unidadInventario == 'kilogramo' || unidadInventario == 'kilogramos') {
-                                unitController.text = 'g';
-                              } else if (unidadInventario == 'l' || unidadInventario == 'litro' || unidadInventario == 'litros') {
-                                unitController.text = 'ml';
-                              } else {
-                                unitController.text = value.unit;
-                              }
-                            }
-                          });
-                        },
+                      // Dejar la unidad vacía para que el usuario la configure (ej: g, ml, pza).
+                      // "En inventario: ..." muestra la unidad del inventario como referencia.
+                      if (value != null) {
+                        unitController.clear();
+                      }
+                    });
+                  },
                       );
                   },
                 ),
@@ -4637,10 +4820,10 @@ class AdminApp extends StatelessWidget {
                     controller: unitController,
                     decoration: const InputDecoration(
                       labelText: 'Unidad',
-                            hintText: 'g, ml, etc.',
+                      hintText: 'g, ml, pza, piezas...',
                       border: OutlineInputBorder(),
-                            helperText: 'Unidad para la receta',
-                          ),
+                      helperText: 'Unidad para la receta (peso, volumen o por pieza)',
+                    ),
                     ),
                       ),
                     ],
@@ -4737,11 +4920,38 @@ class AdminApp extends StatelessWidget {
     );
   }
 
+  // Chip que muestra cantidad de ingredientes por tamaño y permite cambiar el tamaño seleccionado
+  Widget _recipeSizeChip(
+    BuildContext context,
+    String label,
+    MenuSize? size,
+    MenuSize? selectedSize,
+    List<RecipeIngredient> recipeIngredients,
+    StateSetter setState,
+    void Function(MenuSize?) onSelectSize,
+  ) {
+    final count = size == null
+        ? recipeIngredients.where((i) => i.sizeId == null).length
+        : recipeIngredients.where((i) => i.sizeId == size.id).length;
+    final isSelected = selectedSize == size;
+    return FilterChip(
+      label: Text('$label: $count'),
+      selected: isSelected,
+      onSelected: (_) {
+        setState(() {
+          onSelectSize(size);
+        });
+      },
+      selectedColor: AppColors.primary.withValues(alpha: 0.3),
+      checkmarkColor: AppColors.primary,
+      showCheckmark: true,
+    );
+  }
+
   // Diálogo para editar ingrediente
   void _showEditIngredientDialog(
     BuildContext context,
     RecipeIngredient ingredient,
-    int index,
     List<RecipeIngredient> recipeIngredients,
     StateSetter setState,
     bool isTablet,
@@ -4848,15 +5058,17 @@ class AdminApp extends StatelessWidget {
                   return;
                 }
                 
-                setState(() {
-                  recipeIngredients[index] = ingredient.copyWith(
-                    quantityPerPortion: quantity,
-                    unit: unitController.text.trim(),
-                    autoDeduct: autoDeduct,
-                    isOptional: isOptional,
-                  );
-                });
-                
+                final idx = recipeIngredients.indexOf(ingredient);
+                if (idx >= 0) {
+                  setState(() {
+                    recipeIngredients[idx] = ingredient.copyWith(
+                      quantityPerPortion: quantity,
+                      unit: unitController.text.trim(),
+                      autoDeduct: autoDeduct,
+                      isOptional: isOptional,
+                    );
+                  });
+                }
                 Navigator.of(context).pop();
               },
               child: const Text('Guardar'),
@@ -5043,6 +5255,16 @@ class AdminApp extends StatelessWidget {
                   controller.setCurrentView('kitchen_filters');
                 },
               ),
+              const SizedBox(width: 16),
+              _buildNavItem(
+                'Configuración',
+                Icons.settings,
+                controller.currentView == 'configuracion',
+                isTablet,
+                () {
+                  controller.setCurrentView('configuracion');
+                },
+              ),
             ],
           ),
         ),
@@ -5119,15 +5341,29 @@ class AdminApp extends StatelessWidget {
                   color: AppColors.textPrimary,
                 ),
               ),
-              ElevatedButton.icon(
-                onPressed: () =>
-                    _showAddInventoryModal(context, controller, isTablet),
-                icon: const Icon(Icons.add),
-                label: const Text('Agregar Producto'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => _showBuscarPorCodigoBarrasDialog(
+                      context,
+                      controller,
+                      isTablet,
+                    ),
+                    child: const Text('Buscar por código'),
+                  ),
+                  SizedBox(width: AppTheme.spacingSM),
+                  ElevatedButton.icon(
+                    onPressed: () =>
+                        _showAddInventoryModal(context, controller, isTablet),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Agregar Producto'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -5233,8 +5469,10 @@ class AdminApp extends StatelessWidget {
       children: [
         // Barra de búsqueda
         TextField(
+          controller: controller.inventorySearchController,
           decoration: InputDecoration(
-            hintText: 'Buscar producto o proveedor...',
+            hintText: 'Buscar producto, proveedor o código de barras...',
+            helperText: 'Los resultados se filtran al escribir',
             prefixIcon: const Icon(Icons.search),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusMD),
@@ -5242,7 +5480,7 @@ class AdminApp extends StatelessWidget {
             filled: true,
             fillColor: AppColors.inputBackground,
           ),
-          onChanged: (value) => controller.setSearchQuery(value),
+          onChanged: (value) => controller.setInventorySearchQuery(value),
         ),
         SizedBox(height: AppTheme.spacingMD),
 
@@ -5343,7 +5581,7 @@ class AdminApp extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               final categoryName = categoryNameController.text.trim();
               if (categoryName.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -5356,9 +5594,10 @@ class AdminApp extends StatelessWidget {
                 );
                 return;
               }
-              
-              // Verificar si la categoría ya existe
-              if (controller.inventoryCategories.contains(categoryName)) {
+              final exists = controller.inventoryCategories.any(
+                (c) => c.trim().toLowerCase() == categoryName.toLowerCase(),
+              );
+              if (exists) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('La categoría "$categoryName" ya existe'),
@@ -5367,15 +5606,35 @@ class AdminApp extends StatelessWidget {
                 );
                 return;
               }
-              
-              controller.addInventoryCategory(categoryName);
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Categoría "$categoryName" agregada'),
-                  backgroundColor: Colors.green,
-                ),
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(child: CircularProgressIndicator()),
               );
+              try {
+                await controller.createInventoryCategory(categoryName);
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Categoría "$categoryName" guardada. Ya no se borrará al recargar.'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error: ${_extractErrorMessage(e)}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
+              }
             },
             child: const Text('Crear'),
           ),
@@ -5402,10 +5661,13 @@ class AdminApp extends StatelessWidget {
               Icon(Icons.inventory_2, size: 64, color: AppColors.textSecondary),
               SizedBox(height: AppTheme.spacingMD),
               Text(
-                'No hay productos en inventario',
+                controller.inventory.isEmpty
+                    ? 'No hay productos en inventario'
+                    : 'Sin coincidencias para la búsqueda',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -5422,6 +5684,15 @@ class AdminApp extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  /// Parsea un texto de precio (acepta "20", "2'0", "2,5", "2.5", "$ 15", etc.)
+  static double _parsePrice(String value) {
+    final clean = value
+        .trim()
+        .replaceAll(RegExp(r"['\s\$]"), '')
+        .replaceAll(',', '.');
+    return double.tryParse(clean) ?? 0.0;
   }
 
   // Tarjeta de producto de inventario
@@ -5541,20 +5812,65 @@ class AdminApp extends StatelessWidget {
             ),
             SizedBox(height: AppTheme.spacingSM),
 
-            // Categoría
-            Chip(
-              label: Text(
-                item.category,
-                style: TextStyle(
-                  fontSize: isTablet ? AppTheme.fontSizeXS : 10,
-                  color: Colors.white,
+            // Categoría y código de barras
+            Wrap(
+              spacing: AppTheme.spacingSM,
+              runSpacing: AppTheme.spacingXS,
+              children: [
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                    vertical: AppTheme.spacingXS + 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSM),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.4),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    item.category,
+                    style: TextStyle(
+                      fontSize: isTablet ? AppTheme.fontSizeSM : 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
-              ),
-              backgroundColor: AppColors.secondary,
-              padding: EdgeInsets.symmetric(
-                horizontal: AppTheme.spacingSM,
-                vertical: AppTheme.spacingXS,
-              ),
+                if (item.codigoBarras != null && item.codigoBarras!.trim().isNotEmpty)
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppTheme.spacingSM,
+                      vertical: AppTheme.spacingXS,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSM),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.view_stream, size: 16, color: AppColors.textSecondary),
+                        SizedBox(width: 6),
+                        Text(
+                          item.codigoBarras!,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
             SizedBox(height: AppTheme.spacingSM),
 
@@ -5719,17 +6035,32 @@ class AdminApp extends StatelessWidget {
   ) {
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController();
+    final codigoBarrasController = TextEditingController();
     final stockController = TextEditingController();
     final minStockController = TextEditingController();
     final maxStockController = TextEditingController();
     final costController = TextEditingController();
     final supplierController = TextEditingController();
-    final unitController = TextEditingController();
     String? selectedCategory;
+    String selectedUnit = 'g';
+    final inventoryUnitOptions = [
+      'kg', 'g', 'L', 'ml',
+      'pza', 'Pieza', 'Piezas', 'Unidad', 'Unidades',
+    ];
+    final contenidoPorPiezaController = TextEditingController();
+    String? selectedUnidadContenido; // kg, g, L, ml (solo cuando unidad es por pieza)
+    final unidadContenidoOptions = ['kg', 'g', 'L', 'ml'];
+    bool unidadEsPiezaForm() =>
+        selectedUnit == 'pza' ||
+        selectedUnit == 'Pieza' ||
+        selectedUnit == 'Piezas' ||
+        selectedUnit == 'Unidad' ||
+        selectedUnit == 'Unidades';
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
         title: Text(
           'Agregar al Inventario',
           style: TextStyle(fontSize: isTablet ? 20 : 18),
@@ -5742,12 +6073,16 @@ class AdminApp extends StatelessWidget {
               key: formKey,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                SizedBox(height: isTablet ? 16 : 12),
                 TextFormField(
                   controller: nameController,
                   decoration: const InputDecoration(
                     labelText: 'Nombre del Producto *',
                     border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    floatingLabelBehavior: FloatingLabelBehavior.auto,
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -5755,6 +6090,16 @@ class AdminApp extends StatelessWidget {
                     }
                     return null;
                   },
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                TextFormField(
+                  controller: codigoBarrasController,
+                  decoration: const InputDecoration(
+                    labelText: 'Código de barras (opcional)',
+                    border: OutlineInputBorder(),
+                    hintText: 'Único por línea de producto; para buscar al registrar entradas',
+                  ),
+                  keyboardType: TextInputType.text,
                 ),
                 SizedBox(height: AppTheme.spacingMD),
                 DropdownButtonFormField<String>(
@@ -5770,10 +6115,10 @@ class AdminApp extends StatelessWidget {
                           value: category,
                           child: Text(category),
                         );
-                        })
-                        .toList(),
+                      })
+                      .toList(),
                   onChanged: (value) {
-                    selectedCategory = value;
+                    setDialogState(() => selectedCategory = value);
                   },
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -5783,13 +6128,22 @@ class AdminApp extends StatelessWidget {
                   },
                 ),
                 SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: unitController,
-                  decoration: const InputDecoration(
+                DropdownButtonFormField<String>(
+                  value: selectedUnit,
+                  decoration: InputDecoration(
                     labelText: 'Unidad *',
-                    border: OutlineInputBorder(),
-                    hintText: 'kg, g, ml, unidades...',
+                    border: const OutlineInputBorder(),
+                    hintText: 'kg, g, ml, pza, piezas...',
+                    helperText: unidadEsPiezaForm()
+                        ? 'Stock en número de envases. Abajo indica cuántos kg/L tiene cada uno.'
+                        : 'Para envases (ej. Nescafé 5 kg): elige "Pieza" o "pza" y aparecerá la opción de contenido por envase.',
                   ),
+                  items: inventoryUnitOptions
+                      .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) setDialogState(() => selectedUnit = value);
+                  },
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Campo obligatorio';
@@ -5797,12 +6151,84 @@ class AdminApp extends StatelessWidget {
                     return null;
                   },
                 ),
+                if (unidadEsPiezaForm()) ...[
+                  SizedBox(height: AppTheme.spacingMD),
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.all(AppTheme.spacingMD),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Contenido de cada envase (kg, L, g o ml)',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14 : 13,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Indica cuántos kg, litros, g o ml tiene cada envase. Así el inventario se descontará bien cuando uses este producto en recetas (por peso o volumen).',
+                          style: TextStyle(
+                            fontSize: isTablet ? 12 : 11,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        SizedBox(height: AppTheme.spacingMD),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: TextFormField(
+                                controller: contenidoPorPiezaController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Cantidad por envase',
+                                  border: OutlineInputBorder(),
+                                  hintText: 'Ej: 5 (para envase de 5 kg)',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: selectedUnidadContenido,
+                                decoration: const InputDecoration(
+                                  labelText: 'Unidad',
+                                  border: OutlineInputBorder(),
+                                  hintText: 'kg, L, g, ml',
+                                ),
+                                items: unidadContenidoOptions
+                                    .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                                    .toList(),
+                                onChanged: (value) {
+                                  setDialogState(() => selectedUnidadContenido = value);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: stockController,
-                  decoration: const InputDecoration(
-                    labelText: 'Stock Actual *',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: unidadEsPiezaForm() ? 'Stock actual (número de piezas) *' : 'Stock Actual *',
+                    border: const OutlineInputBorder(),
+                    hintText: unidadEsPiezaForm() ? 'Ej: 6 envases = 6' : null,
                   ),
                   keyboardType: TextInputType.number,
                   validator: (value) {
@@ -5927,24 +6353,47 @@ class AdminApp extends StatelessWidget {
                   status = InventoryStatus.available;
                 }
 
-                // El ID se asignará desde el backend
+                final codigoBarras = codigoBarrasController.text.trim();
+                final bool unidadEsPieza = selectedUnit == 'pza' ||
+                    selectedUnit == 'Pieza' ||
+                    selectedUnit == 'Piezas' ||
+                    selectedUnit == 'Unidad' ||
+                    selectedUnit == 'Unidades';
+                double? contenidoPorPieza;
+                String? unidadContenido;
+                final uCont = selectedUnidadContenido;
+                if (unidadEsPieza &&
+                    contenidoPorPiezaController.text.trim().isNotEmpty &&
+                    uCont != null &&
+                    uCont.isNotEmpty) {
+                  contenidoPorPieza = double.tryParse(contenidoPorPiezaController.text.trim());
+                  if (contenidoPorPieza != null && contenidoPorPieza > 0) {
+                    unidadContenido = uCont;
+                  } else {
+                    contenidoPorPieza = null;
+                    unidadContenido = null;
+                  }
+                }
                 final newItem = InventoryItem(
                   id: 'temp', // Temporal, se actualizará desde el backend
                   name: nameController.text,
+                  codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
                   category: selectedCategory!,
                   currentStock: stock,
                   minStock: minStock,
                   maxStock: maxStock,
                   minimumStock: minStock,
-                  unit: unitController.text,
+                  unit: selectedUnit,
                   cost: cost,
                   price: totalPrice,
                   unitPrice: cost,
                   supplier: supplierController.text.isEmpty
                       ? null
                       : supplierController.text,
-                  lastRestock: DateTime.now(),
+                  lastRestock: date_utils.AppDateUtils.nowCdmx(),
                   status: status,
+                  contenidoPorPieza: contenidoPorPieza,
+                  unidadContenido: unidadContenido,
                 );
                 // Mostrar indicador de carga
                 showDialog(
@@ -5999,6 +6448,7 @@ class AdminApp extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 
@@ -6022,6 +6472,7 @@ class AdminApp extends StatelessWidget {
 
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item.name);
+    final codigoBarrasController = TextEditingController(text: item.codigoBarras ?? '');
     final stockController = TextEditingController(
       text: formatNumber(item.currentStock),
     );
@@ -6035,10 +6486,26 @@ class AdminApp extends StatelessWidget {
       text: item.cost > 0 ? formatNumber(item.cost, maxDecimals: 2) : '',
     );
     final supplierController = TextEditingController(text: item.supplier ?? '');
+    final contenidoPorPiezaController = TextEditingController(
+      text: item.contenidoPorPieza != null && item.contenidoPorPieza! > 0
+          ? formatNumber(item.contenidoPorPieza!)
+          : '',
+    );
+    final unidadContenidoOptions = ['kg', 'g', 'L', 'ml'];
+    String? selectedUnidadContenido = item.unidadContenido?.trim();
+    if (selectedUnidadContenido != null && !unidadContenidoOptions.contains(selectedUnidadContenido)) {
+      selectedUnidadContenido = null;
+    }
+    final unidadEsPieza = item.unit == 'pza' ||
+        item.unit == 'Pieza' ||
+        item.unit == 'Piezas' ||
+        item.unit == 'Unidad' ||
+        item.unit == 'Unidades';
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -6082,10 +6549,19 @@ class AdminApp extends StatelessWidget {
                 ),
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
-                  controller: stockController,
+                  controller: codigoBarrasController,
                   decoration: const InputDecoration(
-                    labelText: 'Stock Actual *',
+                    labelText: 'Código de barras (opcional)',
                     border: OutlineInputBorder(),
+                  ),
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                TextFormField(
+                  controller: stockController,
+                  decoration: InputDecoration(
+                    labelText: unidadEsPieza ? 'Stock actual (número de piezas) *' : 'Stock Actual *',
+                    border: const OutlineInputBorder(),
+                    hintText: unidadEsPieza ? 'Ej: 6 envases = 6' : null,
                   ),
                   keyboardType: TextInputType.number,
                   validator: (value) {
@@ -6099,6 +6575,77 @@ class AdminApp extends StatelessWidget {
                     return null;
                   },
                 ),
+                if (unidadEsPieza) ...[
+                  SizedBox(height: AppTheme.spacingMD),
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.all(AppTheme.spacingMD),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Contenido de cada envase (kg, L, g o ml)',
+                          style: TextStyle(
+                            fontSize: isTablet ? 14 : 13,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Indica cuántos kg, litros, g o ml tiene cada envase para que el inventario se descuente bien en las recetas.',
+                          style: TextStyle(
+                            fontSize: isTablet ? 12 : 11,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        SizedBox(height: AppTheme.spacingMD),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: TextFormField(
+                                controller: contenidoPorPiezaController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Cantidad por envase',
+                                  border: OutlineInputBorder(),
+                                  hintText: 'Ej: 5 (para envase de 5 kg)',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: selectedUnidadContenido,
+                                decoration: const InputDecoration(
+                                  labelText: 'Unidad',
+                                  border: OutlineInputBorder(),
+                                  hintText: 'kg, L, g, ml',
+                                ),
+                                items: unidadContenidoOptions
+                                    .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                                    .toList(),
+                                onChanged: (value) {
+                                  setDialogState(() => selectedUnidadContenido = value);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: minStockController,
@@ -6210,7 +6757,24 @@ class AdminApp extends StatelessWidget {
                     status = InventoryStatus.available;
                   }
 
+                  final codigoBarras = codigoBarrasController.text.trim();
+                  double? contenidoPorPieza;
+                  String? unidadContenido;
+                  final uContEdit = selectedUnidadContenido;
+                  if (unidadEsPieza &&
+                      contenidoPorPiezaController.text.trim().isNotEmpty &&
+                      uContEdit != null &&
+                      uContEdit.isNotEmpty) {
+                    contenidoPorPieza = double.tryParse(contenidoPorPiezaController.text.trim());
+                    if (contenidoPorPieza != null && contenidoPorPieza > 0) {
+                      unidadContenido = uContEdit;
+                    } else {
+                      contenidoPorPieza = null;
+                      unidadContenido = null;
+                    }
+                  }
                   final updatedItem = item.copyWith(
+                    codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
                     currentStock: stock,
                     minStock: minStock,
                     maxStock: maxStock,
@@ -6221,8 +6785,10 @@ class AdminApp extends StatelessWidget {
                     supplier: supplierController.text.isEmpty
                         ? null
                         : supplierController.text,
-                    lastRestock: DateTime.now(),
+                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
                     status: status,
+                    contenidoPorPieza: contenidoPorPieza,
+                    unidadContenido: unidadContenido,
                   );
                   await controller.updateInventoryItem(updatedItem);
                   
@@ -6265,6 +6831,196 @@ class AdminApp extends StatelessWidget {
             child: const Text('Guardar Cambios'),
           ),
         ],
+      ),
+      ),
+    );
+  }
+
+  // Diálogo para buscar ítem por código de barras y abrir ajuste de stock
+  void _showBuscarPorCodigoBarrasDialog(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final codigoController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) {
+          final query = codigoController.text.trim().toLowerCase();
+          final allWithBarcode = controller.inventory
+              .where((i) => i.codigoBarras != null && i.codigoBarras!.trim().isNotEmpty)
+              .toList();
+          final matches = query.isEmpty
+              ? <InventoryItem>[]
+              : allWithBarcode
+                  .where((i) => (i.codigoBarras ?? '').toLowerCase().contains(query))
+                  .toList();
+          final exactMatches = query.isEmpty
+              ? <InventoryItem>[]
+              : allWithBarcode
+                  .where((i) => (i.codigoBarras ?? '').toLowerCase() == query)
+                  .toList();
+          final exactMatch = exactMatches.isEmpty ? null : exactMatches.first;
+
+          void openItemCard(InventoryItem item) {
+            Navigator.of(dialogContext).pop();
+            _showInventoryItemCardDialog(context, item, controller, isTablet);
+          }
+
+          Future<void> trySearchByExactCode() async {
+            final codigo = codigoController.text.trim();
+            if (codigo.isEmpty) return;
+            if (exactMatch != null) {
+              openItemCard(exactMatch);
+              return;
+            }
+            Navigator.of(dialogContext).pop();
+            final item = await controller.getInventoryItemByCodigoBarras(codigo);
+            if (!context.mounted) return;
+            if (item == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No hay ningún ítem con ese código de barras'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+            openItemCard(item);
+          }
+
+          return AlertDialog(
+            title: const Text('Buscar por código de barras'),
+            content: SizedBox(
+              width: isTablet ? 420 : double.infinity,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: codigoController,
+                    decoration: const InputDecoration(
+                      labelText: 'Código de barras',
+                      hintText: 'Escriba para filtrar o el código completo',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.view_stream),
+                    ),
+                    autofocus: true,
+                    onChanged: (_) => setState(() {}),
+                    onSubmitted: (_) => trySearchByExactCode(),
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                  Text(
+                    'Coincidencias (toque para abrir):',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingXS),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    child: matches.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(AppTheme.spacingMD),
+                              child: Text(
+                                query.isEmpty
+                                    ? 'Ingrese el número de código de barras para ver coincidencias'
+                                    : 'Sin coincidencias para "$query"',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: matches.length,
+                            itemBuilder: (context, index) {
+                              final item = matches[index];
+                              return ListTile(
+                                dense: true,
+                                leading: Icon(Icons.inventory_2, size: 20, color: AppColors.primary),
+                                title: Text(
+                                  item.name,
+                                  style: const TextStyle(fontWeight: FontWeight.w500),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: item.codigoBarras != null
+                                    ? Text(
+                                        item.codigoBarras!,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontFamily: 'monospace',
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      )
+                                    : null,
+                                onTap: () => openItemCard(item),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => trySearchByExactCode(),
+                child: const Text('Buscar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Diálogo que muestra la tarjeta del producto (misma que en la lista: editar, eliminar, aumentar, disminuir)
+  void _showInventoryItemCardDialog(
+    BuildContext context,
+    InventoryItem item,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => ListenableBuilder(
+        listenable: controller,
+        builder: (_, __) {
+          // Obtener el ítem actualizado del controller para que la tarjeta refleje cambios (aumentar/disminuir stock, editar)
+          final matching = controller.inventory.where((i) => i.id == item.id);
+          final displayItem = matching.isEmpty ? item : matching.first;
+          return AlertDialog(
+            contentPadding: EdgeInsets.zero,
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: isTablet ? 420 : double.infinity,
+                maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+              ),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: EdgeInsets.all(isTablet ? AppTheme.spacingMD : AppTheme.spacingSM),
+                  child: _buildInventoryItemCard(ctx, displayItem, controller, isTablet),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -6363,7 +7119,7 @@ class AdminApp extends StatelessWidget {
                   final updatedItem = item.copyWith(
                     currentStock: newStock,
                     price: newStock * item.unitPrice,
-                    lastRestock: DateTime.now(),
+                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
                     status: status,
                   );
                   
@@ -6558,8 +7314,10 @@ class AdminApp extends StatelessWidget {
       children: [
         // Barra de búsqueda
         TextField(
+          controller: controller.usersSearchController,
           decoration: InputDecoration(
             hintText: 'Buscar por nombre o usuario...',
+            helperText: 'Los resultados se filtran al escribir',
             prefixIcon: const Icon(Icons.search),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusMD),
@@ -6567,7 +7325,7 @@ class AdminApp extends StatelessWidget {
             filled: true,
             fillColor: AppColors.inputBackground,
           ),
-          onChanged: (value) => controller.setSearchQuery(value),
+          onChanged: (value) => controller.setUsersSearchQuery(value),
         ),
         SizedBox(height: AppTheme.spacingMD),
 
@@ -6672,10 +7430,13 @@ class AdminApp extends StatelessWidget {
               ),
               SizedBox(height: AppTheme.spacingMD),
               Text(
-                'No hay usuarios para mostrar',
+                controller.users.isEmpty
+                    ? 'No hay usuarios para mostrar'
+                    : 'Sin coincidencias para la búsqueda',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -7460,7 +8221,7 @@ class AdminApp extends StatelessWidget {
                         : phoneController.text.trim(),
                     roles: selectedRoles,
                     isActive: true,
-                    createdAt: DateTime.now(),
+                    createdAt: date_utils.AppDateUtils.nowCdmx(),
                     createdBy: 'current_admin',
                   );
                   
@@ -7729,8 +8490,8 @@ class AdminApp extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        DateTime.now().isAfter(user.createdAt)
-                            ? _formatDate(DateTime.now())
+                        date_utils.AppDateUtils.nowCdmx().isAfter(user.createdAt)
+                            ? _formatDate(date_utils.AppDateUtils.nowCdmx())
                             : _formatDate(user.createdAt),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           fontWeight: AppTheme.fontWeightMedium,
@@ -8333,8 +9094,10 @@ class AdminApp extends StatelessWidget {
       children: [
         // Barra de búsqueda
         TextField(
+          controller: controller.ticketsSearchController,
           decoration: InputDecoration(
             hintText: 'Buscar por ID, mesa, cuenta o impreso por...',
+            helperText: 'Los resultados se filtran al escribir',
             prefixIcon: const Icon(Icons.search),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusMD),
@@ -8342,7 +9105,7 @@ class AdminApp extends StatelessWidget {
             filled: true,
             fillColor: AppColors.inputBackground,
           ),
-          onChanged: (value) => controller.setSearchQuery(value),
+          onChanged: (value) => controller.setTicketsSearchQuery(value),
         ),
         SizedBox(height: AppTheme.spacingMD),
 
@@ -8455,9 +9218,9 @@ class AdminApp extends StatelessWidget {
                   onTap: () async {
                     final date = await showDatePicker(
                       context: context,
-                      initialDate: controller.ticketStartDate ?? DateTime.now(),
+                      initialDate: controller.ticketStartDate ?? date_utils.AppDateUtils.nowCdmx(),
                       firstDate: DateTime(2020),
-                      lastDate: DateTime.now(),
+                      lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
                       helpText: 'Seleccionar fecha',
                       cancelText: 'Cancelar',
@@ -8465,7 +9228,7 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final endDate =
-                          controller.ticketEndDate ?? DateTime.now();
+                          controller.ticketEndDate ?? date_utils.AppDateUtils.nowCdmx();
                       controller.setTicketDateRange(date, endDate);
                     }
                   },
@@ -8496,9 +9259,9 @@ class AdminApp extends StatelessWidget {
                   onTap: () async {
                     final date = await showDatePicker(
                       context: context,
-                      initialDate: controller.ticketEndDate ?? DateTime.now(),
+                      initialDate: controller.ticketEndDate ?? date_utils.AppDateUtils.nowCdmx(),
                       firstDate: controller.ticketStartDate ?? DateTime(2020),
-                      lastDate: DateTime.now(),
+                      lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
                       helpText: 'Seleccionar fecha',
                       cancelText: 'Cancelar',
@@ -8506,7 +9269,7 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final startDate =
-                          controller.ticketStartDate ?? DateTime.now();
+                          controller.ticketStartDate ?? date_utils.AppDateUtils.nowCdmx();
                       controller.setTicketDateRange(startDate, date);
                     }
                   },
@@ -8816,19 +9579,23 @@ class AdminApp extends StatelessWidget {
               ),
               const SizedBox(height: AppTheme.spacingMD),
               Text(
-                'No hay tickets para mostrar',
+                controller.tickets.isEmpty
+                    ? 'No hay tickets para mostrar'
+                    : 'Sin coincidencias para la búsqueda',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
-              ),
-              const SizedBox(height: AppTheme.spacingSM),
-              Text(
-                'Los tickets aparecerán aquí cuando se cierren cuentas',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
+              if (controller.tickets.isEmpty) const SizedBox(height: AppTheme.spacingSM),
+              if (controller.tickets.isEmpty)
+                Text(
+                  'Los tickets aparecerán aquí cuando se cierren cuentas',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                  textAlign: TextAlign.center,
+                ),
               const SizedBox(height: AppTheme.spacingLG),
               ElevatedButton.icon(
                 onPressed: () => controller.loadTickets(force: true),
@@ -9021,8 +9788,8 @@ class AdminApp extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (ticket.tableNumber != null)
-                          Text('Mesa ${ticket.tableNumber}')
+                        if (!ticket.isTakeaway)
+                          Text(ticket.tableDisplayLabel)
                         else if (ticket.customerName != null &&
                             ticket.customerName!.isNotEmpty)
                           Text(
@@ -9112,6 +9879,7 @@ class AdminApp extends StatelessWidget {
                             context,
                             ticket,
                             isTablet,
+                            controller,
                           ),
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
@@ -9207,9 +9975,9 @@ class AdminApp extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: AppTheme.fontWeightBold),
                       ),
-                      if (ticket.tableNumber != null)
+                      if (!ticket.isTakeaway)
                         Text(
-                          'Mesa ${ticket.tableNumber}',
+                          ticket.tableDisplayLabel,
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: AppColors.textSecondary),
                         )
@@ -9304,7 +10072,7 @@ class AdminApp extends StatelessWidget {
                   icon: const Icon(Icons.visibility),
                   color: AppColors.primary,
                   onPressed: () =>
-                      _showTicketDetailsModal(context, ticket, isTablet),
+                      _showTicketDetailsModal(context, ticket, isTablet, controller),
                 ),
                 if (ticket.status != payment_models.BillStatus.printed &&
                     ticket.status != payment_models.BillStatus.delivered) ...[
@@ -9349,11 +10117,12 @@ class AdminApp extends StatelessWidget {
     BuildContext context,
     payment_models.BillModel ticket,
     bool isTablet,
+    AdminController controller,
   ) {
     showDialog(
       context: context,
-      builder: (context) =>
-          _TicketDetailsModal(ticket: ticket, isTablet: isTablet),
+      builder: (dialogContext) =>
+          _TicketDetailsModal(ticket: ticket, isTablet: isTablet, controller: controller),
     );
   }
 
@@ -9363,11 +10132,7 @@ class AdminApp extends StatelessWidget {
     payment_models.BillModel ticket,
     AdminController controller,
   ) {
-    final tableText = ticket.tableNumber != null
-        ? 'Mesa ${ticket.tableNumber}'
-        : ticket.isTakeaway
-        ? 'Para llevar'
-        : 'N/A';
+    final tableText = ticket.tableDisplayLabel;
 
     showDialog(
       context: context,
@@ -9610,9 +10375,9 @@ class AdminApp extends StatelessWidget {
                     final date = await showDatePicker(
                       context: context,
                       initialDate:
-                          controller.cashCloseStartDate ?? DateTime.now(),
+                          controller.cashCloseStartDate ?? date_utils.AppDateUtils.nowCdmx(),
                       firstDate: DateTime(2020),
-                      lastDate: DateTime.now(),
+                      lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
                       helpText: 'Seleccionar fecha',
                       cancelText: 'Cancelar',
@@ -9620,7 +10385,7 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final endDate =
-                          controller.cashCloseEndDate ?? DateTime.now();
+                          controller.cashCloseEndDate ?? date_utils.AppDateUtils.nowCdmx();
                       controller.setCashCloseDateRange(date, endDate);
                     }
                   },
@@ -9652,10 +10417,10 @@ class AdminApp extends StatelessWidget {
                     final date = await showDatePicker(
                       context: context,
                       initialDate:
-                          controller.cashCloseEndDate ?? DateTime.now(),
+                          controller.cashCloseEndDate ?? date_utils.AppDateUtils.nowCdmx(),
                       firstDate:
                           controller.cashCloseStartDate ?? DateTime(2020),
-                      lastDate: DateTime.now(),
+                      lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
                       helpText: 'Seleccionar fecha',
                       cancelText: 'Cancelar',
@@ -9663,7 +10428,7 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final startDate =
-                          controller.cashCloseStartDate ?? DateTime.now();
+                          controller.cashCloseStartDate ?? date_utils.AppDateUtils.nowCdmx();
                       controller.setCashCloseDateRange(startDate, date);
                     }
                   },
@@ -9859,7 +10624,9 @@ class AdminApp extends StatelessWidget {
                   ),
                 ],
               ),
-              if (apertura.notaCajero != null &&
+              // Mostrar notas solo cuando es apertura real (no del cierre)
+              if (apertura.totalNeto < 1 &&
+                  apertura.notaCajero != null &&
                   apertura.notaCajero!.isNotEmpty) ...[
                 SizedBox(height: AppTheme.spacingMD),
                 Container(
@@ -9880,6 +10647,39 @@ class AdminApp extends StatelessWidget {
                       Expanded(
                         child: Text(
                           apertura.notaCajero!,
+                          style: TextStyle(
+                            fontSize: isTablet ? 13.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (!isOpen) ...[
+                SizedBox(height: AppTheme.spacingMD),
+                Container(
+                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.warning.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: isTablet ? 18.0 : 16.0,
+                        color: AppColors.warning,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'La caja fue cerrada. Los detalles del cierre están en la tabla inferior.',
                           style: TextStyle(
                             fontSize: isTablet ? 13.0 : 12.0,
                             color: AppColors.textSecondary,
@@ -9962,19 +10762,23 @@ class AdminApp extends StatelessWidget {
               ),
               const SizedBox(height: AppTheme.spacingMD),
               Text(
-                'No hay cierres de caja para mostrar',
+                controller.cashClosures.isEmpty
+                    ? 'No hay cierres de caja para mostrar'
+                    : 'Sin coincidencias para la búsqueda',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
-              ),
-              const SizedBox(height: AppTheme.spacingSM),
-              Text(
-                'Los cierres aparecerán aquí cuando el cajero los envíe',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
+              if (controller.cashClosures.isEmpty) const SizedBox(height: AppTheme.spacingSM),
+              if (controller.cashClosures.isEmpty)
+                Text(
+                  'Los cierres aparecerán aquí cuando el cajero los envíe',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                  textAlign: TextAlign.center,
+                ),
               const SizedBox(height: AppTheme.spacingLG),
               ElevatedButton.icon(
                 onPressed: () => controller.loadCashClosures(force: true),
@@ -9988,9 +10792,7 @@ class AdminApp extends StatelessWidget {
     }
 
     if (isDesktop || isTablet) {
-      return Card(
-        child: _buildCashClosuresTable(context, closures, controller, isTablet),
-      );
+      return _buildCashClosuresTable(context, closures, controller, isTablet);
     } else {
       return Column(
         children: closures.map((closure) {
@@ -10013,22 +10815,26 @@ class AdminApp extends StatelessWidget {
     print(
       '🎨 AdminView: _buildCashClosuresTable - ${closures.length} cierres para mostrar en tabla',
     );
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          headingRowColor: MaterialStateProperty.all(
-            AppColors.primary.withValues(alpha: 0.05),
-          ),
-          dataRowMinHeight: 56,
-          dataRowMaxHeight: 72,
-          columns: [
-            DataColumn(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: MaterialStateProperty.all(
+              Theme.of(context).dividerColor.withValues(alpha: 0.06),
+            ),
+            dataRowColor: MaterialStateProperty.all(Colors.transparent),
+              dataRowMinHeight: 56,
+              dataRowMaxHeight: 72,
+              border: TableBorder(
+                horizontalInside: BorderSide(
+                  color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                ),
+              ),
+              columns: [
+                DataColumn(
               label: Text(
                 'Fecha/Periodo',
                 style: TextStyle(
@@ -10087,6 +10893,18 @@ class AdminApp extends StatelessWidget {
                 message: 'Dinero recibido con tarjeta de crédito/débito',
                 child: Text(
                   'Tarjeta',
+                  style: TextStyle(
+                    fontWeight: AppTheme.fontWeightSemibold,
+                    fontSize: isTablet ? 14 : 12,
+                  ),
+                ),
+              ),
+            ),
+            DataColumn(
+              label: Tooltip(
+                message: 'Notas del cajero al enviar el cierre',
+                child: Text(
+                  'Notas',
                   style: TextStyle(
                     fontWeight: AppTheme.fontWeightSemibold,
                     fontSize: isTablet ? 14 : 12,
@@ -10188,6 +11006,25 @@ class AdminApp extends StatelessWidget {
                     style: TextStyle(
                       fontSize: isTablet ? 13 : 11,
                       color: Colors.blue.shade700,
+                    ),
+                  ),
+                ),
+                DataCell(
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: isTablet ? 200 : 120),
+                    child: Builder(
+                      builder: (_) {
+                        final notas = closure_utils.deduplicateNoteParts(closure.notaCajero);
+                        return Text(
+                          notas.isNotEmpty ? notas : '—',
+                          style: TextStyle(
+                            fontSize: isTablet ? 12 : 10,
+                            color: notas.isNotEmpty ? AppColors.textPrimary : AppColors.textSecondary,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -10319,8 +11156,9 @@ class AdminApp extends StatelessWidget {
               ],
             );
           }).toList(),
-        ),
-      ),
+            ),
+          ),
+        ],
     );
   }
 
@@ -10414,6 +11252,28 @@ class AdminApp extends StatelessWidget {
                 ),
               ],
             ),
+            if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+              SizedBox(height: AppTheme.spacingSM),
+              Divider(height: 1, color: AppColors.border),
+              SizedBox(height: AppTheme.spacingSM),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.note_alt, size: 16, color: Colors.amber.shade700),
+                  SizedBox(width: AppTheme.spacingSM),
+                  Expanded(
+                    child: Text(
+                      closure.notaCajero!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -10592,6 +11452,15 @@ class AdminApp extends StatelessWidget {
                         _formatDate(closure.fecha),
                         Icons.access_time,
                       ),
+                      if (closure.efectivoInicial > 0) ...[
+                        SizedBox(height: AppTheme.spacingSM),
+                        _buildInfoItem(
+                          context,
+                          'Efectivo inicial',
+                          '\$${closure.efectivoInicial.toStringAsFixed(2)}',
+                          Icons.savings,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -10674,18 +11543,62 @@ class AdminApp extends StatelessWidget {
                       isTablet,
                       tooltip: 'Propinas recibidas en efectivo',
                     ),
-                    if (closure.otrosIngresos > 0)
+                    _buildSummaryCard(
+                      'Otros Ingresos',
+                      '\$${closure.otrosIngresos.toStringAsFixed(2)}',
+                      Colors.teal,
+                      isTablet,
+                      tooltip: closure.otrosIngresosTexto ?? 'Otros ingresos adicionales',
+                    ),
+                    if (controller.ivaHabilitado && closure.totalNeto > 0)
                       _buildSummaryCard(
-                        'Otros Ingresos',
-                        '\$${closure.otrosIngresos.toStringAsFixed(2)}',
-                        Colors.teal,
+                        'IVA Total (16%)',
+                        '\$${(closure.totalNeto - closure.totalNeto / 1.16).toStringAsFixed(2)}',
+                        Colors.blue,
                         isTablet,
-                                tooltip:
-                                    closure.otrosIngresosTexto ??
-                                    'Otros ingresos adicionales',
+                        tooltip: 'Impuesto al valor agregado calculado sobre el total',
                       ),
                   ],
                 ),
+                if (controller.ivaHabilitado && closure.totalNeto > 0) ...[
+                  SizedBox(height: AppTheme.spacingMD),
+                  Container(
+                    padding: EdgeInsets.all(AppTheme.spacingMD),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Desglose IVA (16%)',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.blue.shade900,
+                          ),
+                        ),
+                        SizedBox(height: AppTheme.spacingSM),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Subtotal', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary)),
+                            Text('\$${(closure.totalNeto / 1.16).toStringAsFixed(2)}', style: Theme.of(context).textTheme.bodySmall),
+                          ],
+                        ),
+                        SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('IVA (16%)', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary)),
+                            Text('\$${(closure.totalNeto - closure.totalNeto / 1.16).toStringAsFixed(2)}', style: Theme.of(context).textTheme.bodySmall),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 SizedBox(height: AppTheme.spacingMD),
 
                 // Notas del cajero
@@ -10724,11 +11637,31 @@ class AdminApp extends StatelessWidget {
                           ],
                         ),
                         SizedBox(height: AppTheme.spacingSM),
-                        Text(
-                          closure.notaCajero!,
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(color: Colors.amber.shade800),
-                        ),
+                        if (closure.notaCajero!.contains('|'))
+                          ...closure_utils.deduplicateNoteParts(closure.notaCajero)
+                              .split('|')
+                              .map((s) => s.trim())
+                              .where((s) => s.isNotEmpty)
+                              .map((line) => Padding(
+                                    padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('• ', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.amber.shade800)),
+                                        Expanded(
+                                          child: Text(
+                                            line,
+                                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.amber.shade800),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )),
+                        if (!closure.notaCajero!.contains('|'))
+                          Text(
+                            closure.notaCajero!,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.amber.shade800),
+                          ),
                       ],
                     ),
                   ),
@@ -11412,6 +12345,7 @@ class AdminApp extends StatelessWidget {
               child: TextField(
                 decoration: InputDecoration(
                   hintText: 'Buscar por cajero...',
+                  helperText: 'Los resultados se filtran al escribir',
                   prefixIcon: const Icon(Icons.search),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppTheme.radiusMD),
@@ -11579,10 +12513,13 @@ class AdminApp extends StatelessWidget {
               ),
               SizedBox(height: AppTheme.spacingMD),
               Text(
-                'No hay cierres para revisar',
+                controller.cashClosures.isEmpty
+                    ? 'No hay cierres para revisar'
+                    : 'Sin coincidencias para la búsqueda',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -13080,6 +14017,93 @@ class AdminApp extends StatelessWidget {
     ];
   }
 
+  /// Normaliza abreviaturas en notas de pago para mostrarlas claras (TX → Transacción, Auth → Autorización).
+  static String _sanitizePaymentNotes(String notes) {
+    return notes
+        .replaceAll('TX:', 'Transacción:')
+        .replaceAll('Auth:', 'Autorización:');
+  }
+
+  /// Formatea la columna Productos y el texto de Método de pago para tarjeta, transferencia y pago mixto.
+  static ({List<String> products, String paymentMethod})
+      _formatConsumptionPaymentDisplay(
+    payment_models.PaymentModel payment,
+  ) {
+    final products = <String>[];
+    String paymentMethod;
+
+    switch (payment.type) {
+      case payment_models.PaymentType.card:
+        final tipo = (payment.cardMethod ?? '')
+                .toLowerCase()
+                .contains('credito')
+            ? 'crédito'
+            : 'débito';
+        paymentMethod = 'Tarjeta $tipo';
+        final parts = <String>['Tarjeta $tipo'];
+        if (payment.transactionId != null &&
+            payment.transactionId!.isNotEmpty) {
+          parts.add('Transacción: ${payment.transactionId}');
+        }
+        if (payment.authorizationCode != null &&
+            payment.authorizationCode!.toString().trim().isNotEmpty) {
+          parts.add('Autorización: ${payment.authorizationCode}');
+        }
+        if (payment.last4Digits != null &&
+            payment.last4Digits!.toString().trim().isNotEmpty) {
+          parts.add('****${payment.last4Digits}');
+        }
+        products.add(parts.join(' · '));
+        if ((payment.notes ?? '').trim().isNotEmpty) {
+          final obs = _sanitizePaymentNotes(payment.notes!.trim());
+          products.add(obs.length > 200 ? '${obs.substring(0, 200)}…' : obs);
+        }
+        break;
+      case payment_models.PaymentType.transfer:
+        paymentMethod = 'Transferencia';
+        final parts = <String>['Transferencia'];
+        if (payment.bankName != null && payment.bankName!.isNotEmpty) {
+          parts.add(payment.bankName!);
+        }
+        if (payment.reference != null &&
+            payment.reference!.toString().trim().isNotEmpty) {
+          parts.add('Ref: ${payment.reference}');
+        }
+        products.add(parts.join(' · '));
+        if ((payment.notes ?? '').trim().isNotEmpty) {
+          final obs = _sanitizePaymentNotes(payment.notes!.trim());
+          products.add(obs.length > 200 ? '${obs.substring(0, 200)}…' : obs);
+        }
+        break;
+      case payment_models.PaymentType.mixed:
+        paymentMethod = 'Pago mixto';
+        products.add('Pago mixto');
+        if ((payment.notes ?? '').trim().isNotEmpty) {
+          final obs = _sanitizePaymentNotes(payment.notes!.trim());
+          products.add(obs.length > 200 ? '${obs.substring(0, 200)}…' : obs);
+        } else if (payment.cashApplied != null &&
+            payment.cashApplied! > 0) {
+          products.add(
+            'Efectivo \$${payment.cashApplied!.toStringAsFixed(0)} + resto',
+          );
+        }
+        break;
+      default:
+        paymentMethod =
+            payment_models.PaymentType.getTypeText(payment.type);
+        if ((payment.notes ?? '').trim().isNotEmpty) {
+          products.add(_sanitizePaymentNotes(payment.notes!.trim()));
+        } else {
+          products.add(paymentMethod);
+        }
+    }
+
+    if (products.isEmpty) {
+      products.add('Sin detalles');
+    }
+    return (products: products, paymentMethod: paymentMethod);
+  }
+
   List<_ConsumptionRecord> _buildConsumptionRecords(
     AdminController controller,
   ) {
@@ -13093,18 +14117,16 @@ class AdminApp extends StatelessWidget {
       final originLabel = isTakeaway
           ? 'Para llevar'
           : 'Mesa ${payment.tableNumber}';
-      final products = <String>[];
-      if ((payment.notes ?? '').isNotEmpty) {
-        products.add(payment.notes!);
-      }
+      final formatted =
+          _formatConsumptionPaymentDisplay(payment);
 
       return _ConsumptionRecord(
         id: payment.billId,
         originType: isTakeaway ? 'para_llevar' : 'mesa',
         originLabel: originLabel,
-        products: products,
+        products: formatted.products,
         total: controller.formatCurrency(payment.totalAmount),
-        paymentMethod: payment_models.PaymentType.getTypeText(payment.type),
+        paymentMethod: formatted.paymentMethod,
         status: payment.voucherPrinted == true ? 'Cobrado' : 'Por imprimir',
         time: DateFormat('HH:mm').format(payment.timestamp),
         waiter: payment.cashierName,
@@ -13259,6 +14281,62 @@ class AdminApp extends StatelessWidget {
       },
     );
   }
+}
+
+/// Escucha alertas de inventario del controller y muestra un SnackBar al administrador.
+class _InventoryAlertSnackBarListener extends StatefulWidget {
+  final AdminController controller;
+
+  const _InventoryAlertSnackBarListener({required this.controller});
+
+  @override
+  State<_InventoryAlertSnackBarListener> createState() =>
+      _InventoryAlertSnackBarListenerState();
+}
+
+class _InventoryAlertSnackBarListenerState
+    extends State<_InventoryAlertSnackBarListener> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerUpdate);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InventoryAlertSnackBarListener oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onControllerUpdate);
+      widget.controller.addListener(_onControllerUpdate);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerUpdate);
+    super.dispose();
+  }
+
+  void _onControllerUpdate() {
+    final alerts = widget.controller.pendingInventoryAlerts;
+    if (alerts.isEmpty || !mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    for (final a in alerts) {
+      final mensaje = a['mensaje'] as String? ?? 'Alerta de inventario';
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(mensaje),
+          backgroundColor: (a['esSinStock'] == true) ? Colors.red : Colors.orange,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+    widget.controller.markInventoryAlertsAsShown();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 class _SummaryCardData {
@@ -13795,8 +14873,13 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
 class _TicketDetailsModal extends StatefulWidget {
   final payment_models.BillModel ticket;
   final bool isTablet;
+  final AdminController controller;
 
-  const _TicketDetailsModal({required this.ticket, required this.isTablet});
+  const _TicketDetailsModal({
+    required this.ticket,
+    required this.isTablet,
+    required this.controller,
+  });
 
   @override
   State<_TicketDetailsModal> createState() => _TicketDetailsModalState();
@@ -13944,11 +15027,11 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           if (waiterName == null)
             waiterName = ordenData['creadoPorNombre'] as String?;
           
-          // Fecha más antigua
+          // Fecha más antigua (parsear en zona local CDMX como el resto del proyecto)
           final fechaOrdenStr = ordenData['creadoEn'] as String?;
           if (fechaOrdenStr != null) {
             try {
-              final fechaOrden = DateTime.parse(fechaOrdenStr);
+              final fechaOrden = date_utils.AppDateUtils.parseToLocal(fechaOrdenStr);
               final fechaComparar = fechaMasAntigua;
               if (fechaComparar == null || fechaOrden.isBefore(fechaComparar)) {
                 fechaMasAntigua = fechaOrden;
@@ -14093,164 +15176,163 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Encabezado del ticket
+        // ─── Encabezado: restaurante + título + folio + fecha ───
         Center(
           child: Column(
             children: [
               Text(
+                'Restaurante',
+                style: TextStyle(
+                  fontSize: widget.isTablet ? 15.0 : 13.0,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
                 'TICKET DE COBRO',
                 style: TextStyle(
-                  fontSize: widget.isTablet ? 18.0 : 16.0,
+                  fontSize: widget.isTablet ? 16.0 : 14.0,
                   fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
+                  letterSpacing: 0.8,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 2),
               Text(
-                folio,
+                '$folio · ${DateFormat('dd/MM/yyyy HH:mm').format(widget.ticket.createdAt)}',
                 style: TextStyle(
-                  fontSize: widget.isTablet ? 14.0 : 12.0,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                DateFormat('dd/MM/yyyy HH:mm').format(widget.ticket.createdAt),
-                style: TextStyle(
-                  fontSize: widget.isTablet ? 12.0 : 10.0,
+                  fontSize: widget.isTablet ? 11.0 : 10.0,
                   color: AppColors.textSecondary,
                 ),
               ),
             ],
           ),
         ),
-        
-        // Línea punteada
-        Container(
-          margin: const EdgeInsets.symmetric(vertical: 16),
-          height: 1,
-          child: CustomPaint(painter: _DashedLinePainter()),
-        ),
+        const SizedBox(height: 6),
+        Divider(height: 1, color: Colors.grey.shade400),
+        const SizedBox(height: 6),
 
-        // Banner destacado para pedidos para llevar
-        if (clienteNombre != null && mesaCodigo == null) ...[
+        // ─── Cuenta dividida (solo si split) ───
+        if (splitCount > 1) ...[
           Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.blue.shade700,
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.blue.shade900.withValues(alpha: 0.3),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              color: AppColors.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.shopping_bag,
-                  color: Colors.white,
-                  size: widget.isTablet ? 24.0 : 20.0,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '*** PARA LLEVAR ***',
-                  style: TextStyle(
-                    fontSize: widget.isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    letterSpacing: 1.0,
+                Icon(Icons.people_outline, size: 14, color: AppColors.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Cuenta dividida — $splitCount ${splitCount == 1 ? 'persona' : 'personas'}${clienteNombre != null && clienteNombre.isNotEmpty ? ' · Cuenta de: $clienteNombre' : ''}',
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 11.0 : 10.0,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 6),
         ],
 
-        // Información de mesa/cliente
-        if (mesaCodigo != null || clienteNombre != null) ...[
+        // ─── Para llevar (solo si aplica y no es cuenta dividida) ───
+        if (clienteNombre != null && mesaCodigo == null && splitCount <= 1) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade700,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.shopping_bag, color: Colors.white, size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  'PARA LLEVAR',
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 11.0 : 10.0,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+        ],
+
+        // ─── Mesa / Cliente ───
+        if (mesaCodigo != null || (clienteNombre != null && splitCount <= 1)) ...[
           if (mesaCodigo != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 2),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.table_restaurant,
-                    size: 16,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 8),
+                  Icon(Icons.table_restaurant, size: 14, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
                   Text(
                     'Mesa: $mesaCodigo',
                     style: TextStyle(
-                      fontSize: widget.isTablet ? 14.0 : 12.0,
+                      fontSize: widget.isTablet ? 12.0 : 11.0,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
             ),
-          if (clienteNombre != null)
+          if (clienteNombre != null && splitCount <= 1)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.person,
-                        size: 16,
-                        color: AppColors.textSecondary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Cliente: $clienteNombre',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 14.0 : 12.0,
-                        ),
-                      ),
-                    ],
+                  Icon(Icons.person, size: 14, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Cliente: $clienteNombre',
+                    style: TextStyle(fontSize: widget.isTablet ? 12.0 : 11.0),
                   ),
-                  if (clienteTelefono != null &&
-                      clienteTelefono.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.phone,
-                          size: 16,
-                          color: AppColors.textSecondary,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Teléfono: $clienteTelefono',
-                          style: TextStyle(
-                            fontSize: widget.isTablet ? 13.0 : 11.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
                 ],
               ),
             ),
-          const SizedBox(height: 8),
+          if (clienteTelefono != null && clienteTelefono.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                children: [
+                  Icon(Icons.phone, size: 14, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Tel: $clienteTelefono',
+                    style: TextStyle(
+                      fontSize: widget.isTablet ? 11.0 : 10.0,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 6),
         ],
 
-        // Productos
+        Divider(height: 1, color: Colors.grey.shade400),
+        const SizedBox(height: 6),
+
+        // ─── Productos ───
         Container(
-          padding: EdgeInsets.all(widget.isTablet ? 16.0 : 12.0),
+          padding: EdgeInsets.symmetric(
+            horizontal: widget.isTablet ? 8.0 : 6.0,
+            vertical: 6.0,
+          ),
           decoration: BoxDecoration(
             color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(color: Colors.blue.shade200),
           ),
           child: Column(
@@ -14259,12 +15341,12 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
               Text(
                 'Productos',
                 style: TextStyle(
-                  fontSize: widget.isTablet ? 14.0 : 12.0,
+                  fontSize: widget.isTablet ? 12.0 : 11.0,
                   fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
               ...items.map((item) {
                 final cantidad = (item['cantidad'] as num?)?.toInt() ?? 1;
                 final productoNombre =
@@ -14453,14 +15535,17 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           ),
         ),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 6),
+        Divider(height: 1, color: Colors.grey.shade400),
+        const SizedBox(height: 6),
 
-        // Resumen financiero
+        // ─── Resumen ───
         Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.grey.shade300),
           ),
           child: Column(
             children: [
@@ -14470,14 +15555,14 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                   Text(
                     'Subtotal:',
                     style: TextStyle(
-                      fontSize: widget.isTablet ? 14.0 : 12.0,
+                      fontSize: widget.isTablet ? 12.0 : 11.0,
                       color: AppColors.textSecondary,
                     ),
                   ),
                   Text(
                     '\$${subtotal.toStringAsFixed(2)}',
                     style: TextStyle(
-                      fontSize: widget.isTablet ? 14.0 : 12.0,
+                      fontSize: widget.isTablet ? 12.0 : 11.0,
                       color: AppColors.textPrimary,
                     ),
                   ),
@@ -14491,14 +15576,14 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                     Text(
                       'Descuento:',
                       style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        fontSize: widget.isTablet ? 12.0 : 11.0,
                         color: AppColors.textSecondary,
                       ),
                     ),
                     Text(
                       '-\$${descuento.toStringAsFixed(2)}',
                       style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        fontSize: widget.isTablet ? 12.0 : 11.0,
                         fontWeight: FontWeight.w500,
                         color: AppColors.error,
                       ),
@@ -14506,35 +15591,34 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                   ],
                 ),
               ],
-              if (impuesto > 0) ...[
-                const SizedBox(height: 8),
+              if (widget.controller.ivaHabilitado) ...[
+                const SizedBox(height: 4),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Impuesto:',
+                      'IVA (16%):',
                       style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        fontSize: widget.isTablet ? 12.0 : 11.0,
                         color: AppColors.textSecondary,
                       ),
                     ),
                     Text(
                       '\$${impuesto.toStringAsFixed(2)}',
                       style: TextStyle(
-                        fontSize: widget.isTablet ? 14.0 : 12.0,
+                        fontSize: widget.isTablet ? 12.0 : 11.0,
                         color: AppColors.textPrimary,
                       ),
                     ),
                   ],
                 ),
               ],
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.symmetric(vertical: 4),
                 decoration: BoxDecoration(
                   border: Border(
-                    top: BorderSide(color: Colors.grey.shade300, width: 2),
-                    bottom: BorderSide(color: Colors.grey.shade300, width: 2),
+                    top: BorderSide(color: Colors.grey.shade400, width: 1),
                   ),
                 ),
                 child: Row(
@@ -14543,7 +15627,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                     Text(
                       'TOTAL:',
                       style: TextStyle(
-                        fontSize: widget.isTablet ? 18.0 : 16.0,
+                        fontSize: widget.isTablet ? 15.0 : 14.0,
                         fontWeight: FontWeight.bold,
                         color: AppColors.textPrimary,
                       ),
@@ -14551,7 +15635,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                     Text(
                       '\$${total.toStringAsFixed(2)}',
                       style: TextStyle(
-                        fontSize: widget.isTablet ? 18.0 : 16.0,
+                        fontSize: widget.isTablet ? 15.0 : 14.0,
                         fontWeight: FontWeight.bold,
                         color: AppColors.primary,
                       ),
@@ -14560,47 +15644,40 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                 ),
               ),
               if (splitCount > 1) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: EdgeInsets.all(widget.isTablet ? 12.0 : 10.0),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: AppColors.primary.withValues(alpha: 0.3),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Por persona ($splitCount):',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 11.0 : 10.0,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Total por persona (${splitCount} ${splitCount == 1 ? 'persona' : 'personas'}):',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 16.0 : 14.0,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
-                        ),
+                    Text(
+                      '\$${(total / splitCount).toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 12.0 : 11.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
                       ),
-                      Text(
-                        '\$${(total / splitCount).toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 18.0 : 16.0,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ],
           ),
         ),
 
-        // Información de impresión
-        const SizedBox(height: 16),
+        const SizedBox(height: 6),
+        Divider(height: 1, color: Colors.grey.shade400),
+        const SizedBox(height: 6),
+
+        // ─── Impresión y pago ───
         Container(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           decoration: BoxDecoration(
             color: widget.ticket.printedBy != null
                 ? AppColors.success.withValues(alpha: 0.1)
@@ -14637,9 +15714,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         // Método de pago
         if (widget.ticket.paymentMethod != null &&
             widget.ticket.paymentMethod!.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: AppColors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(6),
@@ -14669,9 +15746,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         // Propina
         if (widget.ticket.tipAmount != null &&
             widget.ticket.tipAmount! > 0) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.green.shade50,
               borderRadius: BorderRadius.circular(6),
@@ -14701,9 +15778,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         // Información de pago (banco, referencia, notas)
         if (widget.ticket.paymentNotes != null &&
             widget.ticket.paymentNotes!.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: AppColors.info.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(6),

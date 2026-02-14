@@ -46,7 +46,7 @@ class _RealTimeSalesWebViewState extends State<RealTimeSalesWebView> {
       final pagos = await pagosService.getPagos();
       
       // Filtrar por timeframe
-      final ahora = DateTime.now();
+      final ahora = date_utils.AppDateUtils.nowCdmx();
       DateTime fechaInicio;
       
       switch (_selectedTimeframe) {
@@ -194,7 +194,7 @@ class _RealTimeSalesWebViewState extends State<RealTimeSalesWebView> {
     bool isDesktop,
   ) {
     final stats = controller.dashboardStats;
-    final now = DateTime.now();
+    final now = date_utils.AppDateUtils.nowCdmx();
 
     return Card(
       elevation: 2,

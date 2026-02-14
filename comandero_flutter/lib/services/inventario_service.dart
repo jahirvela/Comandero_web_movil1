@@ -33,6 +33,22 @@ class InventarioService {
     }
   }
 
+  /// Obtener un ítem por código de barras (para escanear y ajustar cantidad).
+  Future<Map<String, dynamic>?> getItemByCodigoBarras(String codigo) async {
+    try {
+      final c = Uri.encodeComponent(codigo.trim());
+      final response = await _api.get('/inventario/items/por-codigo-barras?codigo=$c');
+      if (response.statusCode == 200) {
+        return response.data['data'] as Map<String, dynamic>?;
+      }
+      return null;
+    } catch (e) {
+      if (e is DioException && e.response?.statusCode == 404) return null;
+      print('Error al obtener item por código de barras: $e');
+      return null;
+    }
+  }
+
   /// Crear un nuevo item
   Future<Map<String, dynamic>?> createItem(Map<String, dynamic> data) async {
     try {
@@ -101,10 +117,14 @@ class InventarioService {
     }
   }
 
-  /// Obtener movimientos de inventario
-  Future<List<dynamic>> getMovimientos() async {
+  /// Obtener movimientos de inventario.
+  /// [itemId] opcional: si se pasa, solo se devuelven movimientos de ese ítem.
+  Future<List<dynamic>> getMovimientos({int? itemId}) async {
     try {
-      final response = await _api.get('/inventario/movimientos');
+      final path = itemId != null
+          ? '/inventario/movimientos?itemId=$itemId'
+          : '/inventario/movimientos';
+      final response = await _api.get(path);
       if (response.statusCode == 200) {
         return response.data['data'] ?? [];
       }
@@ -129,7 +149,7 @@ class InventarioService {
     }
   }
 
-  /// Obtener categorías únicas del inventario
+  /// Obtener categorías únicas del inventario (incluye las guardadas en backend)
   Future<List<String>> getCategories() async {
     try {
       final response = await _api.get('/inventario/categorias');
@@ -143,6 +163,26 @@ class InventarioService {
     } catch (e) {
       print('Error al obtener categorías: $e');
       return [];
+    }
+  }
+
+  /// Crear una categoría de inventario en el backend (persistida, no desaparece al recargar)
+  Future<List<String>> createCategory(String nombre) async {
+    try {
+      final response = await _api.post('/inventario/categorias', data: {'nombre': nombre.trim()});
+      if (response.statusCode == 201) {
+        final data = response.data['data'];
+        if (data is List) {
+          return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+        }
+      }
+      throw Exception('El servidor no devolvió la lista de categorías');
+    } on DioException catch (e) {
+      if (e.response != null) {
+        final msg = e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error al crear categoría';
+        throw Exception(msg.toString());
+      }
+      rethrow;
     }
   }
 

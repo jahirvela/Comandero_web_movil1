@@ -1,0 +1,12 @@
+{
+  "printers": [
+    {
+      "id": "principal",
+      "name": "Impresora única (comanda + ticket)",
+      "type": "usb",
+      "documents": ["comanda", "ticket"],
+      "paperWidth": 58,
+      "device": "Thermal Receipt Printer"
+    }
+  ]
+}

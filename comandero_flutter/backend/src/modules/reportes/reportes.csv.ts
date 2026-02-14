@@ -55,6 +55,7 @@ export const generarCSVCorteCaja = (datos: CorteCaja): string => {
     { label: 'Cajero', value: 'cajero' },
     { label: 'Número de Órdenes', value: 'numeroOrdenes' },
     { label: 'Total Ventas', value: (row: CorteCaja) => row.totalVentas.toFixed(2) },
+    { label: 'Total IVA', value: (row: CorteCaja) => row.totalImpuesto.toFixed(2) },
     { label: 'Efectivo', value: (row: CorteCaja) => row.totalEfectivo.toFixed(2) },
     { label: 'Tarjeta', value: (row: CorteCaja) => row.totalTarjeta.toFixed(2) },
     { label: 'Otros', value: (row: CorteCaja) => row.totalOtros.toFixed(2) },

@@ -15,11 +15,11 @@ ticketsRouter.get(
 );
 
 // POST /api/tickets/imprimir
-// Cajero, admin y capitan pueden imprimir tickets
+// Cajero, admin, capitan y mesero (reimprimir en pedidos para llevar) pueden imprimir tickets
 ticketsRouter.post(
   '/imprimir',
   authenticate,
-  requireRoles('administrador', 'cajero', 'capitan'),
+  requireRoles('administrador', 'cajero', 'capitan', 'mesero'),
   imprimirTicketHandler
 );
 

@@ -104,16 +104,13 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
       notes = notes.where((note) => note['status'] == selectedFilter).toList();
     }
 
-    // Filtrar por búsqueda
-    if (searchQuery.isNotEmpty) {
+    // Filtrar por búsqueda solo cuando hay texto
+    final q = searchQuery.trim();
+    if (q.isNotEmpty) {
       notes = notes.where((note) {
-        return note['title'].toLowerCase().contains(
-              searchQuery.toLowerCase(),
-            ) ||
-            note['description'].toLowerCase().contains(
-              searchQuery.toLowerCase(),
-            ) ||
-            note['createdBy'].toLowerCase().contains(searchQuery.toLowerCase());
+        return note['title'].toLowerCase().contains(q.toLowerCase()) ||
+            note['description'].toLowerCase().contains(q.toLowerCase()) ||
+            note['createdBy'].toLowerCase().contains(q.toLowerCase());
       }).toList();
     }
 
@@ -249,6 +246,7 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
         },
         decoration: InputDecoration(
           hintText: "Buscar nota crítica",
+          helperText: "Los resultados se filtran al escribir",
           hintStyle: TextStyle(
             color: AppColors.textSecondary,
             fontSize: isTablet ? 16.0 : 14.0,
@@ -404,7 +402,7 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
     final notes = filteredNotes;
 
     if (notes.isEmpty) {
-      return _buildEmptyState(isTablet);
+      return _buildEmptyState(isTablet, sourceEmpty: criticalNotes.isEmpty);
     }
 
     return Column(
@@ -703,7 +701,7 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
     );
   }
 
-  Widget _buildEmptyState(bool isTablet) {
+  Widget _buildEmptyState(bool isTablet, {bool sourceEmpty = false}) {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isTablet ? 60.0 : 40.0),
@@ -721,7 +719,9 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No hay notas críticas',
+            sourceEmpty
+                ? 'No hay notas críticas'
+                : 'Sin coincidencias para la búsqueda',
             style: TextStyle(
               fontSize: isTablet ? 18.0 : 16.0,
               fontWeight: FontWeight.w600,
@@ -731,7 +731,9 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Las notas críticas aparecerán aquí cuando se creen',
+            sourceEmpty
+                ? 'Las notas críticas aparecerán aquí cuando se creen'
+                : 'Intenta cambiar los filtros o la búsqueda',
             style: TextStyle(
               fontSize: isTablet ? 14.0 : 12.0,
               color: AppColors.textSecondary,
