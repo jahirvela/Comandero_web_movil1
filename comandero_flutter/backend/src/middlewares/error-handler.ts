@@ -103,8 +103,8 @@ export const errorHandler = (err: ApiError, _req: Request, res: Response, _next:
   return res.status(status).json({
     error: err.name || 'internal_error',
     message: err.message || 'Ocurrió un error inesperado',
-    ...(err.details && { details: err.details }),
-    ...(err.stack && { stack: err.stack })
+    ...(err.details != null && typeof err.details === 'object' ? { details: err.details } : {}),
+    ...(typeof err.stack === 'string' ? { stack: err.stack } : {})
   });
 };
 

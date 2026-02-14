@@ -18,7 +18,7 @@ import { formatMxLocale, nowMx, formatMxDate } from '../../config/time.js';
  * 5. Compatible con Node.js moderno
  */
 
-export const generarPDFVentas = (datos: VentasReporte[]): PDFDocument => {
+export const generarPDFVentas = (datos: VentasReporte[]) => {
   const doc = new PDFDocument({ margin: 50 });
 
   // Encabezado
@@ -93,7 +93,7 @@ export const generarPDFVentas = (datos: VentasReporte[]): PDFDocument => {
   return doc;
 };
 
-export const generarPDFTopProductos = (datos: TopProducto[]): PDFDocument => {
+export const generarPDFTopProductos = (datos: TopProducto[]) => {
   const doc = new PDFDocument({ margin: 50 });
 
   doc.fontSize(20).text('Top Productos Vendidos', { align: 'center' });
@@ -143,7 +143,7 @@ export const generarPDFTopProductos = (datos: TopProducto[]): PDFDocument => {
   return doc;
 };
 
-export const generarPDFCorteCaja = (datos: CorteCaja): PDFDocument => {
+export const generarPDFCorteCaja = (datos: CorteCaja) => {
   const doc = new PDFDocument({ margin: 50 });
 
   doc.fontSize(20).text('Corte de Caja', { align: 'center' });
@@ -182,7 +182,7 @@ export const generarPDFCorteCaja = (datos: CorteCaja): PDFDocument => {
   return doc;
 };
 
-export const generarPDFInventario = (datos: InventarioMovimiento[]): PDFDocument => {
+export const generarPDFInventario = (datos: InventarioMovimiento[]) => {
   const doc = new PDFDocument({ margin: 50 });
 
   doc.fontSize(20).text('Reporte de Inventario', { align: 'center' });

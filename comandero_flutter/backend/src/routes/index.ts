@@ -71,7 +71,9 @@ apiRouter.get('/server-info', (_req, res) => {
   const addresses: string[] = [];
   
   for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
+    const ifaceList = interfaces[name];
+    if (!ifaceList) continue;
+    for (const iface of ifaceList) {
       // Solo IPv4, no interno, no loopback
       if (iface.family === 'IPv4' && !iface.internal) {
         const ip = iface.address;

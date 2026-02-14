@@ -168,7 +168,7 @@ export const obtenerInsumoPorCodigoBarras = async (codigoBarras: string) => {
 // Función auxiliar para verificar y crear la columna categoria si no existe
 const ensureCategoriaColumnExists = async () => {
   try {
-    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+    const [columns] = await pool.query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.COLUMNS
@@ -178,7 +178,7 @@ const ensureCategoriaColumnExists = async () => {
       `
     );
 
-    if (columns.length === 0) {
+    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
       // La columna no existe, crearla
       await pool.execute(
         `
@@ -197,7 +197,7 @@ const ensureCategoriaColumnExists = async () => {
 // Función auxiliar para verificar y crear la columna proveedor si no existe
 const ensureProveedorColumnExists = async () => {
   try {
-    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+    const [columns] = await pool.query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.COLUMNS
@@ -207,7 +207,7 @@ const ensureProveedorColumnExists = async () => {
       `
     );
 
-    if (columns.length === 0) {
+    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
       // La columna no existe, crearla
       await pool.execute(
         `
@@ -226,7 +226,7 @@ const ensureProveedorColumnExists = async () => {
 // Función auxiliar para verificar y crear la columna stock_maximo si no existe
 const ensureStockMaximoColumnExists = async () => {
   try {
-    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+    const [columns] = await pool.query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.COLUMNS
@@ -236,7 +236,7 @@ const ensureStockMaximoColumnExists = async () => {
       `
     );
 
-    if (columns.length === 0) {
+    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
       // La columna no existe, crearla
       await pool.execute(
         `
@@ -254,7 +254,7 @@ const ensureStockMaximoColumnExists = async () => {
 
 const ensureCodigoBarrasColumnExists = async () => {
   try {
-    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+    const [columns] = await pool.query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.COLUMNS
@@ -263,7 +263,7 @@ const ensureCodigoBarrasColumnExists = async () => {
         AND COLUMN_NAME = 'codigo_barras'
       `
     );
-    if (columns.length === 0) {
+    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
       await pool.execute(
         `
         ALTER TABLE inventario_item
@@ -282,7 +282,7 @@ const ensureCodigoBarrasColumnExists = async () => {
 /** Crea columnas contenido_por_pieza y unidad_contenido si no existen (productos por pieza con equivalencia en kg/L). */
 const ensureContenidoPorPiezaColumnsExist = async () => {
   try {
-    const [columns] = await pool.query<Array<{ COLUMN_NAME: string }>>(
+    const [columns] = await pool.query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.COLUMNS
@@ -291,7 +291,7 @@ const ensureContenidoPorPiezaColumnsExist = async () => {
         AND COLUMN_NAME = 'contenido_por_pieza'
       `
     );
-    if (columns.length === 0) {
+    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
       await pool.execute(
         `ALTER TABLE inventario_item ADD COLUMN contenido_por_pieza DECIMAL(12,4) NULL COMMENT 'Peso o volumen por pieza (ej. 5 para envase 5 kg)' AFTER activo`
       );
@@ -345,13 +345,14 @@ export const crearInsumo = async ({
       // Esto evita problemas con el constraint único ux_inventario_nombre
       try {
         // Obtener IDs de registros existentes con ese nombre
-        const [existingRows] = await conn.query<Array<{ id: number }>>(
+        const [existingRows] = await conn.query(
           `SELECT id FROM inventario_item WHERE nombre = :nombre`,
           { nombre }
         );
         
-        if (existingRows.length > 0) {
-          const existingIds = existingRows.map(row => row.id);
+        const existingArr = existingRows as Array<{ id: number }>;
+        if (existingArr.length > 0) {
+          const existingIds = existingArr.map(row => row.id);
           console.log(`⚠️ Encontrados ${existingIds.length} registro(s) existente(s) con el nombre "${nombre}". Eliminando antes de crear uno nuevo.`);
           
           // Eliminar referencias en producto_ingrediente
@@ -739,7 +740,7 @@ export const crearCategoriaInventario = async (nombre: string): Promise<string[]
 export const obtenerCategoriasUnicas = async () => {
   await ensureInventarioCategoriaTableExists();
   try {
-    const [rows] = await pool.query<{ nombre: string }[]>(
+    const [rows] = await pool.query(
       `
       (
         SELECT DISTINCT categoria AS nombre
@@ -754,14 +755,14 @@ export const obtenerCategoriasUnicas = async () => {
       `
     );
 
-    return rows.map((row) => (row.nombre ?? '').trim()).filter(cat => cat !== '');
+    return (rows as Array<{ nombre: string }>).map((row) => (row.nombre ?? '').trim()).filter(cat => cat !== '');
   } catch (error: any) {
     if (error.code === 'ER_BAD_FIELD_ERROR' || error.message?.includes('Unknown column')) {
       try {
-        const [rows] = await pool.query<{ categoria: string }[]>(
+        const [rows] = await pool.query(
           `SELECT DISTINCT categoria FROM inventario_item WHERE activo = 1 AND categoria IS NOT NULL AND categoria != '' ORDER BY categoria`
         );
-        return rows.map((row) => row.categoria ?? '').filter(cat => cat !== '');
+        return (rows as Array<{ categoria: string }>).map((row) => row.categoria ?? '').filter(cat => cat !== '');
       } catch {
         return [];
       }

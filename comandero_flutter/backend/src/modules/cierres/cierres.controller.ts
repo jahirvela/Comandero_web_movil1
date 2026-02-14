@@ -15,7 +15,7 @@ export const listarCierresCajaHandler = async (req: Request, res: Response): Pro
     
     // Si el usuario es cajero, solo puede ver sus propios cierres
     const usuarioId = req.user?.id;
-    const usuarioRol = req.user?.rol;
+    const usuarioRol = req.user?.rol ?? req.user?.roles?.[0];
     const cajeroIdFiltro = usuarioRol === 'cajero' ? usuarioId : cajeroId;
 
     const cierres = await obtenerCierresCaja(fechaInicio, fechaFin, cajeroIdFiltro);
@@ -45,7 +45,7 @@ export const crearCierreCajaHandler = async (req: Request, res: Response, next: 
     }
 
     const usuarioId = req.user?.id;
-    const usuarioNombre = req.user?.nombre || req.user?.username || 'Cajero';
+    const usuarioNombre = req.user?.nombre ?? req.user?.username ?? 'Cajero';
     const cierre = await crearNuevoCierreCaja(parsed.data, usuarioId);
 
     // Emitir evento de Socket.IO para notificar a administradores y otros clientes
@@ -94,7 +94,7 @@ export const actualizarEstadoCierreHandler = async (req: Request, res: Response,
     const usuarioRol = Array.isArray(userRoles) && userRoles.length > 0 
       ? String(userRoles[0]).toLowerCase() 
       : null;
-    const usuarioNombre = req.user?.nombre || req.user?.username || 'Usuario';
+    const usuarioNombre = req.user?.nombre ?? req.user?.username ?? 'Usuario';
 
     // Si el usuario es cajero, solo puede descartar aclaraciones (clarification -> approved)
     if (usuarioRol === 'cajero') {

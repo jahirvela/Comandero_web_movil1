@@ -37,7 +37,8 @@ export const crearPagoController = async (req: Request, res: Response, next: Nex
     const input = crearPagoSchema.parse(req.body);
     console.log('✅ CrearPagoController - Datos validados:', JSON.stringify(input, null, 2));
     
-    const pago = await crearNuevoPago(input, req.user?.id);
+    const empleadoNombre = req.user?.nombre ?? req.user?.username ?? 'Cajero';
+    const pago = await crearNuevoPago(input, req.user?.id, empleadoNombre);
     res.status(201).json({ data: pago });
   } catch (error: any) {
     // Log detallado del error para debugging

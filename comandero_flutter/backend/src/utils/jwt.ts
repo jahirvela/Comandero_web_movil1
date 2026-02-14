@@ -18,18 +18,18 @@ export interface VerifyResult<T> {
 export const signAccessToken = (payload: TokenUserPayload) => {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
     expiresIn: env.JWT_ACCESS_EXPIRES_IN
-  });
+  } as jwt.SignOptions);
 };
 
 export const signRefreshToken = (payload: TokenUserPayload) => {
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, {
     expiresIn: env.JWT_REFRESH_EXPIRES_IN
-  });
+  } as jwt.SignOptions);
 };
 
 export const verifyAccessToken = (token: string): VerifyResult<TokenUserPayload> => {
   try {
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as TokenUserPayload;
+    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as unknown as TokenUserPayload;
     return { valid: true, decoded };
   } catch (error) {
     return { valid: false, error: error as Error };
@@ -38,7 +38,7 @@ export const verifyAccessToken = (token: string): VerifyResult<TokenUserPayload>
 
 export const verifyRefreshToken = (token: string): VerifyResult<TokenUserPayload> => {
   try {
-    const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET) as TokenUserPayload;
+    const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET) as unknown as TokenUserPayload;
     return { valid: true, decoded };
   } catch (error) {
     return { valid: false, error: error as Error };

@@ -35,7 +35,7 @@ const mapRowsToUser = (rows: UserRow[]): UserWithRoles | null => {
 export const findUserByUsername = async (username: string) => {
   try {
     // Intentar consulta con roles primero
-    const [rows] = await pool.query<UserRow[]>(
+    const [rows] = await pool.query(
       `
       SELECT
         u.id,
@@ -53,11 +53,11 @@ export const findUserByUsername = async (username: string) => {
       { username }
     );
 
-    return mapRowsToUser(rows);
+    return mapRowsToUser(rows as UserRow[]);
   } catch (error: any) {
     // Si las tablas de roles no existen, hacer consulta simple
     if (error.code === 'ER_NO_SUCH_TABLE' || error.message?.includes("doesn't exist")) {
-      const [rows] = await pool.query<UserRow[]>(
+      const [rows] = await pool.query(
         `
         SELECT
           u.id,
@@ -73,7 +73,7 @@ export const findUserByUsername = async (username: string) => {
         { username }
       );
 
-      return mapRowsToUser(rows);
+      return mapRowsToUser(rows as UserRow[]);
     }
     throw error;
   }
@@ -82,7 +82,7 @@ export const findUserByUsername = async (username: string) => {
 export const findUserById = async (id: number) => {
   try {
     // Intentar consulta con roles primero
-    const [rows] = await pool.query<UserRow[]>(
+    const [rows] = await pool.query(
       `
       SELECT
         u.id,
@@ -100,11 +100,11 @@ export const findUserById = async (id: number) => {
       { id }
     );
 
-    return mapRowsToUser(rows);
+    return mapRowsToUser(rows as UserRow[]);
   } catch (error: any) {
     // Si las tablas de roles no existen, hacer consulta simple
     if (error.code === 'ER_NO_SUCH_TABLE' || error.message?.includes("doesn't exist")) {
-      const [rows] = await pool.query<UserRow[]>(
+      const [rows] = await pool.query(
         `
         SELECT
           u.id,
@@ -120,7 +120,7 @@ export const findUserById = async (id: number) => {
         { id }
       );
 
-      return mapRowsToUser(rows);
+      return mapRowsToUser(rows as UserRow[]);
     }
     throw error;
   }
