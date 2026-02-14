@@ -3,7 +3,7 @@ import { logger } from '../../config/logger.js';
 import { getCharsPerLine, type PaperWidth } from '../../config/printers.config.js';
 import { createPrinter, createPrinterFromConfig } from '../tickets/tickets.printer.js';
 import { formatMxLocale, nowMx } from '../../config/time.js';
-import type { OrdenDetalle } from '../ordenes/ordenes.service.js';
+import type { OrdenDetalle } from '../../types/ordenes.js';
 
 /** Parte un texto en líneas por ancho máximo (corte por espacios cuando sea posible). */
 function wrap(text: string, maxLen: number): string[] {

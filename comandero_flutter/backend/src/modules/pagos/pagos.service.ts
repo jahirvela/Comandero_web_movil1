@@ -33,7 +33,7 @@ export const obtenerPago = async (id: number) => {
   return pago;
 };
 
-export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number) => {
+export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number, empleadoNombre?: string) => {
   const orden = await obtenerOrdenBasePorId(input.ordenId);
   if (!orden) {
     throw notFound('Orden no encontrada');
@@ -129,7 +129,7 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number) 
         const ordenActualizada = await obtenerOrdenDetalle(ordenId);
         
         // Emitir evento de orden actualizada
-        await emitOrderUpdated(ordenActualizada, usuarioId, pago?.empleadoNombre || 'Cajero', 'cajero', 'Orden pagada');
+        await emitOrderUpdated(ordenActualizada, usuarioId, empleadoNombre ?? 'Cajero', 'cajero', 'Orden pagada');
         
         // Emitir alerta de pago
         emitPaymentAlert(ordenId, ordenData.total);
@@ -146,7 +146,7 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number) 
             total: ordenData.total,
             status: 'pending',
             createdAt: nowMxISO(),
-            cashierName: pago?.empleadoNombre || 'Cajero',
+            cashierName: empleadoNombre ?? 'Cajero',
           });
         }
       }
@@ -167,7 +167,7 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number) 
       total: totalAgrupado,
       status: 'pending',
       createdAt: nowMxISO(),
-      cashierName: pagosCreados[0]?.pago?.empleadoNombre || 'Cajero',
+      cashierName: empleadoNombre ?? 'Cajero',
       isGrouped: true, // Flag para indicar que es una cuenta agrupada
     });
   }

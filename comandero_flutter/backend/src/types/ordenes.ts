@@ -41,5 +41,8 @@ export interface OrdenDetalle {
   items: OrdenItemDetalle[];
   estimatedTime?: number | null;
   pickupTime?: string | null;
+  tiempoEstimadoPreparacion?: number | null;
+  creadoPorNombre?: string | null;
+  notas?: Array<{ contenido?: string }> | null;
 }
 

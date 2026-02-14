@@ -13,7 +13,7 @@ export const imprimirTicketHandler = async (req: Request, res: Response): Promis
     }
 
     const usuarioId = req.user?.id;
-    const usuarioNombre = req.user?.nombre || req.user?.username || 'Cajero';
+    const usuarioNombre = req.user?.nombre ?? req.user?.username ?? 'Cajero';
     if (!usuarioId) {
       throw badRequest('Usuario no autenticado');
     }
