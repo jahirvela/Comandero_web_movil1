@@ -25,59 +25,63 @@ class AuthService {
         // El backend devuelve directamente { user: {...}, tokens: {...} }
         // Verificar que tenga la estructura esperada
         if (data != null && data['user'] != null && data['tokens'] != null) {
+          // Extraer tokens como String no nulos (evita "Null check operator" en web/storage)
+          final tokens = data['tokens'] as Map<String, dynamic>?;
+          final accessToken = tokens?['accessToken']?.toString() ?? '';
+          final refreshToken = tokens?['refreshToken']?.toString() ?? '';
+          if (accessToken.isEmpty || refreshToken.isEmpty) {
+            print('❌ Error: Respuesta del servidor sin accessToken o refreshToken');
+            return null;
+          }
+
           final storage = const FlutterSecureStorage();
           
           // CRÍTICO: Limpiar tokens anteriores ANTES de guardar los nuevos
-          // Esto asegura que no quede un token viejo que pueda causar problemas
           print('🔄 AuthService: Limpiando tokens anteriores antes de guardar nuevos...');
-          await storage.delete(key: 'accessToken');
-          await storage.delete(key: 'refreshToken');
-          await storage.delete(key: 'userId');
-          await storage.delete(key: 'userRole');
-          await storage.delete(key: 'userName');
-          await storage.delete(key: 'userNombre');
-          await storage.delete(key: 'isLoggedIn');
+          try {
+            await storage.delete(key: 'accessToken');
+            await storage.delete(key: 'refreshToken');
+            await storage.delete(key: 'userId');
+            await storage.delete(key: 'userRole');
+            await storage.delete(key: 'userName');
+            await storage.delete(key: 'userNombre');
+            await storage.delete(key: 'isLoggedIn');
+            await Future.delayed(const Duration(milliseconds: 200));
+          } catch (e) {
+            print('⚠️ AuthService: Error al limpiar storage (continuando): $e');
+          }
           
-          // Esperar un momento para que las eliminaciones se completen
-          await Future.delayed(const Duration(milliseconds: 200));
-          
-          // Guardar los nuevos tokens
+          // Guardar los nuevos tokens (nunca pasar null a write; en web puede fallar)
           print('💾 AuthService: Guardando nuevos tokens...');
-          await storage.write(
-            key: 'accessToken',
-            value: data['tokens']['accessToken'],
-          );
+          try {
+            await storage.write(key: 'accessToken', value: accessToken);
+            await storage.write(key: 'refreshToken', value: refreshToken);
+          } catch (e) {
+            print('❌ AuthService: Error al guardar tokens: $e');
+            throw Exception('No se pudo guardar la sesión en este navegador. Prueba en modo incógnito o otro navegador.');
+          }
           
-          await storage.write(
-            key: 'refreshToken',
-            value: data['tokens']['refreshToken'],
-          );
-          
-          // CRÍTICO: Esperar suficiente tiempo para asegurar que el token se guarde completamente
-          // FlutterSecureStorage en web puede tener un delay significativo
           await Future.delayed(const Duration(milliseconds: 500));
           
-          // Verificar que el token se guardó correctamente
           final savedToken = await storage.read(key: 'accessToken');
-          if (savedToken == null || savedToken != data['tokens']['accessToken']) {
+          if (savedToken == null || savedToken != accessToken) {
             print('⚠️ AuthService: El token no se guardó correctamente, reintentando...');
-            await storage.write(
-              key: 'accessToken',
-              value: data['tokens']['accessToken'],
-            );
-            await Future.delayed(const Duration(milliseconds: 300));
-            
-            // Verificar nuevamente
+            try {
+              await storage.write(key: 'accessToken', value: accessToken);
+              await Future.delayed(const Duration(milliseconds: 300));
+            } catch (e) {
+              print('⚠️ AuthService: Reintento de guardado falló: $e');
+            }
             final savedToken2 = await storage.read(key: 'accessToken');
-            if (savedToken2 == null || savedToken2 != data['tokens']['accessToken']) {
-              print('❌ AuthService: Error crítico - No se pudo guardar el token después de múltiples intentos');
+            if (savedToken2 == null || savedToken2 != accessToken) {
+              print('❌ AuthService: No se pudo guardar el token después de múltiples intentos');
               throw Exception('Error: No se pudo guardar el token en storage');
             }
           }
 
-          // Verificación final: decodificar el token guardado para confirmar que es correcto
+          final tokenToVerify = savedToken ?? await storage.read(key: 'accessToken');
           try {
-            final parts = savedToken?.split('.') ?? [];
+            final parts = (tokenToVerify ?? '').split('.');
             if (parts.length >= 2) {
               final payload = parts[1];
               final base64Payload = payload.replaceAll('-', '+').replaceAll('_', '/');
@@ -89,7 +93,7 @@ class AuthService {
               print('✅ AuthService: Token guardado y verificado - userId: $tokenUserId, username: $tokenUsername');
             }
           } catch (e) {
-            print('⚠️ AuthService: No se pudo decodificar el token guardado para verificación: $e');
+            print('⚠️ AuthService: No se pudo decodificar el token para verificación: $e');
           }
 
           print('✅ AuthService: Tokens guardados correctamente');
