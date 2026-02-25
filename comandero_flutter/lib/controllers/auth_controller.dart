@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/auth_service.dart';
+import '../services/auth_storage.dart';
 import '../services/socket_service.dart';
 import '../utils/logger.dart';
 
 class AuthController extends ChangeNotifier {
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
   final AuthService _authService = AuthService();
 
   bool _isLoggedIn = false;
@@ -52,15 +52,15 @@ class AuthController extends ChangeNotifier {
         // Guardar información del usuario en paralelo
         AppLogger.debug('Guardando información del usuario...');
         await Future.wait([
-          _storage.write(key: 'isLoggedIn', value: 'true'),
-          _storage.write(key: 'userRole', value: _userRole),
-          _storage.write(key: 'userName', value: _userName),
-          _storage.write(key: 'userId', value: _userId),
-          _storage.write(key: 'userNombre', value: user['nombre'] ?? ''),
+          _storage.write('isLoggedIn', 'true'),
+          _storage.write('userRole', _userRole),
+          _storage.write('userName', _userName),
+          _storage.write('userId', _userId),
+          _storage.write('userNombre', user['nombre'] ?? ''),
         ]);
 
         // Verificar token una sola vez (optimizado)
-        final currentToken = await _storage.read(key: 'accessToken');
+        final currentToken = await _storage.read('accessToken');
         if (currentToken == null || currentToken.isEmpty) {
           AppLogger.error('Token no disponible después del login');
           throw Exception('Error: Token no disponible después del login');
@@ -97,9 +97,9 @@ class AuthController extends ChangeNotifier {
     _userId = '';
 
     // Preservar flags importantes ANTES de limpiar
-    final clearedHistory = await _storage.read(key: 'cleared_table_history');
-    final completedOrders = await _storage.read(key: 'cocinero_completed_orders');
-    final sentToCashierOrders = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+    final clearedHistory = await _storage.read('cleared_table_history');
+    final completedOrders = await _storage.read('cocinero_completed_orders');
+    final sentToCashierOrders = await _storage.read('mesero_sent_to_cashier_orders');
 
     // Desconectar Socket.IO y limpiar en paralelo (optimizado)
     AppLogger.debug('Desconectando Socket.IO y limpiando storage...');
@@ -108,26 +108,26 @@ class AuthController extends ChangeNotifier {
     
     // Eliminar datos de autenticación en paralelo
     await Future.wait([
-      _storage.delete(key: 'accessToken'),
-      _storage.delete(key: 'refreshToken'),
-      _storage.delete(key: 'userId'),
-      _storage.delete(key: 'userRole'),
-      _storage.delete(key: 'userName'),
-      _storage.delete(key: 'userNombre'),
-      _storage.delete(key: 'isLoggedIn'),
-      _storage.delete(key: 'station'),
+      _storage.delete('accessToken'),
+      _storage.delete('refreshToken'),
+      _storage.delete('userId'),
+      _storage.delete('userRole'),
+      _storage.delete('userName'),
+      _storage.delete('userNombre'),
+      _storage.delete('isLoggedIn'),
+      _storage.delete('station'),
     ]);
     
     // Restaurar flags que deben persistir entre sesiones (si existían)
     final restoreOps = <Future>[];
     if (clearedHistory != null && clearedHistory.isNotEmpty && clearedHistory != '{}') {
-      restoreOps.add(_storage.write(key: 'cleared_table_history', value: clearedHistory));
+      restoreOps.add(_storage.write('cleared_table_history', clearedHistory));
     }
     if (completedOrders != null && completedOrders.isNotEmpty && completedOrders != '[]') {
-      restoreOps.add(_storage.write(key: 'cocinero_completed_orders', value: completedOrders));
+      restoreOps.add(_storage.write('cocinero_completed_orders', completedOrders));
     }
     if (sentToCashierOrders != null && sentToCashierOrders.isNotEmpty) {
-      restoreOps.add(_storage.write(key: 'mesero_sent_to_cashier_orders', value: sentToCashierOrders));
+      restoreOps.add(_storage.write('mesero_sent_to_cashier_orders', sentToCashierOrders));
     }
     if (restoreOps.isNotEmpty) {
       await Future.wait(restoreOps);
@@ -141,11 +141,11 @@ class AuthController extends ChangeNotifier {
     try {
       // Leer todas las claves en paralelo (optimizado)
       final values = await Future.wait([
-        _storage.read(key: 'isLoggedIn'),
-        _storage.read(key: 'userRole'),
-        _storage.read(key: 'userName'),
-        _storage.read(key: 'userId'),
-        _storage.read(key: 'accessToken'),
+        _storage.read('isLoggedIn'),
+        _storage.read('userRole'),
+        _storage.read('userName'),
+        _storage.read('userId'),
+        _storage.read('accessToken'),
       ]);
 
       final isLoggedIn = values[0];

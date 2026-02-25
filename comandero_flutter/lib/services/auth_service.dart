@@ -1,12 +1,13 @@
 import 'dart:convert';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:dio/dio.dart';
 import 'api_service.dart';
 import '../config/api_config.dart';
+import 'auth_storage.dart';
 
 /// Servicio de autenticación que se conecta al backend
 class AuthService {
   final ApiService _api = ApiService();
+  final AuthStorage _storage = AuthStorage();
 
   /// Login con username y password
   Future<Map<String, dynamic>?> login(String username, String password) async {
@@ -34,28 +35,26 @@ class AuthService {
             return null;
           }
 
-          final storage = const FlutterSecureStorage();
-          
           // CRÍTICO: Limpiar tokens anteriores ANTES de guardar los nuevos
           print('🔄 AuthService: Limpiando tokens anteriores antes de guardar nuevos...');
           try {
-            await storage.delete(key: 'accessToken');
-            await storage.delete(key: 'refreshToken');
-            await storage.delete(key: 'userId');
-            await storage.delete(key: 'userRole');
-            await storage.delete(key: 'userName');
-            await storage.delete(key: 'userNombre');
-            await storage.delete(key: 'isLoggedIn');
+            await _storage.delete('accessToken');
+            await _storage.delete('refreshToken');
+            await _storage.delete('userId');
+            await _storage.delete('userRole');
+            await _storage.delete('userName');
+            await _storage.delete('userNombre');
+            await _storage.delete('isLoggedIn');
             await Future.delayed(const Duration(milliseconds: 200));
           } catch (e) {
             print('⚠️ AuthService: Error al limpiar storage (continuando): $e');
           }
           
-          // Guardar los nuevos tokens (nunca pasar null a write; en web puede fallar)
+          // Guardar los nuevos tokens (en web usamos SharedPreferences por fallos de FlutterSecureStorage)
           print('💾 AuthService: Guardando nuevos tokens...');
           try {
-            await storage.write(key: 'accessToken', value: accessToken);
-            await storage.write(key: 'refreshToken', value: refreshToken);
+            await _storage.write('accessToken', accessToken);
+            await _storage.write('refreshToken', refreshToken);
           } catch (e) {
             print('❌ AuthService: Error al guardar tokens: $e');
             throw Exception('No se pudo guardar la sesión en este navegador. Prueba en modo incógnito o otro navegador.');
@@ -63,23 +62,23 @@ class AuthService {
           
           await Future.delayed(const Duration(milliseconds: 500));
           
-          final savedToken = await storage.read(key: 'accessToken');
+          final savedToken = await _storage.read('accessToken');
           if (savedToken == null || savedToken != accessToken) {
             print('⚠️ AuthService: El token no se guardó correctamente, reintentando...');
             try {
-              await storage.write(key: 'accessToken', value: accessToken);
+              await _storage.write('accessToken', accessToken);
               await Future.delayed(const Duration(milliseconds: 300));
             } catch (e) {
               print('⚠️ AuthService: Reintento de guardado falló: $e');
             }
-            final savedToken2 = await storage.read(key: 'accessToken');
+            final savedToken2 = await _storage.read('accessToken');
             if (savedToken2 == null || savedToken2 != accessToken) {
               print('❌ AuthService: No se pudo guardar el token después de múltiples intentos');
               throw Exception('Error: No se pudo guardar el token en storage');
             }
           }
 
-          final tokenToVerify = savedToken ?? await storage.read(key: 'accessToken');
+          final tokenToVerify = savedToken ?? await _storage.read('accessToken');
           try {
             final parts = (tokenToVerify ?? '').split('.');
             if (parts.length >= 2) {
@@ -182,16 +181,12 @@ class AuthService {
 
       if (response.statusCode == 200) {
         final data = response.data;
-        if (data['tokens'] != null) {
-          final storage = const FlutterSecureStorage();
-          await storage.write(
-            key: 'accessToken',
-            value: data['tokens']['accessToken'],
-          );
-          await storage.write(
-            key: 'refreshToken',
-            value: data['tokens']['refreshToken'],
-          );
+        final tokens = data['tokens'] as Map<String, dynamic>?;
+        final access = tokens?['accessToken']?.toString() ?? '';
+        final refresh = tokens?['refreshToken']?.toString() ?? '';
+        if (access.isNotEmpty && refresh.isNotEmpty) {
+          await _storage.write('accessToken', access);
+          await _storage.write('refreshToken', refresh);
           return true;
         }
       }
