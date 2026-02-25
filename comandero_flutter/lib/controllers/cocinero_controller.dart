@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../services/auth_storage.dart';
 import '../models/order_model.dart';
 import '../models/kitchen_alert.dart';
 import '../services/ordenes_service.dart';
@@ -49,7 +49,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   final Set<String> _completedOrderIds = {};
 
   // Storage para persistir órdenes completadas
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
 
   // Filtros
   String _selectedStation = 'todas';
@@ -147,8 +147,8 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     final socketService = SocketService();
 
     // Verificar que el rol sea cocinero
-    final storedRole = await _storage.read(key: 'userRole');
-    final storedUserId = await _storage.read(key: 'userId');
+    final storedRole = await _storage.read('userRole');
+    final storedUserId = await _storage.read('userId');
     String? storedRoleLower = storedRole
         ?.toLowerCase()
         .replaceAll('á', 'a')
@@ -285,7 +285,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   Future<void> _loadCompletedOrders() async {
     try {
       final completedOrdersJson =
-          await _storage.read(key: 'cocinero_completed_orders') ?? '[]';
+          await _storage.read('cocinero_completed_orders') ?? '[]';
       // Parsear JSON simple: ["1","2","3"]
       if (completedOrdersJson != '[]' && completedOrdersJson.isNotEmpty) {
         final cleaned = completedOrdersJson
@@ -331,13 +331,13 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           .toList();
 
       if (ids.isEmpty) {
-        await _storage.write(key: 'cocinero_completed_orders', value: '[]');
+        await _storage.write('cocinero_completed_orders', '[]');
         print('💾 Cocinero: No hay órdenes completadas para guardar');
         return;
       }
 
       final json = '["${ids.join('","')}"]';
-      await _storage.write(key: 'cocinero_completed_orders', value: json);
+      await _storage.write('cocinero_completed_orders', json);
       print(
         '💾 Cocinero: ${ids.length} órdenes completadas guardadas: ${ids.take(10).toList()}',
       );
@@ -367,7 +367,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       );
 
       // Agregar token de autenticación
-      final token = await _storage.read(key: 'accessToken');
+      final token = await _storage.read('accessToken');
       if (token != null) {
         dio.options.headers['Authorization'] = 'Bearer $token';
       }
@@ -1794,7 +1794,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     try {
       final alertaIdInt = int.tryParse(alertId);
       if (alertaIdInt != null) {
-        final token = await _storage.read(key: 'accessToken');
+        final token = await _storage.read('accessToken');
         if (token != null) {
           final dio = Dio(
             BaseOptions(
@@ -1823,7 +1823,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   Future<void> clearAlerts() async {
     // Marcar todas las alertas como leídas en el backend
     try {
-      final token = await _storage.read(key: 'accessToken');
+      final token = await _storage.read('accessToken');
       if (token != null) {
         final dio = Dio(
           BaseOptions(

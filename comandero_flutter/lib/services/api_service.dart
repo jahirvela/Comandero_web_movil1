@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/api_config.dart';
+import 'auth_storage.dart';
 
 /// Servicio base para todas las peticiones HTTP al backend
 /// 
@@ -20,7 +20,7 @@ class ApiService {
   }
 
   late final Dio _dio;
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
 
   /// Inicializar Dio con configuración optimizada
   void _initializeDio() {
@@ -48,23 +48,23 @@ class ApiService {
 
   /// Obtener el token de acceso almacenado
   Future<String?> _getAccessToken() async {
-    return await _storage.read(key: 'accessToken');
+    return await _storage.read('accessToken');
   }
 
   /// Guardar el token de acceso
   Future<void> _saveAccessToken(String token) async {
-    await _storage.write(key: 'accessToken', value: token);
+    await _storage.write('accessToken', token);
   }
 
   /// Guardar el refresh token
   Future<void> _saveRefreshToken(String token) async {
-    await _storage.write(key: 'refreshToken', value: token);
+    await _storage.write('refreshToken', token);
   }
 
   /// Limpiar tokens almacenados
   Future<void> clearTokens() async {
-    await _storage.delete(key: 'accessToken');
-    await _storage.delete(key: 'refreshToken');
+    await _storage.delete('accessToken');
+    await _storage.delete('refreshToken');
   }
 
   /// Verificar si un error es recuperable (debe reintentar)
@@ -123,7 +123,7 @@ class ApiService {
           // Si el token expiró (401), intentar refrescar
           if (error.response?.statusCode == 401) {
             try {
-              final refreshToken = await _storage.read(key: 'refreshToken');
+              final refreshToken = await _storage.read('refreshToken');
               if (refreshToken != null) {
                 final refreshed = await _refreshToken(refreshToken);
                 if (refreshed) {
