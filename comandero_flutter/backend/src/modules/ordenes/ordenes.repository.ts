@@ -333,24 +333,12 @@ export const crearOrden = async ({
     const ordenId = result.insertId;
 
     for (const item of items) {
-      const [nombreRows] = await conn.query<RowDataPacket[]>(
-        `SELECT p.nombre AS producto_nombre, pt.etiqueta AS producto_tamano_etiqueta
-         FROM producto p
-         LEFT JOIN producto_tamano pt ON pt.id = ?
-         WHERE p.id = ?`,
-        [item.productoTamanoId ?? null, item.productoId]
-      );
-      const productoNombre = (nombreRows[0]?.producto_nombre as string) ?? 'Producto';
-      const productoTamanoEtiqueta = (nombreRows[0]?.producto_tamano_etiqueta as string) ?? null;
-
       const [itemResult] = await conn.execute<ResultSetHeader>(
         `
         INSERT INTO orden_item (
           orden_id,
           producto_id,
           producto_tamano_id,
-          producto_nombre,
-          producto_tamano_etiqueta,
           cantidad,
           precio_unitario,
           nota
@@ -359,8 +347,6 @@ export const crearOrden = async ({
           :ordenId,
           :productoId,
           :productoTamanoId,
-          :productoNombre,
-          :productoTamanoEtiqueta,
           :cantidad,
           :precioUnitario,
           :nota
@@ -370,8 +356,6 @@ export const crearOrden = async ({
           ordenId,
           productoId: item.productoId,
           productoTamanoId: item.productoTamanoId ?? null,
-          productoNombre,
-          productoTamanoEtiqueta,
           cantidad: item.cantidad,
           precioUnitario: item.precioUnitario,
           nota: item.nota ?? null
@@ -504,24 +488,12 @@ export const agregarItemsAOrden = async (
 ) => {
   await withTransaction(async (conn) => {
     for (const item of items) {
-      const [nombreRows] = await conn.query<RowDataPacket[]>(
-        `SELECT p.nombre AS producto_nombre, pt.etiqueta AS producto_tamano_etiqueta
-         FROM producto p
-         LEFT JOIN producto_tamano pt ON pt.id = ?
-         WHERE p.id = ?`,
-        [item.productoTamanoId ?? null, item.productoId]
-      );
-      const productoNombre = (nombreRows[0]?.producto_nombre as string) ?? 'Producto';
-      const productoTamanoEtiqueta = (nombreRows[0]?.producto_tamano_etiqueta as string) ?? null;
-
       const [itemResult] = await conn.execute<ResultSetHeader>(
         `
         INSERT INTO orden_item (
           orden_id,
           producto_id,
           producto_tamano_id,
-          producto_nombre,
-          producto_tamano_etiqueta,
           cantidad,
           precio_unitario,
           nota
@@ -530,8 +502,6 @@ export const agregarItemsAOrden = async (
           :ordenId,
           :productoId,
           :productoTamanoId,
-          :productoNombre,
-          :productoTamanoEtiqueta,
           :cantidad,
           :precioUnitario,
           :nota
@@ -541,8 +511,6 @@ export const agregarItemsAOrden = async (
           ordenId,
           productoId: item.productoId,
           productoTamanoId: item.productoTamanoId ?? null,
-          productoNombre,
-          productoTamanoEtiqueta,
           cantidad: item.cantidad,
           precioUnitario: item.precioUnitario,
           nota: item.nota ?? null

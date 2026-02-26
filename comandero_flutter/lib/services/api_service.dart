@@ -138,7 +138,14 @@ class ApiService {
             } catch (e) {
               // Si falla el refresh, limpiar tokens
               await clearTokens();
+              if (kDebugMode) {
+                print('⚠️ Refresh de token falló, sesión cerrada. Error: $e');
+              }
+              // Propagar el 401 al caller para que la UI muestre error y no se quede colgada
+              return handler.next(error);
             }
+            // Refresh no disponible o no logró refrescar: propagar error
+            return handler.next(error);
           }
           
           if (kDebugMode) {

@@ -1520,9 +1520,7 @@ class MeseroController extends ChangeNotifier {
   // Seleccionar mesa
   void selectTable(TableModel table) async {
     _selectedTable = table;
-    setCurrentView('table');
-
-    // Notificar cambio inmediatamente para actualizar la UI
+    // No fijar vista todavía: se decidirá tras cargar historial (ir directo a cuenta dividida si ya hay datos)
     notifyListeners();
 
     // Cargar historial de forma asíncrona respetando los flags
@@ -1535,16 +1533,19 @@ class MeseroController extends ChangeNotifier {
       if ((_tableOrders[tableId] ?? []).isNotEmpty) notifyListeners();
     }
     
-    // Después de cargar el historial, verificar si hay órdenes en modo dividido
-    // y restaurar el modo dividido si es necesario
+    // Después de cargar el historial, verificar si hay órdenes en modo dividido o personas en memoria
     final history = _tableOrderHistory[tableId] ?? [];
     final hasDividedOrders = history.any((order) => order['isDividedAccount'] == true);
+    final alreadyHasPersons = (_personNamesByTable[tableId]?.isNotEmpty ?? false);
     
-    if (hasDividedOrders && !(_isDividedAccountModeByTable[tableId] ?? false)) {
+    if ((hasDividedOrders || alreadyHasPersons) && !(_isDividedAccountModeByTable[tableId] ?? false)) {
+      _isDividedAccountModeByTable[tableId] = true;
+    }
+    
+    if (hasDividedOrders) {
       // Restaurar modo dividido si hay órdenes en modo dividido
       _isDividedAccountModeByTable[tableId] = true;
       
-      // Restaurar información de personas desde el historial
       final personNamesFromHistory = <String, String>{};
       final personAssignmentsFromHistory = <String, List<String>>{};
       
@@ -1576,16 +1577,13 @@ class MeseroController extends ChangeNotifier {
         }
       }
       
-      // Restaurar nombres de personas si existen
       if (personNamesFromHistory.isNotEmpty) {
         _personNamesByTable[tableId] = personNamesFromHistory;
         
-        // Inicializar listas de items por persona si no existen
         if (!_personCartItemsByTable.containsKey(tableId)) {
           _personCartItemsByTable[tableId] = {};
         }
         
-        // Restaurar el siguiente ID de persona
         if (personNamesFromHistory.isNotEmpty) {
           final maxId = personNamesFromHistory.keys
               .map((id) {
@@ -1596,16 +1594,17 @@ class MeseroController extends ChangeNotifier {
           _nextPersonIdByTable[tableId] = maxId + 1;
         }
         
-        // Seleccionar la primera persona si no hay ninguna seleccionada
         if (_selectedPersonIdByTable[tableId] == null && personNamesFromHistory.isNotEmpty) {
           _selectedPersonIdByTable[tableId] = personNamesFromHistory.keys.first;
         }
       }
-      
-      // Redirigir a vista de cuenta dividida
-      setCurrentView('divided_account');
-      notifyListeners();
     }
+    
+    // Si la mesa ya tiene personas o datos de cuenta dividida, ir directo a Cuenta Dividida; si no, a Consumo de Mesa
+    final hasDividedData = (_personNamesByTable[tableId]?.isNotEmpty ?? false) || 
+        (_isDividedAccountModeByTable[tableId] ?? false);
+    setCurrentView(hasDividedData ? 'divided_account' : 'table');
+    notifyListeners();
   }
 
   // Seleccionar vista de Para Llevar

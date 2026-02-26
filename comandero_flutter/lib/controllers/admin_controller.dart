@@ -662,19 +662,30 @@ class AdminController extends ChangeNotifier {
   }
 
   /// Cargar configuración (IVA habilitado, etc.). Usado en vista Configuración.
+  /// Reintenta una vez tras breve espera si falla (p. ej. 401 por token no listo en web).
   Future<void> loadConfiguracion() async {
     try {
       _configuracionError = null;
-      final config = await _configuracionService.getConfiguracion();
+      var config = await _configuracionService.getConfiguracion();
       _ivaHabilitado = config.ivaHabilitado;
       _configuracionCajon = config.cajon;
       notifyListeners();
     } catch (e) {
-      print('Error al cargar configuración: $e');
-      _configuracionError = e.toString().replaceFirst('Exception: ', '');
-      _ivaHabilitado = false;
-      _configuracionCajon = ConfiguracionCajonModel();
-      notifyListeners();
+      print('Error al cargar configuración (reintentando en 600ms): $e');
+      await Future.delayed(const Duration(milliseconds: 600));
+      try {
+        final config = await _configuracionService.getConfiguracion();
+        _ivaHabilitado = config.ivaHabilitado;
+        _configuracionCajon = config.cajon;
+        _configuracionError = null;
+        notifyListeners();
+      } catch (e2) {
+        print('Error al cargar configuración (tras reintento): $e2');
+        _configuracionError = e2.toString().replaceFirst('Exception: ', '');
+        _ivaHabilitado = false;
+        _configuracionCajon = ConfiguracionCajonModel();
+        notifyListeners();
+      }
     }
   }
 

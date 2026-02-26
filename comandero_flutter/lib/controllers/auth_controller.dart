@@ -13,6 +13,11 @@ class AuthController extends ChangeNotifier {
   String _userName = '';
   String _userId = '';
 
+  AuthController() {
+    // Restaurar sesión lo antes posible (móvil/tablet/web: al reabrir la app no pedir login de nuevo)
+    Future.microtask(() => checkAuthStatus());
+  }
+
   bool get isLoggedIn => _isLoggedIn;
   String get userRole => _userRole;
   String get userName => _userName;

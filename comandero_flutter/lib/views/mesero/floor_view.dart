@@ -57,6 +57,8 @@ class _FloorViewState extends State<FloorView> {
 
                     // Estadísticas rápidas
                     _buildQuickStats(stats, isTablet),
+                    // Espacio inferior para que el FAB "Abierto" no tape el contenido
+                    SizedBox(height: isTablet ? 100 : 88),
                   ],
                 ),
               ),
@@ -507,40 +509,48 @@ class _FloorViewState extends State<FloorView> {
   }
 
   Widget _buildQuickStats(Map<String, int> stats, bool isTablet) {
+    // En móvil usar etiquetas cortas para que no se corten en los cuadros
     final statCards = [
-      {'label': 'Libres', 'count': stats['libre']!, 'color': AppColors.success},
+      {'label': 'Libres', 'shortLabel': 'Libres', 'count': stats['libre']!, 'color': AppColors.success},
       {
         'label': 'Ocupadas',
+        'shortLabel': 'Ocup.',
         'count': stats['ocupada']!,
         'color': AppColors.error,
       },
       {
         'label': 'Limpieza',
+        'shortLabel': 'Limp.',
         'count': stats['en-limpieza']!,
         'color': Colors.grey,
       },
       {
         'label': 'Reservadas',
+        'shortLabel': 'Reserv.',
         'count': stats['reservada']!,
         'color': AppColors.warning,
       },
     ];
 
+    final crossCount = isTablet ? 4 : 4;
+    final label = isTablet ? 'label' : 'shortLabel';
+
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 4,
-      crossAxisSpacing: isTablet ? 16.0 : 12.0,
-      mainAxisSpacing: isTablet ? 16.0 : 12.0,
-      childAspectRatio: 1.2,
+      crossAxisCount: crossCount,
+      crossAxisSpacing: isTablet ? 16.0 : 8.0,
+      mainAxisSpacing: isTablet ? 16.0 : 8.0,
+      childAspectRatio: isTablet ? 1.2 : 1.05,
       children: statCards.map((stat) {
+        final text = stat[label] as String;
         return Card(
           elevation: 2,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
           child: Container(
-            padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+            padding: EdgeInsets.all(isTablet ? 16.0 : 10.0),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
               color: (stat['color'] as Color).withValues(alpha: 0.1),
@@ -554,19 +564,22 @@ class _FloorViewState extends State<FloorView> {
                 Text(
                   '${stat['count']}',
                   style: TextStyle(
-                    fontSize: isTablet ? 24.0 : 20.0,
+                    fontSize: isTablet ? 24.0 : 18.0,
                     fontWeight: FontWeight.bold,
                     color: stat['color'] as Color,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  stat['label'] as String,
-                  style: TextStyle(
-                    fontSize: isTablet ? 12.0 : 10.0,
-                    color: stat['color'] as Color,
+                const SizedBox(height: 2),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: isTablet ? 12.0 : 11.0,
+                      color: stat['color'] as Color,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
-                  textAlign: TextAlign.center,
                 ),
               ],
             ),

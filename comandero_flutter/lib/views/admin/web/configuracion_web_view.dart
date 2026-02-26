@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import '../../../controllers/admin_controller.dart';
 import '../../../services/configuracion_service.dart';
@@ -32,13 +33,21 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
       _loading = true;
       _error = null;
     });
-    final controller = context.read<AdminController>();
-    await controller.loadConfiguracion();
-    if (mounted) {
-      setState(() {
-        _loading = false;
-        _error = controller.configuracionError;
-      });
+    try {
+      // En web, dar tiempo a que el token esté en storage y evitar 401 en la primera petición
+      if (kIsWeb) {
+        await Future.delayed(const Duration(milliseconds: 400));
+        if (!mounted) return;
+      }
+      final controller = context.read<AdminController>();
+      await controller.loadConfiguracion();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = context.read<AdminController>().configuracionError;
+        });
+      }
     }
   }
 
@@ -91,11 +100,22 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                           borderRadius: BorderRadius.circular(8),
                           child: Padding(
                             padding: const EdgeInsets.all(12.0),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.error_outline, color: Colors.red.shade700),
-                                const SizedBox(width: 12),
-                                Expanded(child: Text(_error!, style: TextStyle(color: Colors.red.shade700))),
+                                Row(
+                                  children: [
+                                    Icon(Icons.error_outline, color: Colors.red.shade700),
+                                    const SizedBox(width: 12),
+                                    Expanded(child: Text(_error!, style: TextStyle(color: Colors.red.shade700))),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                TextButton.icon(
+                                  onPressed: _loading ? null : _loadConfig,
+                                  icon: const Icon(Icons.refresh, size: 18),
+                                  label: const Text('Reintentar'),
+                                ),
                               ],
                             ),
                           ),
