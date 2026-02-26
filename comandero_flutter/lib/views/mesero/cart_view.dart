@@ -1267,9 +1267,15 @@ class _CartViewState extends State<CartView> {
                   if (dialogContext.mounted) Navigator.of(dialogContext).pop();
                   
                   if (context.mounted) {
+                    final errStr = e.toString();
+                    final isUnauthorized = errStr.contains('401') || errStr.contains('Unauthorized');
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Error al enviar pedido: ${e.toString()}'),
+                        content: Text(
+                          isUnauthorized
+                              ? 'Sesión expirada o no autorizada. Cierra sesión y vuelve a entrar, luego intenta enviar el pedido de nuevo.'
+                              : 'Error al enviar pedido: ${errStr.length > 80 ? "${errStr.substring(0, 80)}..." : errStr}',
+                        ),
                         backgroundColor: AppColors.error,
                         duration: const Duration(seconds: 5),
                       ),

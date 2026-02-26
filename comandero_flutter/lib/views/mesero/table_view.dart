@@ -104,7 +104,12 @@ class TableView extends StatelessWidget {
     bool isTablet,
   ) {
     return SingleChildScrollView(
-      padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+      padding: EdgeInsets.only(
+        left: isTablet ? 20.0 : 16.0,
+        right: isTablet ? 20.0 : 16.0,
+        top: isTablet ? 20.0 : 16.0,
+        bottom: (isTablet ? 20.0 : 16.0) + 88, // espacio para FAB "Abierto"
+      ),
       child: Column(
         children: [
           _buildMainColumn(context, controller, table, cart, isTablet),
@@ -718,20 +723,27 @@ class TableView extends StatelessWidget {
         // Botón Dividir Cuenta
         SizedBox(
           width: double.infinity,
-          height: isTablet ? 48.0 : 44.0,
           child: OutlinedButton.icon(
             onPressed: () {
-              // Activar modo dividido y navegar a la vista de cuenta dividida
               controller.setDividedAccountMode(true);
               controller.setCurrentView('divided_account');
             },
-            icon: const Icon(Icons.people),
+            icon: const Icon(Icons.people, size: 22),
             label: Text(
               'Dividir Cuenta',
-              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+              style: TextStyle(
+                fontSize: isTablet ? 16.0 : 14.0,
+                fontWeight: FontWeight.w500,
+              ),
             ),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.info,
+              padding: EdgeInsets.symmetric(
+                horizontal: isTablet ? 20.0 : 16.0,
+                vertical: isTablet ? 14.0 : 12.0,
+              ),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               side: BorderSide(
                 color: AppColors.info.withValues(alpha: 0.3),
               ),

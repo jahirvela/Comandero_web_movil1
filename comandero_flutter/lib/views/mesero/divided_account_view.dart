@@ -56,8 +56,8 @@ class _DividedAccountViewState extends State<DividedAccountView> {
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),
               onPressed: () {
-                // Regresar al panel principal de mesas (floor view)
-                controller.setCurrentView('floor');
+                // Sin personas agregadas: volver a Consumo de Mesa. Con personas: también a Consumo de Mesa para poder salir de la mesa
+                controller.setCurrentView('table');
               },
             ),
           ),
