@@ -34,9 +34,9 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
       _error = null;
     });
     try {
-      // En web, dar tiempo a que el token esté en storage y evitar 401 en la primera petición
+      // Breve pausa en web para que el token esté disponible (evitar 401 en primera petición)
       if (kIsWeb) {
-        await Future.delayed(const Duration(milliseconds: 400));
+        await Future.delayed(const Duration(milliseconds: 100));
         if (!mounted) return;
       }
       final controller = context.read<AdminController>();
@@ -89,9 +89,24 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                   ),
                   const SizedBox(height: 24),
 
-                  if (_loading)
-                    const Center(child: CircularProgressIndicator())
-                  else ...[
+                  if (_loading) ...[
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text(
+                              'Cargando configuración...',
+                              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ] else ...[
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16.0),

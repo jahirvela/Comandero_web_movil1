@@ -33,6 +33,29 @@ class ApiConfig {
     defaultValue: 'https://api.comandix.com',
   );
 
+  /// Normaliza una URL para que siempre tenga protocolo y host correctos.
+  /// - "https:/api.dominio.com" -> "https://api.dominio.com"
+  /// - "https:/.dominio.com" (falta "api") -> "https://api.dominio.com"
+  static String _normalizeUrl(String url) {
+    if (url.isEmpty) return url;
+    String t = url.trim();
+    // Corregir "https:/" o "http:/" (una barra) a "https://" o "http://"
+    if (t.startsWith('https:/') && !t.startsWith('https://')) {
+      t = 'https://${t.substring(7)}';
+    } else if (t.startsWith('http:/') && !t.startsWith('http://')) {
+      t = 'http://${t.substring(6)}';
+    }
+    // Si el host empieza con punto (ej. "https://.comancleth.com"), anteponer "api"
+    final protoEnd = t.indexOf('://');
+    if (protoEnd != -1) {
+      final afterProto = t.substring(protoEnd + 3);
+      if (afterProto.startsWith('.') && afterProto.contains('.')) {
+        t = '${t.substring(0, protoEnd)}://api$afterProto';
+      }
+    }
+    return t;
+  }
+
   /// IP local detectada automáticamente (para dispositivos físicos Android)
   /// Se detecta en tiempo de ejecución la primera vez que se accede
   static String? _cachedLocalIp;
@@ -339,14 +362,14 @@ class ApiConfig {
 
   /// URL base del backend
   static String get baseUrl {
-    // Si hay una URL personalizada, usarla
+    // Si hay una URL personalizada, usarla (normalizada)
     if (_customApiUrl.isNotEmpty) {
-      return _customApiUrl;
+      return _normalizeUrl(_customApiUrl);
     }
 
-    // En producción, usar la URL del VPS
+    // En producción, usar la URL del VPS (normalizada por si API_URL tiene typo)
     if (_environment == 'production') {
-      return _productionApiUrl;
+      return _normalizeUrl(_productionApiUrl);
     }
 
     // En desarrollo, usar localhost/10.0.2.2/IP local
@@ -361,17 +384,21 @@ class ApiConfig {
   ///
   /// En producción, debe ser la misma base que baseUrl pero sin /api
   static String get socketUrl {
-    // Si hay una URL personalizada, derivar Socket.IO de ella
+    // Si hay una URL personalizada, derivar Socket.IO de ella (normalizada)
     if (_customApiUrl.isNotEmpty) {
-      // Remover /api si existe
-      final url = _customApiUrl.replaceAll('/api', '');
-      return url;
+      final url = _normalizeUrl(_customApiUrl.replaceAll('/api', '').trim());
+      return url.isEmpty ? 'http://localhost:3000' : url;
     }
 
-    // En producción, usar la URL del VPS sin /api
+    // En producción: derivar de baseUrl para que siempre coincida (y esté normalizada)
     if (_environment == 'production') {
-      // Remover /api si existe en la URL de producción
-      return _productionApiUrl.replaceAll('/api', '');
+      final base = _normalizeUrl(_productionApiUrl);
+      final withoutApi = base.replaceAll('/api', '').trim();
+      final url = withoutApi.isEmpty ? base : withoutApi;
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+      }
+      return 'https://$url';
     }
 
     // En desarrollo, usar localhost/10.0.2.2/IP local sin /api

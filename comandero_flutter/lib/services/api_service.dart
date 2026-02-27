@@ -318,9 +318,16 @@ class ApiService {
     }
   }
 
-  /// GET request con reintentos automáticos
-  Future<Response> get(String path, {Map<String, dynamic>? queryParameters}) async {
-    return await _retryRequest(() => _dio.get(path, queryParameters: queryParameters));
+  /// GET request con reintentos automáticos.
+  /// [options] permite override de timeout (p. ej. para configuración: 12s en vez de 45s).
+  Future<Response> get(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    Options? options,
+  }) async {
+    return await _retryRequest(
+      () => _dio.get(path, queryParameters: queryParameters, options: options),
+    );
   }
 
   /// POST request con reintentos automáticos

@@ -44,6 +44,21 @@ class AdminController extends ChangeNotifier {
   final ConfiguracionService _configuracionService = ConfiguracionService();
   final ImpresorasService _impresorasService = ImpresorasService();
 
+  /// Mensaje corto y amigable para errores de configuración (evitar texto técnico en rojo).
+  static String _mensajeAmigableConfig(dynamic e) {
+    final s = e.toString();
+    if (s.contains('401') || s.contains('Unauthorized')) {
+      return 'Sesión expirada o no autorizada. Vuelve a iniciar sesión.';
+    }
+    if (s.contains('timeout') || s.contains('connection')) {
+      return 'No se pudo conectar al servidor. Comprueba tu conexión e intenta de nuevo.';
+    }
+    if (s.contains('500') || s.contains('Internal Server')) {
+      return 'Error en el servidor. Intenta más tarde.';
+    }
+    return 'No se pudo cargar la configuración. Comprueba tu conexión e intenta de nuevo.';
+  }
+
   String _normalizeInventoryCategory(String? value) {
     final raw = value?.trim() ?? '';
     if (raw.isEmpty) return 'Otros';
@@ -681,7 +696,7 @@ class AdminController extends ChangeNotifier {
         notifyListeners();
       } catch (e2) {
         print('Error al cargar configuración (tras reintento): $e2');
-        _configuracionError = e2.toString().replaceFirst('Exception: ', '');
+        _configuracionError = _mensajeAmigableConfig(e2);
         _ivaHabilitado = false;
         _configuracionCajon = ConfiguracionCajonModel();
         notifyListeners();
@@ -699,7 +714,7 @@ class AdminController extends ChangeNotifier {
       _configuracionCajon = config.cajon;
     } catch (e) {
       print('Error al actualizar configuración cajón: $e');
-      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+      _configuracionError = _mensajeAmigableConfig(e);
     } finally {
       _isSavingConfiguracion = false;
       notifyListeners();
@@ -716,7 +731,7 @@ class AdminController extends ChangeNotifier {
       _ivaHabilitado = config.ivaHabilitado;
     } catch (e) {
       print('Error al actualizar IVA: $e');
-      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+      _configuracionError = _mensajeAmigableConfig(e);
     } finally {
       _isSavingConfiguracion = false;
       notifyListeners();
