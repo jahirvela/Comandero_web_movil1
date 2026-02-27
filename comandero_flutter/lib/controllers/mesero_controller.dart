@@ -1842,6 +1842,30 @@ class MeseroController extends ChangeNotifier {
 
   // ========== MÉTODOS PARA CUENTA DIVIDIDA POR PERSONA ==========
   
+  /// True si la mesa actual tiene personas o productos en cuenta dividida (órdenes enviadas o en carrito).
+  bool get hasDividedAccountDataForCurrentTable {
+    if (_selectedTable == null) return false;
+    final tableId = _selectedTable!.id.toString();
+    if (personNames.isNotEmpty) return true;
+    final byPerson = _personCartItemsByTable[tableId];
+    if (byPerson != null && byPerson.values.any((list) => list.isNotEmpty)) return true;
+    final history = _tableOrderHistory[tableId] ?? [];
+    return history.any((order) => order['isDividedAccount'] == true);
+  }
+  
+  /// Llamar desde el botón atrás de Cuenta Dividida: ir a consumo de mesa si no hay datos, o al plano si hay.
+  void navigateBackFromDividedAccount() {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    if (!hasDividedAccountDataForCurrentTable) {
+      _isDividedAccountModeByTable[tableId] = false;
+      setCurrentView('table');
+    } else {
+      setCurrentView('floor');
+    }
+    notifyListeners();
+  }
+  
   /// Activar/desactivar modo cuenta dividida (por mesa)
   void setDividedAccountMode(bool enabled) {
     if (_selectedTable == null) return;
