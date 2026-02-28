@@ -13,6 +13,7 @@ import '../../services/socket_service.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../../utils/app_theme.dart';
+import '../../config/api_config.dart';
 import '../../utils/date_utils.dart' as date_utils;
 import '../../utils/closure_utils.dart' as closure_utils;
 import '../cocinero/order_detail_modal.dart';
@@ -48,7 +49,7 @@ class AdminApp extends StatelessWidget {
                errorStr.contains('No se pudo conectar') ||
                errorStr.contains('backend esté corriendo') ||
                errorStr.contains('connection')) {
-      return 'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+      return 'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
     } else if (errorStr.contains('401') || errorStr.contains('403')) {
       return 'No tienes permisos para realizar esta acción.';
     } else if (errorStr.contains('username') &&
@@ -8233,7 +8234,7 @@ class AdminApp extends StatelessWidget {
                                errorStr.contains('No se pudo conectar') ||
                                errorStr.contains('backend esté corriendo')) {
                       errorMessage =
-                          'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+                          'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
                     } else if (errorStr.contains('401')) {
                       errorMessage =
                           'No autorizado. Por favor, inicia sesión nuevamente.';

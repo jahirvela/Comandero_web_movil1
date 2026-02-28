@@ -269,7 +269,7 @@ class ApiService {
           print('   No se pudo conectar al servidor');
           print('   Verifica que:');
           print('   1. El backend esté corriendo: cd backend && npm run dev');
-          print('   2. El backend esté en http://localhost:3000');
+          print('   2. El backend esté en ${ApiConfig.baseUrl}');
           print('   3. CORS esté configurado para permitir localhost:*');
           print('   4. No haya firewall bloqueando la conexión');
         } else if (e.type == DioExceptionType.connectionTimeout) {

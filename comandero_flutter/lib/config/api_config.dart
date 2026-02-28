@@ -36,9 +36,16 @@ class ApiConfig {
   /// Normaliza una URL para que siempre tenga protocolo y host correctos.
   /// - "https:/api.dominio.com" -> "https://api.dominio.com"
   /// - "https:/.dominio.com" (falta "api") -> "https://api.dominio.com"
+  /// - "https://https:/.dominio.com" (doble protocolo) -> "https://api.dominio.com"
   static String _normalizeUrl(String url) {
     if (url.isEmpty) return url;
     String t = url.trim();
+    // Quitar doble protocolo (ej. "https://https:" o "http://http:")
+    if (t.contains('https://https:') || t.contains('http://http:')) {
+      t = t
+          .replaceFirst('https://https:', 'https:')
+          .replaceFirst('http://http:', 'http:');
+    }
     // Corregir "https:/" o "http:/" (una barra) a "https://" o "http://"
     if (t.startsWith('https:/') && !t.startsWith('https://')) {
       t = 'https://${t.substring(7)}';
@@ -390,9 +397,9 @@ class ApiConfig {
       return url.isEmpty ? 'http://localhost:3000' : url;
     }
 
-    // En producción: derivar de baseUrl para que siempre coincida (y esté normalizada)
+    // En producción: derivar de baseUrl (ya normalizada) para una sola fuente de verdad
     if (_environment == 'production') {
-      final base = _normalizeUrl(_productionApiUrl);
+      final base = baseUrl;
       final withoutApi = base.replaceAll('/api', '').trim();
       final url = withoutApi.isEmpty ? base : withoutApi;
       if (url.startsWith('http://') || url.startsWith('https://')) {
