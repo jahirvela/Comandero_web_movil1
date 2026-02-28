@@ -141,7 +141,7 @@ class AuthService {
         errorMessage = 'Tiempo de espera agotado. Verifica tu conexión.';
         print('   Error: Timeout de conexión');
       } else if (e.type == DioExceptionType.connectionError) {
-        errorMessage = 'No se pudo conectar al servidor. Verifica que el backend esté corriendo en http://localhost:3000';
+        errorMessage = 'No se pudo conectar al servidor. Verifica que el backend esté disponible en ${ApiConfig.baseUrl}';
         print('   Error: No se pudo conectar al servidor');
         print('   URL intentada: ${ApiConfig.baseUrl}/auth/login');
       } else {
