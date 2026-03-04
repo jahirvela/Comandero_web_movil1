@@ -1,0 +1,127 @@
+================================================================================
+  AGENTE DE IMPRESION USB - Guia rapida para el cliente
+================================================================================
+
+Clave para el agente (recomendado)
+----------------------------------
+El sistema permite usar una CLAVE DEDICADA para el agente en lugar del token de
+sesion. Ventajas:
+  - No caduca (el token de sesion si, y hay que renovarlo).
+  - No tiene que copiar nada del navegador (F12, etc.).
+  - Solo da acceso a la cola de ESA impresora; no pone en riesgo el resto del sistema.
+  - Si la pierde, en Admin puede "Generar clave para agente" de nuevo (la anterior deja de funcionar).
+
+Como obtener la clave:
+  1. En la web (comancleth.com), inicie sesion como administrador.
+  2. Vaya a Admin - Configuracion - Impresoras.
+  3. Edite la impresora que usa impresion remota y marque "Impresion remota", guarde.
+  4. Pulse el boton con icono de llave: "Generar clave para agente".
+  5. Copie la clave que aparece (solo se muestra una vez) y peguela en el .bat en AGENT_API_KEY.
+
+No use el token de sesion (AUTH_TOKEN) a menos que no pueda usar la clave.
+
+
+Que necesita el cliente
+-----------------------
+1. Una PC con Windows donde este conectada la impresora USB.
+2. Instalar Node.js (solo una vez).
+3. Copiar esta carpeta (o los archivos indicados abajo) a esa PC y editar el .bat.
+4. Obtener la clave del agente en la web (Admin - Impresoras - Generar clave) y pegarla en el .bat.
+5. Dar doble clic al .bat y dejar la ventana abierta.
+
+
+Que es Node.js y como se instala
+--------------------------------
+Node.js es un programa que permite ejecutar el agente de impresion. NO tiene
+interfaz grafica: usted no lo abre como un programa. Solo lo instala una vez
+y luego el archivo .bat lo usa por dentro.
+
+Pasos para instalar Node.js:
+  1. Abra el navegador y vaya a: https://nodejs.org
+  2. Descargue la version "LTS" (recomendada) - boton verde.
+  3. Ejecute el instalador (.msi).
+  4. Siga el asistente (Siguiente, Siguiente, Aceptar licencia, Instalar).
+  5. Reinicie el PC si lo pide, o cierre y vuelva a abrir la ventana donde
+     va a ejecutar el .bat.
+
+No tiene que abrir Node.js ni hacer nada mas con el. Solo instalado basta.
+
+
+Archivos que debe tener en la misma carpeta
+-------------------------------------------
+  - iniciar-agente-impresion.bat   (este es el que ejecuta con doble clic)
+  - agente-impresion-usb.ts
+  - print-raw-windows.ps1
+  - instalar-inicio-automatico.bat (opcional: ejecutar UNA VEZ para que el agente se abra solo al encender el PC)
+  - LEEME-AGENTE.txt               (esta guia)
+
+
+Que debe editar en el .bat
+--------------------------
+Abra "iniciar-agente-impresion.bat" con Bloc de notas (clic derecho - Editar)
+y cambie estas lineas con sus datos:
+
+  API_BASE_URL   = La direccion del sistema. Ejemplo: https://comancleth.com/api
+                   (sin barra al final)
+
+  AGENT_API_KEY  = RECOMENDADO. Clave que solo sirve para este agente; no caduca.
+                   Obtengala en la web: Admin - Configuracion - Impresoras - boton
+                   "Generar clave para agente" (icono de llave). Copie la clave y
+                   peguela aqui, reemplazando "pegue_aqui_la_clave_del_agente".
+                   Si pierde la clave, genere otra en Admin (la anterior dejara de funcionar).
+
+  AUTH_TOKEN     = Alternativa (no recomendada): token de sesion (JWT). Caduca y
+                   hay que renovarlo; ademas requiere copiarlo del navegador (F12).
+                   Solo use esto si no puede usar AGENT_API_KEY. En ese caso comente
+                   la linea AGENT_API_KEY y descomente AUTH_TOKEN en el .bat.
+
+  IMPRESORA_ID   = El numero de la impresora en Admin - Configuracion - Impresoras.
+                   Si es la primera, suele ser 1.
+
+  PRINTER_DEVICE = El nombre exacto de la impresora en Windows:
+                   Configuracion - Dispositivos - Impresoras y escaneres.
+                   Debe escribirlo igual (mayusculas/minusculas, espacios).
+
+Guarde el archivo .bat despues de editar.
+
+
+Como usarlo - Resumen de pasos en la PC del cliente
+--------------------------------------------------
+1. En la WEB (antes): Admin - Configuracion - Impresoras. Edite la impresora,
+   marque "Impresion remota", guarde. Pulse "Generar clave para agente" (llave)
+   y copie la clave.
+
+2. En la PC donde esta la impresora USB:
+   a) Instalar Node.js (una sola vez): https://nodejs.org , version LTS.
+   b) Pasarle una carpeta con estos archivos:
+      - iniciar-agente-impresion.bat
+      - agente-impresion-usb.ts
+      - print-raw-windows.ps1
+      - instalar-inicio-automatico.bat (opcional, para inicio automatico)
+   c) Editar el .bat con Bloc de notas: poner API_BASE_URL, pegar la clave en
+      AGENT_API_KEY, IMPRESORA_ID y PRINTER_DEVICE (nombre exacto en Windows).
+   d) Doble clic en "iniciar-agente-impresion.bat". Dejar la ventana abierta;
+      ahi debe aparecer "Agente USB: impresora_id=...".
+   e) (Opcional) Para que se abra solo al encender el PC: ejecutar UNA VEZ
+      "instalar-inicio-automatico.bat". Listo.
+
+En resumen: carpeta con los archivos -> editar .bat (clave, URL, ID impresora,
+nombre impresora Windows) -> doble clic al .bat -> opcional: instalar inicio
+automatico. No hace falta tocar el token de sesion ni nada mas si usa la clave.
+
+
+Problemas frecuentes
+--------------------
+- "No se reconoce npx": Node.js no esta instalado o no reinicio despues de instalar.
+- "API 401": Si usa AGENT_API_KEY, la clave puede estar mal copiada o fue regenerada
+  en Admin (al generar una nueva, la anterior deja de funcionar). Genere una nueva
+  clave en Admin y peguela de nuevo en el .bat. Si usa AUTH_TOKEN, el token caduco;
+  obtenga uno nuevo o cambie a AGENT_API_KEY (recomendado).
+- No imprime pero no da error: Revise que PRINTER_DEVICE sea exactamente igual
+  al nombre en Windows (Impresoras y escaneres).
+- "No se encuentra el script PowerShell": Todos los archivos del agente deben estar
+  en la misma carpeta; no mueva solo el .bat.
+- La clave no caduca; si usa AGENT_API_KEY no tendra que renovar nada. El token
+  (AUTH_TOKEN) si caduca y hay que actualizarlo en el .bat cuando expire.
+
+================================================================================

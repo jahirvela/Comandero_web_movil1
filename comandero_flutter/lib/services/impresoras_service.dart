@@ -60,6 +60,8 @@ class ImpresoraModel {
   final int paperWidth;
   final bool imprimeTicket;
   final bool imprimeComanda;
+  final bool impresionRemota;
+  final bool tieneClaveAgente;
   final int orden;
   final bool activo;
   final String? marcaModelo;
@@ -74,6 +76,8 @@ class ImpresoraModel {
     this.paperWidth = 80,
     this.imprimeTicket = true,
     this.imprimeComanda = false,
+    this.impresionRemota = false,
+    this.tieneClaveAgente = false,
     this.orden = 0,
     this.activo = true,
     this.marcaModelo,
@@ -90,6 +94,8 @@ class ImpresoraModel {
       paperWidth: _normalizePaperWidth(json['paperWidth']),
       imprimeTicket: json['imprimeTicket'] as bool? ?? true,
       imprimeComanda: json['imprimeComanda'] as bool? ?? false,
+      impresionRemota: json['impresionRemota'] as bool? ?? (json['impresion_remota'] == 1 || json['impresion_remota'] == true),
+      tieneClaveAgente: json['tieneClaveAgente'] as bool? ?? false,
       orden: json['orden'] as int? ?? 0,
       activo: json['activo'] as bool? ?? true,
       marcaModelo: json['marcaModelo'] as String?,
@@ -106,6 +112,8 @@ class ImpresoraModel {
         'paperWidth': paperWidth,
         'imprimeTicket': imprimeTicket,
         'imprimeComanda': imprimeComanda,
+        'impresionRemota': impresionRemota,
+        'tieneClaveAgente': tieneClaveAgente,
         'orden': orden,
         'activo': activo,
         'marcaModelo': marcaModelo,
@@ -144,5 +152,13 @@ class ImpresorasService {
   Future<bool> deleteImpresora(int id) async {
     final response = await _api.delete('/impresoras/$id');
     return response.statusCode == 204;
+  }
+
+  /// Genera una nueva clave para el agente de impresión. Solo se devuelve una vez; guardarla en el .bat.
+  Future<String?> generarClaveAgente(int id) async {
+    final response = await _api.post('/impresoras/$id/generar-clave-agente');
+    if (response.statusCode != 200 || response.data == null) return null;
+    final data = response.data as Map<String, dynamic>;
+    return data['clave'] as String?;
   }
 }
