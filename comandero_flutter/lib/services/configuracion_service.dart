@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
+import '../config/api_config.dart';
 import 'api_service.dart';
+import 'auth_storage.dart';
 
 /// Tipo de conexión del cajón: por impresora térmica, por red (IP) o USB directo.
 enum CajonTipoConexion {
@@ -127,9 +129,24 @@ class ConfiguracionModel {
 class ConfiguracionService {
   final ApiService _api = ApiService();
 
+  /// Timeout corto para no bloquear la pantalla de configuración (evitar 45s de espera).
+  static const Duration _configTimeout = Duration(seconds: 12);
+
   /// Obtener configuración actual. Cualquier rol autenticado puede leer.
+  /// Usa timeout de 12s para que la pantalla no espere 45s si el servidor no responde.
   Future<ConfiguracionModel> getConfiguracion() async {
-    final response = await _api.get('/configuracion');
+    final token = await AuthStorage().read('accessToken');
+    final dio = Dio(BaseOptions(
+      baseUrl: ApiConfig.baseUrl,
+      connectTimeout: _configTimeout,
+      receiveTimeout: _configTimeout,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      },
+    ));
+    final response = await dio.get('/configuracion');
     if (response.statusCode == 200 && response.data != null) {
       final data = response.data is Map ? response.data as Map<String, dynamic> : null;
       if (data != null) return ConfiguracionModel.fromJson(data);
@@ -162,6 +179,61 @@ class ConfiguracionService {
       requestOptions: response.requestOptions,
       response: response,
       type: DioExceptionType.badResponse,
+    );
+  }
+
+  /// Obtener plantilla de impresión (ticket_cobro, comanda).
+  Future<PlantillaImpresionModel> getPlantillaImpresion(String tipo) async {
+    final response = await _api.get('/configuracion/plantillas-impresion/$tipo');
+    if (response.statusCode == 200 && response.data != null) {
+      final data = response.data is Map ? response.data as Map<String, dynamic> : null;
+      if (data != null) return PlantillaImpresionModel.fromJson(data);
+    }
+    return PlantillaImpresionModel(tipoDocumento: tipo, contenido: '', plantillaLineaItem: null, actualizadoEn: null);
+  }
+
+  /// Guardar plantilla de impresión. Solo administrador.
+  Future<PlantillaImpresionModel> putPlantillaImpresion(
+    String tipo,
+    String contenido, [
+    String? plantillaLineaItem,
+  ]) async {
+    final response = await _api.put(
+      '/configuracion/plantillas-impresion/$tipo',
+      data: {'contenido': contenido, 'plantillaLineaItem': plantillaLineaItem},
+    );
+    if (response.statusCode == 200 && response.data != null) {
+      final data = response.data is Map ? response.data as Map<String, dynamic> : null;
+      if (data != null) return PlantillaImpresionModel.fromJson(data);
+    }
+    throw DioException(
+      requestOptions: response.requestOptions,
+      response: response,
+      type: DioExceptionType.badResponse,
+    );
+  }
+}
+
+/// Plantilla editable para impresión (ticket de cobro, comanda).
+class PlantillaImpresionModel {
+  final String tipoDocumento;
+  final String contenido;
+  final String? plantillaLineaItem;
+  final String? actualizadoEn;
+
+  PlantillaImpresionModel({
+    required this.tipoDocumento,
+    required this.contenido,
+    this.plantillaLineaItem,
+    this.actualizadoEn,
+  });
+
+  factory PlantillaImpresionModel.fromJson(Map<String, dynamic> json) {
+    return PlantillaImpresionModel(
+      tipoDocumento: json['tipoDocumento'] as String? ?? '',
+      contenido: json['contenido'] as String? ?? '',
+      plantillaLineaItem: json['plantillaLineaItem'] as String?,
+      actualizadoEn: json['actualizadoEn'] as String?,
     );
   }
 }

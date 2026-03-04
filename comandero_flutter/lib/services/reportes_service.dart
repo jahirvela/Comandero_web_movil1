@@ -4,13 +4,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 import 'package:share_plus/share_plus.dart';
 import '../config/api_config.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'auth_storage.dart';
 
 class ReportesService {
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
 
   Future<String?> _getAccessToken() async {
-    return await _storage.read(key: 'accessToken');
+    return await _storage.read('accessToken');
   }
 
   /// Descarga un archivo (PDF o CSV) desde el backend

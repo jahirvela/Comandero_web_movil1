@@ -33,12 +33,13 @@ echo ========================================
 echo PASO 2: Compilar Aplicacion Web
 echo ========================================
 echo.
-echo Ingresa la URL de produccion:
+echo Ingresa la URL base del API (sin /api al final):
 echo Ejemplos:
-echo   - Con dominio: https://www.comandix.com
-echo   - Con IP: http://192.168.1.100
+echo   - Comancleth: https://api.comancleth.com
+echo   - Otro dominio: https://api.comandix.com
+echo   - Con IP: http://192.168.1.100:3000
 echo.
-set /p PROD_URL="URL de produccion: "
+set /p PROD_URL="URL base del API: "
 
 if "%PROD_URL%"=="" (
     echo ERROR: Debes ingresar una URL

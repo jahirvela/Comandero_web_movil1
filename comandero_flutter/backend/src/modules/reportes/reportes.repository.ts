@@ -109,11 +109,12 @@ export const obtenerTopProductos = async (
   fechaFin: Date,
   limite: number = 10
 ): Promise<TopProducto[]> => {
+  // Usar p.nombre (no oi.producto_nombre) para compatibilidad con BD sin columna producto_nombre en orden_item
   const [rows] = await pool.query<RowDataPacket[]>(
     `
     SELECT
       COALESCE(p.id, 0) AS producto_id,
-      COALESCE(oi.producto_nombre, p.nombre, 'Producto') AS producto_nombre,
+      COALESCE(p.nombre, 'Producto') AS producto_nombre,
       COALESCE(c.nombre, 'Sin categoría') AS categoria_nombre,
       SUM(oi.cantidad) AS cantidad_vendida,
       SUM(oi.total_linea) AS ingresos
@@ -125,7 +126,7 @@ export const obtenerTopProductos = async (
       AND o.estado_orden_id IN (
         SELECT id FROM estado_orden WHERE nombre IN ('cerrada', 'pagada')
       )
-    GROUP BY COALESCE(oi.producto_nombre, p.nombre), COALESCE(c.nombre, 'Sin categoría'), COALESCE(p.id, 0)
+    GROUP BY COALESCE(p.nombre, 'Producto'), COALESCE(c.nombre, 'Sin categoría'), COALESCE(p.id, 0)
     ORDER BY cantidad_vendida DESC
     LIMIT :limite
     `,

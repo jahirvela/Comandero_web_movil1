@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/api_config.dart';
+import 'auth_storage.dart';
 
 /// Servicio base para todas las peticiones HTTP al backend
 /// 
@@ -20,7 +20,7 @@ class ApiService {
   }
 
   late final Dio _dio;
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
 
   /// Inicializar Dio con configuración optimizada
   void _initializeDio() {
@@ -48,23 +48,23 @@ class ApiService {
 
   /// Obtener el token de acceso almacenado
   Future<String?> _getAccessToken() async {
-    return await _storage.read(key: 'accessToken');
+    return await _storage.read('accessToken');
   }
 
   /// Guardar el token de acceso
   Future<void> _saveAccessToken(String token) async {
-    await _storage.write(key: 'accessToken', value: token);
+    await _storage.write('accessToken', token);
   }
 
   /// Guardar el refresh token
   Future<void> _saveRefreshToken(String token) async {
-    await _storage.write(key: 'refreshToken', value: token);
+    await _storage.write('refreshToken', token);
   }
 
   /// Limpiar tokens almacenados
   Future<void> clearTokens() async {
-    await _storage.delete(key: 'accessToken');
-    await _storage.delete(key: 'refreshToken');
+    await _storage.delete('accessToken');
+    await _storage.delete('refreshToken');
   }
 
   /// Verificar si un error es recuperable (debe reintentar)
@@ -123,7 +123,7 @@ class ApiService {
           // Si el token expiró (401), intentar refrescar
           if (error.response?.statusCode == 401) {
             try {
-              final refreshToken = await _storage.read(key: 'refreshToken');
+              final refreshToken = await _storage.read('refreshToken');
               if (refreshToken != null) {
                 final refreshed = await _refreshToken(refreshToken);
                 if (refreshed) {
@@ -138,7 +138,14 @@ class ApiService {
             } catch (e) {
               // Si falla el refresh, limpiar tokens
               await clearTokens();
+              if (kDebugMode) {
+                print('⚠️ Refresh de token falló, sesión cerrada. Error: $e');
+              }
+              // Propagar el 401 al caller para que la UI muestre error y no se quede colgada
+              return handler.next(error);
             }
+            // Refresh no disponible o no logró refrescar: propagar error
+            return handler.next(error);
           }
           
           if (kDebugMode) {
@@ -262,7 +269,7 @@ class ApiService {
           print('   No se pudo conectar al servidor');
           print('   Verifica que:');
           print('   1. El backend esté corriendo: cd backend && npm run dev');
-          print('   2. El backend esté en http://localhost:3000');
+          print('   2. El backend esté en ${ApiConfig.baseUrl}');
           print('   3. CORS esté configurado para permitir localhost:*');
           print('   4. No haya firewall bloqueando la conexión');
         } else if (e.type == DioExceptionType.connectionTimeout) {
@@ -311,9 +318,16 @@ class ApiService {
     }
   }
 
-  /// GET request con reintentos automáticos
-  Future<Response> get(String path, {Map<String, dynamic>? queryParameters}) async {
-    return await _retryRequest(() => _dio.get(path, queryParameters: queryParameters));
+  /// GET request con reintentos automáticos.
+  /// [options] permite override de timeout (p. ej. para configuración: 12s en vez de 45s).
+  Future<Response> get(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    Options? options,
+  }) async {
+    return await _retryRequest(
+      () => _dio.get(path, queryParameters: queryParameters, options: options),
+    );
   }
 
   /// POST request con reintentos automáticos

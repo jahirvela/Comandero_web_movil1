@@ -13,11 +13,19 @@ import '../../services/socket_service.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../../utils/app_theme.dart';
+import '../../config/api_config.dart';
 import '../../utils/date_utils.dart' as date_utils;
 import '../../utils/closure_utils.dart' as closure_utils;
 import '../cocinero/order_detail_modal.dart';
 import '../../services/ordenes_service.dart';
 import 'web/configuracion_web_view.dart';
+
+class _NavItemData {
+  const _NavItemData(this.label, this.icon, this.viewId);
+  final String label;
+  final IconData icon;
+  final String viewId;
+}
 
 class AdminApp extends StatelessWidget {
   const AdminApp({super.key});
@@ -41,7 +49,7 @@ class AdminApp extends StatelessWidget {
                errorStr.contains('No se pudo conectar') ||
                errorStr.contains('backend esté corriendo') ||
                errorStr.contains('connection')) {
-      return 'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+      return 'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
     } else if (errorStr.contains('401') || errorStr.contains('403')) {
       return 'No tienes permisos para realizar esta acción.';
     } else if (errorStr.contains('username') &&
@@ -122,6 +130,7 @@ class AdminApp extends StatelessWidget {
                       context,
                       adminController,
                       isTablet,
+                      isDesktop,
                     ),
                   );
                 },
@@ -5150,11 +5159,59 @@ class AdminApp extends StatelessWidget {
     );
   }
 
+  static const _navItems = [
+    _NavItemData('Panel de Control', Icons.dashboard, 'dashboard'),
+    _NavItemData('Mesas', Icons.table_bar, 'tables'),
+    _NavItemData('Menú', Icons.restaurant_menu, 'menu'),
+    _NavItemData('Inventario', Icons.inventory_2, 'inventory'),
+    _NavItemData('Usuarios', Icons.people, 'users'),
+    _NavItemData('Tickets', Icons.receipt_long, 'tickets'),
+    _NavItemData('Cierre', Icons.account_balance_wallet, 'cash_closures'),
+    _NavItemData('Cocina', Icons.restaurant_menu, 'kitchen_filters'),
+    _NavItemData('Configuración', Icons.settings, 'configuracion'),
+  ];
+
   Widget _buildBottomNavigationBar(
     BuildContext context,
     AdminController controller,
     bool isTablet,
+    bool isDesktop,
   ) {
+    final paddingH = isTablet ? 20.0 : 12.0;
+    final spacing = isTablet ? 16.0 : 10.0;
+    final items = _navItems;
+    final useScroll = !isDesktop; // Deslizable solo en celulares y tabletas
+
+    Widget rowContent = Row(
+      mainAxisSize: useScroll ? MainAxisSize.min : MainAxisSize.max,
+      mainAxisAlignment: useScroll ? MainAxisAlignment.start : MainAxisAlignment.spaceEvenly,
+      children: [
+        for (int i = 0; i < items.length; i++) ...[
+          if (i > 0) SizedBox(width: spacing),
+          _buildNavItem(
+            items[i].label,
+            items[i].icon,
+            _isNavItemSelected(controller.currentView, items[i].viewId),
+            isTablet,
+            () {
+              if (items[i].viewId == 'cash_closures') {
+                controller.setCurrentView('cash_closures');
+              } else {
+                controller.setCurrentView(items[i].viewId);
+              }
+            },
+          ),
+        ],
+      ],
+    );
+
+    if (useScroll) {
+      rowContent = SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: rowContent,
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -5168,108 +5225,18 @@ class AdminApp extends StatelessWidget {
       ),
       child: SafeArea(
         child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: isTablet ? 20.0 : 16.0,
-            vertical: 8.0,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildNavItem(
-                'Panel de Control',
-                Icons.dashboard,
-                controller.currentView == 'dashboard',
-                isTablet,
-                () {
-                  controller.setCurrentView('dashboard');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Mesas',
-                Icons.table_bar,
-                controller.currentView == 'tables',
-                isTablet,
-                () {
-                  controller.setCurrentView('tables');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Menú',
-                Icons.restaurant_menu,
-                controller.currentView == 'menu',
-                isTablet,
-                () {
-                  controller.setCurrentView('menu');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Inventario',
-                Icons.inventory_2,
-                controller.currentView == 'inventory',
-                isTablet,
-                () {
-                  controller.setCurrentView('inventory');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Usuarios',
-                Icons.people,
-                controller.currentView == 'users',
-                isTablet,
-                () {
-                  controller.setCurrentView('users');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Tickets',
-                Icons.receipt_long,
-                controller.currentView == 'tickets',
-                isTablet,
-                () {
-                  controller.setCurrentView('tickets');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Cierre',
-                Icons.account_balance_wallet,
-                controller.currentView == 'cash_closures' ||
-                    controller.currentView == 'review_cashiers',
-                isTablet,
-                () {
-                  controller.setCurrentView('cash_closures');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Cocina',
-                Icons.restaurant_menu,
-                controller.currentView == 'kitchen_filters',
-                isTablet,
-                () {
-                  controller.setCurrentView('kitchen_filters');
-                },
-              ),
-              const SizedBox(width: 16),
-              _buildNavItem(
-                'Configuración',
-                Icons.settings,
-                controller.currentView == 'configuracion',
-                isTablet,
-                () {
-                  controller.setCurrentView('configuracion');
-                },
-              ),
-            ],
-          ),
+          padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: 8.0),
+          child: rowContent,
         ),
       ),
     );
+  }
+
+  bool _isNavItemSelected(String currentView, String viewId) {
+    if (viewId == 'cash_closures') {
+      return currentView == 'cash_closures' || currentView == 'review_cashiers';
+    }
+    return currentView == viewId;
   }
 
   Widget _buildNavItem(
@@ -8267,7 +8234,7 @@ class AdminApp extends StatelessWidget {
                                errorStr.contains('No se pudo conectar') ||
                                errorStr.contains('backend esté corriendo')) {
                       errorMessage =
-                          'No se pudo conectar al backend. Verifica que esté corriendo en http://localhost:3000';
+                          'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
                     } else if (errorStr.contains('401')) {
                       errorMessage =
                           'No autorizado. Por favor, inicia sesión nuevamente.';
@@ -10206,25 +10173,31 @@ class AdminApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Título y botones de acción
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
+          // Título y botones de acción (responsivo: columna en móvil, fila en tablet/desktop)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 600;
+              final btnPaddingH = isTablet ? 16.0 : 10.0;
+              final btnPaddingV = isTablet ? 12.0 : 8.0;
+              final iconSize = isTablet ? 20.0 : 18.0;
+              final labelFontSize = isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS;
+
+              Widget titleWidget = Text(
                 'Cierre de Caja',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: AppTheme.fontWeightBold,
                   color: AppColors.textPrimary,
+                  fontSize: isTablet ? null : AppTheme.fontSizeLG,
                 ),
-              ),
-              Row(
+              );
+
+              Widget buttonsRow = Wrap(
+                spacing: isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                runSpacing: AppTheme.spacingSM,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  // Botón de refrescar
                   ElevatedButton.icon(
                     onPressed: () {
-                      print(
-                        '🔄 AdminView: Refrescando cierres de caja manualmente...',
-                      );
                       controller.loadCashClosures();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -10234,44 +10207,64 @@ class AdminApp extends StatelessWidget {
                         ),
                       );
                     },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refrescar'),
+                    icon: Icon(Icons.refresh, size: iconSize),
+                    label: Text('Refrescar', style: TextStyle(fontSize: labelFontSize)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
                       foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(horizontal: btnPaddingH, vertical: btnPaddingV),
                     ),
                   ),
-                  SizedBox(width: AppTheme.spacingMD),
                   ElevatedButton.icon(
                     onPressed: () => _showDownloadCashClosuresCSVDialog(
                       context,
                       controller,
                       isTablet,
                     ),
-                    icon: const Icon(Icons.download),
-                    label: const Text('Descargar CSV'),
+                    icon: Icon(Icons.download, size: iconSize),
+                    label: Text('Descargar CSV', style: TextStyle(fontSize: labelFontSize)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(horizontal: btnPaddingH, vertical: btnPaddingV),
                     ),
                   ),
-                  SizedBox(width: AppTheme.spacingMD),
                   ElevatedButton.icon(
                     onPressed: () => _showDownloadCashClosuresPDFDialog(
                       context,
                       controller,
                       isTablet,
                     ),
-                    icon: const Icon(Icons.picture_as_pdf),
-                    label: const Text('Descargar PDF'),
+                    icon: Icon(Icons.picture_as_pdf, size: iconSize),
+                    label: Text('Descargar PDF', style: TextStyle(fontSize: labelFontSize)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(horizontal: btnPaddingH, vertical: btnPaddingV),
                     ),
                   ),
                 ],
-              ),
-            ],
+              );
+
+              if (isNarrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    titleWidget,
+                    SizedBox(height: AppTheme.spacingMD),
+                    buttonsRow,
+                  ],
+                );
+              }
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  titleWidget,
+                  buttonsRow,
+                ],
+              );
+            },
           ),
           SizedBox(height: AppTheme.spacingXL),
 

@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../services/auth_storage.dart';
 import 'package:dio/dio.dart';
 import '../models/captain_model.dart';
 import '../models/order_model.dart';
@@ -18,7 +18,7 @@ class CaptainController extends ChangeNotifier {
   final MesasService _mesasService = MesasService();
   final OrdenesService _ordenesService = OrdenesService();
   final BillRepository _billRepository = BillRepository();
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
   KitchenAlertsService? _kitchenAlertsService;
   
   // Estado de las alertas
@@ -985,7 +985,7 @@ class CaptainController extends ChangeNotifier {
     try {
       final alertaIdInt = int.tryParse(alertId);
       if (alertaIdInt != null) {
-        final token = await _storage.read(key: 'accessToken');
+        final token = await _storage.read('accessToken');
         if (token != null) {
           final dio = Dio(BaseOptions(
             baseUrl: ApiConfig.baseUrl,
@@ -1018,7 +1018,7 @@ class CaptainController extends ChangeNotifier {
     
     // Marcar todas las alertas como leídas en el backend
     try {
-      final token = await _storage.read(key: 'accessToken');
+      final token = await _storage.read('accessToken');
       if (token != null) {
         final dio = Dio(BaseOptions(
           baseUrl: ApiConfig.baseUrl,
@@ -1057,7 +1057,7 @@ class CaptainController extends ChangeNotifier {
         },
       ));
       
-      final token = await _storage.read(key: 'accessToken');
+      final token = await _storage.read('accessToken');
       if (token != null) {
         dio.options.headers['Authorization'] = 'Bearer $token';
       }

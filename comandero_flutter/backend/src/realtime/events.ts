@@ -92,15 +92,19 @@ export const emitOrderCreated = async (orden: OrdenDetalle) => {
 
   if (esRelevanteParaCocina) {
     // Ejecutar impresión automática de forma asíncrona (no bloquea)
-    // Usar setImmediate para ejecutar después de que se complete el evento
     setImmediate(async () => {
+      const { logger } = await import('../config/logger.js');
       try {
         const { imprimirComandaAutomatica } = await import('../modules/comandas/comandas.service.js');
-        await imprimirComandaAutomatica(orden.id);
+        logger.info({ ordenId: orden.id }, '🖨️ Disparando impresión automática de comanda');
+        const result = await imprimirComandaAutomatica(orden.id);
+        if (result.exito) {
+          logger.info({ ordenId: orden.id }, `✅ Comanda impresa: ${result.mensaje}`);
+        } else {
+          logger.warn({ ordenId: orden.id, mensaje: result.mensaje }, '⚠️ Comanda no impresa');
+        }
       } catch (error: any) {
-        // Log error pero no fallar la creación de la orden
-        const { logger } = await import('../config/logger.js');
-        logger.error({ err: error, ordenId: orden.id }, 'Error en impresión automática de comanda');
+        logger.error({ err: error, ordenId: orden.id }, '❌ Error en impresión automática de comanda');
       }
     });
   }

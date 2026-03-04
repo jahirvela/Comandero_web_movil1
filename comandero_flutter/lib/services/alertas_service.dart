@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
+import 'auth_storage.dart';
 import 'socket_service.dart';
 import 'auth_service.dart';
 
@@ -14,7 +14,7 @@ class AlertasService {
     ),
   );
   final SocketService _socketService = SocketService();
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
   final AuthService _authService = AuthService();
 
   AlertasService() {
@@ -22,7 +22,7 @@ class AlertasService {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          final token = await _storage.read(key: 'accessToken');
+          final token = await _storage.read('accessToken');
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
           }

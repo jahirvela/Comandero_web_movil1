@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import '../config/api_config.dart';
 import '../models/admin_model.dart';
 import '../utils/date_utils.dart' as date_utils;
 import 'api_service.dart';
@@ -158,7 +159,7 @@ class UsuariosService {
     } on DioException catch (e) {
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
-        throw Exception('No se pudo conectar al servidor. Verifica que el backend esté corriendo en http://localhost:3000');
+        throw Exception('No se pudo conectar al servidor. Verifica que el backend esté disponible en ${ApiConfig.baseUrl}');
       }
       if (e.response != null) {
         final statusCode = e.response!.statusCode;

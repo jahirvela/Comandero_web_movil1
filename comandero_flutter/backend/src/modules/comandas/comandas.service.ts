@@ -12,6 +12,7 @@ export const imprimirComandaAutomatica = async (
   ordenId: number
 ): Promise<{ exito: boolean; mensaje: string; rutaArchivo?: string }> => {
   try {
+    logger.info({ ordenId }, '🖨️ imprimirComandaAutomatica: iniciando');
     // Verificar si ya fue impresa
     const yaImpresa = await verificarComandaImpresa(ordenId);
     if (yaImpresa) {

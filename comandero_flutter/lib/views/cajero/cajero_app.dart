@@ -279,71 +279,129 @@ class CajeroApp extends StatelessWidget {
     CajeroController controller,
     bool isTablet,
   ) {
-    return Row(
-      children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => _showCashOpenModal(context, controller, isTablet),
-            icon: const Icon(Icons.lock_open),
-            label: Text(
-              'Apertura de Caja',
-              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 600;
+        final spacing = isNarrow ? 8.0 : 12.0;
+        final paddingV = isTablet ? 16.0 : (isNarrow ? 10.0 : 14.0);
+        final paddingH = isNarrow ? 8.0 : 12.0;
+        final fontSize = isTablet ? 16.0 : (isNarrow ? 12.0 : 14.0);
+        final iconSize = isNarrow ? 18.0 : 24.0;
+
+        if (isNarrow) {
+          return Wrap(
+            spacing: spacing,
+            runSpacing: spacing,
+            children: [
+              SizedBox(
+                width: (constraints.maxWidth - spacing) / 2,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showCashOpenModal(context, controller, isTablet),
+                  icon: Icon(Icons.lock_open, size: iconSize),
+                  label: Text('Apertura de Caja', style: TextStyle(fontSize: fontSize)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: paddingV),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: (constraints.maxWidth - spacing) / 2,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showCashCloseModal(context, controller, isTablet),
+                  icon: Icon(Icons.account_balance_wallet, size: iconSize),
+                  label: Text('Cerrar Caja', style: TextStyle(fontSize: fontSize)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: paddingV),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: (constraints.maxWidth - spacing) / 2,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showDownloadCSVDialog(context, isTablet),
+                  icon: Icon(Icons.download, size: iconSize),
+                  label: Text('Descargar CSV', style: TextStyle(fontSize: fontSize)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: paddingV),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: (constraints.maxWidth - spacing) / 2,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showDownloadPDFDialog(context, isTablet),
+                  icon: Icon(Icons.picture_as_pdf, size: iconSize),
+                  label: Text('Descargar PDF', style: TextStyle(fontSize: fontSize)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange,
+                    side: const BorderSide(color: Colors.orange),
+                    padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: paddingV),
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _showCashOpenModal(context, controller, isTablet),
+                icon: const Icon(Icons.lock_open),
+                label: Text('Apertura de Caja', style: TextStyle(fontSize: fontSize)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: paddingV),
+                ),
+              ),
             ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
+            SizedBox(width: spacing),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _showCashCloseModal(context, controller, isTablet),
+                icon: const Icon(Icons.account_balance_wallet),
+                label: Text('Cerrar Caja', style: TextStyle(fontSize: fontSize)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.success,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: paddingV),
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => _showCashCloseModal(context, controller, isTablet),
-            icon: const Icon(Icons.account_balance_wallet),
-            label: Text(
-              'Cerrar Caja',
-              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+            SizedBox(width: spacing),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _showDownloadCSVDialog(context, isTablet),
+                icon: const Icon(Icons.download),
+                label: Text('Descargar CSV', style: TextStyle(fontSize: fontSize)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding: EdgeInsets.symmetric(vertical: paddingV),
+                ),
+              ),
             ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
+            SizedBox(width: spacing),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _showDownloadPDFDialog(context, isTablet),
+                icon: const Icon(Icons.picture_as_pdf),
+                label: Text('Descargar PDF', style: TextStyle(fontSize: fontSize)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orange,
+                  side: const BorderSide(color: Colors.orange),
+                  padding: EdgeInsets.symmetric(vertical: paddingV),
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _showDownloadCSVDialog(context, isTablet),
-            icon: const Icon(Icons.download),
-            label: Text(
-              'Descargar CSV',
-              style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
-            ),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _showDownloadPDFDialog(context, isTablet),
-            icon: const Icon(Icons.picture_as_pdf),
-            label: Text(
-              'Descargar PDF',
-              style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
-            ),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.orange,
-              side: BorderSide(color: Colors.orange),
-              padding: EdgeInsets.symmetric(vertical: isTablet ? 16.0 : 14.0),
-            ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 
@@ -539,29 +597,67 @@ class CajeroApp extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Resumen de Consumo del Día',
-                      style: TextStyle(
-                        fontSize: isTablet ? 18.0 : 16.0,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () {
-                        ctrl.setCurrentView('closures');
-                        ctrl.loadCashClosures();
-                      },
-                      icon: const Icon(Icons.open_in_new),
-                      label: const Text('Ver en Cierre de Caja'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                      ),
-                    ),
-                  ],
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isNarrow = constraints.maxWidth < 400;
+                    if (isNarrow) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Resumen de Consumo del Día',
+                            style: TextStyle(
+                              fontSize: isTablet ? 18.0 : 16.0,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: () {
+                              ctrl.setCurrentView('closures');
+                              ctrl.loadCashClosures();
+                            },
+                            icon: Icon(Icons.open_in_new, size: isTablet ? 20.0 : 18.0),
+                            label: const Text('Ver en Cierre de Caja'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.primary,
+                              padding: EdgeInsets.zero,
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'Resumen de Consumo del Día',
+                            style: TextStyle(
+                              fontSize: isTablet ? 18.0 : 16.0,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () {
+                            ctrl.setCurrentView('closures');
+                            ctrl.loadCashClosures();
+                          },
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Ver en Cierre de Caja'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
                 LayoutBuilder(
@@ -2168,10 +2264,11 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isNarrow = constraints.maxWidth < 500;
+                    final titleRow = Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
                           Icons.history,
@@ -2188,71 +2285,99 @@ class _CollectionHistoryWidgetState extends State<_CollectionHistoryWidget> {
                           ),
                         ),
                       ],
-                    ),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: AppColors.border),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _selectedPeriod,
-                              isDense: true,
-                              items: const [
-                                DropdownMenuItem(value: 'hoy', child: Text('Hoy')),
-                                DropdownMenuItem(value: 'ayer', child: Text('Ayer')),
-                                DropdownMenuItem(value: 'semana', child: Text('En la semana')),
-                                DropdownMenuItem(value: 'mes', child: Text('Hace un mes')),
-                                DropdownMenuItem(value: 'personalizado', child: Text('Rango personalizado')),
-                              ],
-                              onChanged: (value) {
-                                if (value != null) {
-                                  final openCalendar = value == 'personalizado';
-                                  setState(() {
-                                    _selectedPeriod = value;
-                                    if (value == 'personalizado' && _customStart == null && _customEnd == null) {
-                                      final now = date_utils.AppDateUtils.nowCdmx();
-                                      _customStart = now.subtract(const Duration(days: 7));
-                                      _customEnd = now;
-                                    }
-                                  });
-                                  if (openCalendar && context.mounted) {
-                                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                                      if (mounted && context.mounted) _pickDate(context, true);
-                                    });
-                                  }
+                    );
+                    final dropdown = Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: AppColors.border),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedPeriod,
+                          isDense: true,
+                          items: const [
+                            DropdownMenuItem(value: 'hoy', child: Text('Hoy')),
+                            DropdownMenuItem(value: 'ayer', child: Text('Ayer')),
+                            DropdownMenuItem(value: 'semana', child: Text('En la semana')),
+                            DropdownMenuItem(value: 'mes', child: Text('Hace un mes')),
+                            DropdownMenuItem(value: 'personalizado', child: Text('Rango personalizado')),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              final openCalendar = value == 'personalizado';
+                              setState(() {
+                                _selectedPeriod = value;
+                                if (value == 'personalizado' && _customStart == null && _customEnd == null) {
+                                  final now = date_utils.AppDateUtils.nowCdmx();
+                                  _customStart = now.subtract(const Duration(days: 7));
+                                  _customEnd = now;
                                 }
-                              },
-                              style: TextStyle(
-                                fontSize: widget.isTablet ? 12.0 : 11.0,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
+                              });
+                              if (openCalendar && context.mounted) {
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (mounted && context.mounted) _pickDate(context, true);
+                                });
+                              }
+                            }
+                          },
+                          style: TextStyle(
+                            fontSize: widget.isTablet ? 12.0 : 11.0,
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.success.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+                      ),
+                    );
+                    final totalBadge = Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+                      ),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Total: \$${totalGeneral.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: widget.isTablet ? 13.0 : 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.success,
                           ),
-                          child: Text(
-                            'Total: \$${totalGeneral.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: widget.isTablet ? 13.0 : 12.0,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.success,
-                            ),
+                        ),
+                      ),
+                    );
+                    if (isNarrow) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          titleRow,
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              dropdown,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: totalBadge,
+                              ),
+                            ],
                           ),
+                        ],
+                      );
+                    }
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        titleRow,
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [dropdown, totalBadge],
                         ),
                       ],
-                    ),
-                  ],
+                    );
+                  },
                 ),
                 if (_selectedPeriod == 'personalizado') ...[
                   const SizedBox(height: 10),

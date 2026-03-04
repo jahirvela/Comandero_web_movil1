@@ -86,10 +86,11 @@ class TableView extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 24),
-          // Columna lateral - Historial de pedidos
+          // Columna lateral - Historial de pedidos (altura acotada por Row)
           Expanded(
             flex: 1,
-            child: _buildOrderHistoryColumn(context, controller, table, true),
+            child: _buildOrderHistoryColumn(
+                context, controller, table, true, hasBoundedHeight: true),
           ),
         ],
       ),
@@ -104,12 +105,18 @@ class TableView extends StatelessWidget {
     bool isTablet,
   ) {
     return SingleChildScrollView(
-      padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+      padding: EdgeInsets.only(
+        left: isTablet ? 20.0 : 16.0,
+        right: isTablet ? 20.0 : 16.0,
+        top: isTablet ? 20.0 : 16.0,
+        bottom: (isTablet ? 20.0 : 16.0) + 88, // espacio para FAB "Abierto"
+      ),
       child: Column(
         children: [
           _buildMainColumn(context, controller, table, cart, isTablet),
           const SizedBox(height: 24),
-          _buildOrderHistoryColumn(context, controller, table, isTablet),
+          _buildOrderHistoryColumn(context, controller, table, isTablet,
+              hasBoundedHeight: false),
         ],
       ),
     );
@@ -718,20 +725,27 @@ class TableView extends StatelessWidget {
         // Botón Dividir Cuenta
         SizedBox(
           width: double.infinity,
-          height: isTablet ? 48.0 : 44.0,
           child: OutlinedButton.icon(
             onPressed: () {
-              // Activar modo dividido y navegar a la vista de cuenta dividida
               controller.setDividedAccountMode(true);
               controller.setCurrentView('divided_account');
             },
-            icon: const Icon(Icons.people),
+            icon: const Icon(Icons.people, size: 22),
             label: Text(
               'Dividir Cuenta',
-              style: TextStyle(fontSize: isTablet ? 16.0 : 14.0),
+              style: TextStyle(
+                fontSize: isTablet ? 16.0 : 14.0,
+                fontWeight: FontWeight.w500,
+              ),
             ),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.info,
+              padding: EdgeInsets.symmetric(
+                horizontal: isTablet ? 20.0 : 16.0,
+                vertical: isTablet ? 14.0 : 12.0,
+              ),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               side: BorderSide(
                 color: AppColors.info.withValues(alpha: 0.3),
               ),
@@ -847,8 +861,9 @@ class TableView extends StatelessWidget {
     BuildContext context,
     MeseroController controller,
     TableModel table,
-    bool isTablet,
-  ) {
+    bool isTablet, {
+    bool hasBoundedHeight = true,
+  }) {
     // Usar Consumer para que se actualice cuando cambie el historial
     return Consumer<MeseroController>(
       builder: (context, ctrl, child) {
@@ -991,17 +1006,29 @@ class TableView extends StatelessWidget {
                   ),
                 ),
 
-                // Lista de pedidos
-                Expanded(
-                  child: normalizedHistory.isEmpty
+                // Lista de pedidos (en móvil sin altura acotada no usar Expanded)
+                if (hasBoundedHeight)
+                  Expanded(
+                    child: normalizedHistory.isEmpty
+                        ? _buildEmptyOrderHistory(isTablet, table, ctrl)
+                        : _buildOrderHistoryList(
+                            context,
+                            normalizedHistory,
+                            isTablet,
+                            table,
+                            shrinkWrap: false,
+                          ),
+                  )
+                else
+                  normalizedHistory.isEmpty
                       ? _buildEmptyOrderHistory(isTablet, table, ctrl)
                       : _buildOrderHistoryList(
                           context,
                           normalizedHistory,
                           isTablet,
                           table,
+                          shrinkWrap: true,
                         ),
-                ),
               ],
             ),
           ),
@@ -1057,20 +1084,28 @@ class TableView extends StatelessWidget {
     BuildContext context,
     List<Map<String, dynamic>> orderHistory,
     bool isTablet,
-    TableModel table,
-  ) {
+    TableModel table, {
+    bool shrinkWrap = false,
+  }) {
+    final listView = ListView.builder(
+      shrinkWrap: shrinkWrap,
+      physics: shrinkWrap
+          ? const NeverScrollableScrollPhysics()
+          : null,
+      padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
+      itemCount: orderHistory.length,
+      itemBuilder: (context, index) {
+        final order = orderHistory[index];
+        return _buildOrderHistoryItem(context, order, isTablet, table);
+      },
+    );
     return Column(
+      mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
       children: [
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
-            itemCount: orderHistory.length,
-            itemBuilder: (context, index) {
-              final order = orderHistory[index];
-              return _buildOrderHistoryItem(context, order, isTablet, table);
-            },
-          ),
-        ),
+        if (shrinkWrap)
+          listView
+        else
+          Expanded(child: listView),
         // Botón de recargar historial siempre visible
         Padding(
           padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),

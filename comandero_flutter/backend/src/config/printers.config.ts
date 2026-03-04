@@ -38,6 +38,8 @@ export interface PrinterConfigEntry {
   host?: string;
   /** Para type=tcp */
   port?: number;
+  /** true = impresora USB en otro equipo; el servidor encola y un agente local imprime */
+  impresionRemota?: boolean;
 }
 
 const DEFAULT_PAPER_WIDTH: PaperWidth = 80;

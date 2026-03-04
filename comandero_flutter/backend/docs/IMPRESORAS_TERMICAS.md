@@ -144,3 +144,20 @@ PRINTER_SIMULATION_PATH=./tickets
 ```
 
 O en `printers.json` una impresora con `"type": "simulation"` y `"documents": ["comanda", "ticket"]`. Los tickets y comandas se guardan como `.txt` en la carpeta indicada.
+
+---
+
+## Solución de problemas: la comanda no imprime al enviar a cocina
+
+1. **Revisa los logs del backend** al enviar un pedido a cocina. Deberías ver líneas como:
+   - `🖨️ Disparando impresión automática de comanda` (ordenId: X)
+   - `Impresoras para comanda` (numImpresoras, nombres)
+   - `✅ Comanda impresa` o `⚠️ Comanda no impresa` (y el mensaje)
+
+2. **Si sale "No hay impresoras configuradas para comanda"**: la tabla `impresora` no tiene ninguna fila con `activo = 1` e `imprime_comanda = 1`. Configura una impresora en Admin → Impresoras térmicas y marca **Comanda: Sí**.
+
+3. **Si el backend corre en un servidor remoto** (ej. api.comancleth.com) y la impresora es **USB** en un PC local: el servidor no tiene acceso al USB. Opciones:
+   - **Impresión remota (recomendado):** Marcar la impresora como "Impresión remota" en Admin y ejecutar el **agente de impresión** en el PC donde está la USB. Ver [Agente de impresión USB](AGENTE_IMPRESION_USB.md).
+   - Ejecutar el backend **en el mismo equipo** donde está conectada la impresora USB.
+   - Usar una impresora de **red (TCP)** con IP y puerto.
+   - Usar **simulación** y imprimir el archivo generado desde el equipo donde está la impresora.

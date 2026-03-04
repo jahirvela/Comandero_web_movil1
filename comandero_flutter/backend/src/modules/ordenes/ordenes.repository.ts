@@ -192,6 +192,8 @@ export const obtenerOrdenBasePorId = async (id: number) => {
 };
 
 export const obtenerItemsOrden = async (ordenId: number) => {
+  // Usar solo p.nombre y pt.etiqueta (JOINs) para no depender de columnas
+  // producto_nombre/producto_tamano_etiqueta en orden_item (pueden no existir en BD antigua).
   const [rows] = await pool.query<OrdenItemRow[]>(
     `
     SELECT
@@ -203,8 +205,8 @@ export const obtenerItemsOrden = async (ordenId: number) => {
       oi.precio_unitario,
       oi.total_linea,
       oi.nota,
-      COALESCE(oi.producto_nombre, p.nombre) AS producto_nombre,
-      COALESCE(oi.producto_tamano_etiqueta, pt.etiqueta) AS producto_tamano_etiqueta
+      p.nombre AS producto_nombre,
+      pt.etiqueta AS producto_tamano_etiqueta
     FROM orden_item oi
     LEFT JOIN producto p ON p.id = oi.producto_id
     LEFT JOIN producto_tamano pt ON pt.id = oi.producto_tamano_id
@@ -219,7 +221,7 @@ export const obtenerItemsOrden = async (ordenId: number) => {
     productoId: row.producto_id,
     productoNombre: row.producto_nombre ?? 'Producto',
     productoTamanoId: row.producto_tamano_id,
-    productoTamanoEtiqueta: row.producto_tamano_etiqueta,
+    productoTamanoEtiqueta: row.producto_tamano_etiqueta ?? null,
     cantidad: Number(row.cantidad),
     precioUnitario: Number(row.precio_unitario),
     totalLinea: Number(row.total_linea),
@@ -333,24 +335,12 @@ export const crearOrden = async ({
     const ordenId = result.insertId;
 
     for (const item of items) {
-      const [nombreRows] = await conn.query<RowDataPacket[]>(
-        `SELECT p.nombre AS producto_nombre, pt.etiqueta AS producto_tamano_etiqueta
-         FROM producto p
-         LEFT JOIN producto_tamano pt ON pt.id = ?
-         WHERE p.id = ?`,
-        [item.productoTamanoId ?? null, item.productoId]
-      );
-      const productoNombre = (nombreRows[0]?.producto_nombre as string) ?? 'Producto';
-      const productoTamanoEtiqueta = (nombreRows[0]?.producto_tamano_etiqueta as string) ?? null;
-
       const [itemResult] = await conn.execute<ResultSetHeader>(
         `
         INSERT INTO orden_item (
           orden_id,
           producto_id,
           producto_tamano_id,
-          producto_nombre,
-          producto_tamano_etiqueta,
           cantidad,
           precio_unitario,
           nota
@@ -359,8 +349,6 @@ export const crearOrden = async ({
           :ordenId,
           :productoId,
           :productoTamanoId,
-          :productoNombre,
-          :productoTamanoEtiqueta,
           :cantidad,
           :precioUnitario,
           :nota
@@ -370,8 +358,6 @@ export const crearOrden = async ({
           ordenId,
           productoId: item.productoId,
           productoTamanoId: item.productoTamanoId ?? null,
-          productoNombre,
-          productoTamanoEtiqueta,
           cantidad: item.cantidad,
           precioUnitario: item.precioUnitario,
           nota: item.nota ?? null
@@ -504,24 +490,12 @@ export const agregarItemsAOrden = async (
 ) => {
   await withTransaction(async (conn) => {
     for (const item of items) {
-      const [nombreRows] = await conn.query<RowDataPacket[]>(
-        `SELECT p.nombre AS producto_nombre, pt.etiqueta AS producto_tamano_etiqueta
-         FROM producto p
-         LEFT JOIN producto_tamano pt ON pt.id = ?
-         WHERE p.id = ?`,
-        [item.productoTamanoId ?? null, item.productoId]
-      );
-      const productoNombre = (nombreRows[0]?.producto_nombre as string) ?? 'Producto';
-      const productoTamanoEtiqueta = (nombreRows[0]?.producto_tamano_etiqueta as string) ?? null;
-
       const [itemResult] = await conn.execute<ResultSetHeader>(
         `
         INSERT INTO orden_item (
           orden_id,
           producto_id,
           producto_tamano_id,
-          producto_nombre,
-          producto_tamano_etiqueta,
           cantidad,
           precio_unitario,
           nota
@@ -530,8 +504,6 @@ export const agregarItemsAOrden = async (
           :ordenId,
           :productoId,
           :productoTamanoId,
-          :productoNombre,
-          :productoTamanoEtiqueta,
           :cantidad,
           :precioUnitario,
           :nota
@@ -541,8 +513,6 @@ export const agregarItemsAOrden = async (
           ordenId,
           productoId: item.productoId,
           productoTamanoId: item.productoTamanoId ?? null,
-          productoNombre,
-          productoTamanoEtiqueta,
           cantidad: item.cantidad,
           precioUnitario: item.precioUnitario,
           nota: item.nota ?? null

@@ -56,35 +56,51 @@ function normalizeTipoConexion(v: string | null | undefined): CajonTipoConexion 
   return 'via_impresora';
 }
 
+/** Columnas base que siempre existen (creadas con agregar-tabla-configuracion.sql). */
+const BASE_COLUMNS = 'id, iva_habilitado, actualizado_en';
+
+/** Columnas del cajón; solo existen si se aplicó agregar-configuracion-cajon.sql. */
+const CAJON_COLUMNS =
+  'cajon_habilitado, cajon_impresora_id, cajon_abrir_efectivo, cajon_abrir_tarjeta, cajon_tipo_conexion, cajon_marca, cajon_modelo, cajon_host, cajon_puerto, cajon_device';
+
 export const obtenerConfiguracion = async (): Promise<Configuracion> => {
   const [rows] = await pool.query<ConfiguracionRow[]>(
-    `SELECT id, iva_habilitado, actualizado_en,
-     cajon_habilitado, cajon_impresora_id, cajon_abrir_efectivo, cajon_abrir_tarjeta,
-     cajon_tipo_conexion, cajon_marca, cajon_modelo, cajon_host, cajon_puerto, cajon_device
-     FROM configuracion WHERE id = ?`,
+    `SELECT ${BASE_COLUMNS} FROM configuracion WHERE id = ?`,
     [ROW_ID]
   );
   const row = rows[0];
   if (!row) {
     return { ivaHabilitado: false, cajon: CAJON_DEFAULT };
   }
-  const hasCajonCols = row.cajon_habilitado !== undefined;
+
+  let cajon: ConfiguracionCajon = CAJON_DEFAULT;
+  try {
+    const [cajonRows] = await pool.query<ConfiguracionRow[]>(
+      `SELECT ${CAJON_COLUMNS} FROM configuracion WHERE id = ?`,
+      [ROW_ID]
+    );
+    const cajonRow = cajonRows[0];
+    if (cajonRow && cajonRow.cajon_habilitado !== undefined) {
+      cajon = {
+        habilitado: Boolean(cajonRow.cajon_habilitado),
+        impresoraId: cajonRow.cajon_impresora_id ?? null,
+        abrirEnEfectivo: cajonRow.cajon_abrir_efectivo !== undefined ? Boolean(cajonRow.cajon_abrir_efectivo) : true,
+        abrirEnTarjeta: Boolean(cajonRow.cajon_abrir_tarjeta ?? 0),
+        tipoConexion: normalizeTipoConexion(cajonRow.cajon_tipo_conexion),
+        marca: cajonRow.cajon_marca ?? null,
+        modelo: cajonRow.cajon_modelo ?? null,
+        host: cajonRow.cajon_host ?? null,
+        port: cajonRow.cajon_puerto ?? null,
+        device: cajonRow.cajon_device ?? null,
+      };
+    }
+  } catch {
+    // Columnas cajon_* no existen: no se aplicó la migración; usar valores por defecto.
+  }
+
   return {
     ivaHabilitado: Boolean(row.iva_habilitado),
-    cajon: hasCajonCols
-      ? {
-          habilitado: Boolean(row.cajon_habilitado),
-          impresoraId: row.cajon_impresora_id ?? null,
-          abrirEnEfectivo: row.cajon_abrir_efectivo !== undefined ? Boolean(row.cajon_abrir_efectivo) : true,
-          abrirEnTarjeta: Boolean(row.cajon_abrir_tarjeta ?? 0),
-          tipoConexion: normalizeTipoConexion(row.cajon_tipo_conexion),
-          marca: row.cajon_marca ?? null,
-          modelo: row.cajon_modelo ?? null,
-          host: row.cajon_host ?? null,
-          port: row.cajon_puerto ?? null,
-          device: row.cajon_device ?? null,
-        }
-      : CAJON_DEFAULT,
+    cajon,
   };
 };
 

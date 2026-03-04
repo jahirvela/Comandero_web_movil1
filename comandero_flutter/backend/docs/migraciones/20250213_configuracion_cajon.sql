@@ -1,4 +1,7 @@
--- Añade columnas del cajón a configuracion. Ejecutar una sola vez en la BD (ej. comandix).
+-- Configuración del cajón de dinero en tabla configuracion.
+-- Ejecutar una sola vez en producción si la tabla configuracion ya existe sin estas columnas.
+-- Tipo conexión: via_impresora (usa cajon_impresora_id) | red (cajon_host/cajon_puerto) | usb (cajon_device).
+
 ALTER TABLE configuracion
   ADD COLUMN cajon_habilitado TINYINT(1) NOT NULL DEFAULT 0,
   ADD COLUMN cajon_impresora_id INT UNSIGNED NULL,

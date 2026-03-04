@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter/foundation.dart';
 import '../config/api_config.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'auth_storage.dart';
 
 /// Estado de conexión de Socket.IO
 enum SocketConnectionState {
@@ -27,7 +27,7 @@ class SocketService {
   SocketService._internal();
 
   IO.Socket? _socket;
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
 
   // Stream controller para el estado de conexión
   final _connectionStateController =
@@ -159,8 +159,8 @@ class SocketService {
       }
       // Si después de esperar ya está conectado, verificar que sea con el usuario correcto
       if (_socket != null && _socket!.connected) {
-        final currentUserId = await _storage.read(key: 'userId');
-        final currentUserRole = await _storage.read(key: 'userRole');
+        final currentUserId = await _storage.read('userId');
+        final currentUserRole = await _storage.read('userRole');
         final socketUserId = getSocketUserId();
         final socketRole = getSocketUserRole();
 
@@ -192,10 +192,10 @@ class SocketService {
       // CRÍTICO: Leer el token del storage directamente (sin cache)
       // IMPORTANTE: Leer siempre del storage para asegurar que tenemos el token más reciente
       // En Flutter Web, puede haber problemas de sincronización, así que leemos múltiples veces si es necesario
-      String? token = await _storage.read(key: 'accessToken');
-      final station = await _storage.read(key: 'station');
-      String? userId = await _storage.read(key: 'userId');
-      String? userRole = await _storage.read(key: 'userRole');
+      String? token = await _storage.read('accessToken');
+      final station = await _storage.read('station');
+      String? userId = await _storage.read('userId');
+      String? userRole = await _storage.read('userRole');
 
       // Si el token es null, intentar leer nuevamente después de un pequeño delay
       // Esto ayuda con problemas de sincronización en Flutter Web
@@ -204,9 +204,9 @@ class SocketService {
           '⚠️ Socket: Token no encontrado en primer intento, reintentando...',
         );
         await Future.delayed(const Duration(milliseconds: 200));
-        token = await _storage.read(key: 'accessToken');
-        userId = await _storage.read(key: 'userId');
-        userRole = await _storage.read(key: 'userRole');
+        token = await _storage.read('accessToken');
+        userId = await _storage.read('userId');
+        userRole = await _storage.read('userRole');
       }
 
       // Log de debug para ver qué se está leyendo
@@ -290,9 +290,9 @@ class SocketService {
       // En Flutter Web, FlutterSecureStorage puede tener problemas de sincronización
       // así que leemos el token una última vez justo antes de usarlo
       await Future.delayed(const Duration(milliseconds: 100));
-      final finalToken = await _storage.read(key: 'accessToken');
-      final finalUserIdFromStorage = await _storage.read(key: 'userId');
-      final finalRoleFromStorage = await _storage.read(key: 'userRole');
+      final finalToken = await _storage.read('accessToken');
+      final finalUserIdFromStorage = await _storage.read('userId');
+      final finalRoleFromStorage = await _storage.read('userRole');
 
       // Usar el token más reciente si está disponible
       if (finalToken != null && finalToken.isNotEmpty) {
@@ -421,8 +421,8 @@ class SocketService {
       );
 
       // Verificar que el usuario del socket coincida con el del storage
-      final storedUserId = await _storage.read(key: 'userId') ?? '';
-      final storedRoleRaw = await _storage.read(key: 'userRole') ?? '';
+      final storedUserId = await _storage.read('userId') ?? '';
+      final storedRoleRaw = await _storage.read('userRole') ?? '';
       final storedRole = _normalizeRole(storedRoleRaw);
 
       if (storedUserId.isEmpty || storedRole.isEmpty) {

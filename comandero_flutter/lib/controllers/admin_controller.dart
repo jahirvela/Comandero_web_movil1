@@ -44,6 +44,21 @@ class AdminController extends ChangeNotifier {
   final ConfiguracionService _configuracionService = ConfiguracionService();
   final ImpresorasService _impresorasService = ImpresorasService();
 
+  /// Mensaje corto y amigable para errores de configuración (evitar texto técnico en rojo).
+  static String _mensajeAmigableConfig(dynamic e) {
+    final s = e.toString();
+    if (s.contains('401') || s.contains('Unauthorized')) {
+      return 'Sesión expirada o no autorizada. Vuelve a iniciar sesión.';
+    }
+    if (s.contains('timeout') || s.contains('connection')) {
+      return 'No se pudo conectar al servidor. Comprueba tu conexión e intenta de nuevo.';
+    }
+    if (s.contains('500') || s.contains('Internal Server')) {
+      return 'Error en el servidor. Intenta más tarde.';
+    }
+    return 'No se pudo cargar la configuración. Comprueba tu conexión e intenta de nuevo.';
+  }
+
   String _normalizeInventoryCategory(String? value) {
     final raw = value?.trim() ?? '';
     if (raw.isEmpty) return 'Otros';
@@ -204,6 +219,13 @@ class AdminController extends ChangeNotifier {
   bool _isLoadingImpresoras = false;
   String? _impresorasError;
 
+  // Plantilla de impresión: varios tipos (ticket_mesa, ticket_para_llevar, ticket_dividida, ticket_cobro, comanda)
+  String _selectedTipoPlantilla = 'ticket_cobro';
+  PlantillaImpresionModel? _plantillaTicket;
+  bool _isLoadingPlantillaTicket = false;
+  bool _isSavingPlantillaTicket = false;
+  String? _plantillaTicketError;
+
   // Getters
   List<AdminUser> get users => _users;
   List<Role> get roles => _roles;
@@ -251,6 +273,20 @@ class AdminController extends ChangeNotifier {
   List<ImpresoraModel> get impresoras => _impresoras;
   bool get isLoadingImpresoras => _isLoadingImpresoras;
   String? get impresorasError => _impresorasError;
+  String get selectedTipoPlantilla => _selectedTipoPlantilla;
+  PlantillaImpresionModel? get plantillaTicket => _plantillaTicket;
+  bool get isLoadingPlantillaTicket => _isLoadingPlantillaTicket;
+  bool get isSavingPlantillaTicket => _isSavingPlantillaTicket;
+  String? get plantillaTicketError => _plantillaTicketError;
+
+  /// Tipos de plantilla: ticket de cobro (general), en mesa, para llevar, cuenta dividida, comanda.
+  static const List<Map<String, String>> tiposPlantilla = [
+    {'tipo': 'ticket_cobro', 'label': 'Ticket de cobro (general)'},
+    {'tipo': 'ticket_mesa', 'label': 'Ticket en mesa'},
+    {'tipo': 'ticket_para_llevar', 'label': 'Ticket para llevar'},
+    {'tipo': 'ticket_dividida', 'label': 'Ticket cuenta dividida'},
+    {'tipo': 'comanda', 'label': 'Comanda (cocina)'},
+  ];
 
   // Obtener usuarios filtrados
   List<AdminUser> get filteredUsers {
@@ -662,19 +698,30 @@ class AdminController extends ChangeNotifier {
   }
 
   /// Cargar configuración (IVA habilitado, etc.). Usado en vista Configuración.
+  /// Reintenta una vez tras breve espera si falla (p. ej. 401 por token no listo en web).
   Future<void> loadConfiguracion() async {
     try {
       _configuracionError = null;
-      final config = await _configuracionService.getConfiguracion();
+      var config = await _configuracionService.getConfiguracion();
       _ivaHabilitado = config.ivaHabilitado;
       _configuracionCajon = config.cajon;
       notifyListeners();
     } catch (e) {
-      print('Error al cargar configuración: $e');
-      _configuracionError = e.toString().replaceFirst('Exception: ', '');
-      _ivaHabilitado = false;
-      _configuracionCajon = ConfiguracionCajonModel();
-      notifyListeners();
+      print('Error al cargar configuración (reintentando en 600ms): $e');
+      await Future.delayed(const Duration(milliseconds: 600));
+      try {
+        final config = await _configuracionService.getConfiguracion();
+        _ivaHabilitado = config.ivaHabilitado;
+        _configuracionCajon = config.cajon;
+        _configuracionError = null;
+        notifyListeners();
+      } catch (e2) {
+        print('Error al cargar configuración (tras reintento): $e2');
+        _configuracionError = _mensajeAmigableConfig(e2);
+        _ivaHabilitado = false;
+        _configuracionCajon = ConfiguracionCajonModel();
+        notifyListeners();
+      }
     }
   }
 
@@ -688,7 +735,7 @@ class AdminController extends ChangeNotifier {
       _configuracionCajon = config.cajon;
     } catch (e) {
       print('Error al actualizar configuración cajón: $e');
-      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+      _configuracionError = _mensajeAmigableConfig(e);
     } finally {
       _isSavingConfiguracion = false;
       notifyListeners();
@@ -705,9 +752,56 @@ class AdminController extends ChangeNotifier {
       _ivaHabilitado = config.ivaHabilitado;
     } catch (e) {
       print('Error al actualizar IVA: $e');
-      _configuracionError = e.toString().replaceFirst('Exception: ', '');
+      _configuracionError = _mensajeAmigableConfig(e);
     } finally {
       _isSavingConfiguracion = false;
+      notifyListeners();
+    }
+  }
+
+  /// Carga la plantilla del tipo seleccionado (o del tipo indicado si se pasa).
+  Future<void> loadPlantillaTicket([String? tipo]) async {
+    final t = tipo ?? _selectedTipoPlantilla;
+    try {
+      _isLoadingPlantillaTicket = true;
+      _plantillaTicketError = null;
+      notifyListeners();
+      _plantillaTicket = await _configuracionService.getPlantillaImpresion(t);
+    } catch (e) {
+      print('Error al cargar plantilla $t: $e');
+      _plantillaTicketError = _mensajeAmigableConfig(e);
+      _plantillaTicket = null;
+    } finally {
+      _isLoadingPlantillaTicket = false;
+      notifyListeners();
+    }
+  }
+
+  void setSelectedTipoPlantilla(String tipo) {
+    if (_selectedTipoPlantilla == tipo) return;
+    _selectedTipoPlantilla = tipo;
+    _plantillaTicket = null;
+    notifyListeners();
+    loadPlantillaTicket(tipo);
+  }
+
+  Future<bool> savePlantillaTicket(String contenido, String? plantillaLineaItem) async {
+    try {
+      _isSavingPlantillaTicket = true;
+      _plantillaTicketError = null;
+      notifyListeners();
+      _plantillaTicket = await _configuracionService.putPlantillaImpresion(
+        _selectedTipoPlantilla,
+        contenido,
+        plantillaLineaItem,
+      );
+      return true;
+    } catch (e) {
+      print('Error al guardar plantilla $_selectedTipoPlantilla: $e');
+      _plantillaTicketError = _mensajeAmigableConfig(e);
+      return false;
+    } finally {
+      _isSavingPlantillaTicket = false;
       notifyListeners();
     }
   }
@@ -772,6 +866,22 @@ class AdminController extends ChangeNotifier {
       _impresorasError = e.toString().replaceFirst('Exception: ', '');
       notifyListeners();
       return false;
+    }
+  }
+
+  /// Genera clave para el agente de impresión (solo se muestra una vez). Recargar impresoras después.
+  Future<String?> generarClaveAgente(int impresoraId) async {
+    try {
+      _impresorasError = null;
+      final clave = await _impresorasService.generarClaveAgente(impresoraId);
+      if (clave != null) await loadImpresoras();
+      notifyListeners();
+      return clave;
+    } catch (e) {
+      print('Error al generar clave agente: $e');
+      _impresorasError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+      return null;
     }
   }
 

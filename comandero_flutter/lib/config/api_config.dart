@@ -33,6 +33,65 @@ class ApiConfig {
     defaultValue: 'https://api.comandix.com',
   );
 
+  /// Normaliza una URL para que siempre tenga protocolo y host correctos.
+  /// - "https:/api.dominio.com" -> "https://api.dominio.com"
+  /// - "https:/.dominio.com" (falta "api") -> "https://api.dominio.com"
+  /// - "https://https:/.dominio.com" (doble protocolo) -> "https://api.dominio.com"
+  /// - "https" solo (sin host) no se considera válida; se devuelve vacía para que se use el default.
+  static String _normalizeUrl(String url) {
+    if (url.isEmpty) return url;
+    String t = url.trim();
+    // Quitar doble protocolo (ej. "https://https:" o "http://http:")
+    if (t.contains('https://https:') || t.contains('http://http:')) {
+      t = t
+          .replaceFirst('https://https:', 'https:')
+          .replaceFirst('http://http:', 'http:');
+    }
+    // Corregir "https:/" o "http:/" (una barra) a "https://" o "http://"
+    if (t.startsWith('https:/') && !t.startsWith('https://')) {
+      t = 'https://${t.substring(7)}';
+    } else if (t.startsWith('http:/') && !t.startsWith('http://')) {
+      t = 'http://${t.substring(6)}';
+    }
+    // Si el host empieza con punto (ej. "https://.comancleth.com"), anteponer "api"
+    final protoEnd = t.indexOf('://');
+    if (protoEnd != -1) {
+      final afterProto = t.substring(protoEnd + 3);
+      if (afterProto.startsWith('.') && afterProto.contains('.')) {
+        t = '${t.substring(0, protoEnd)}://api$afterProto';
+      }
+      // Rechazar URL cuyo "host" sea solo el esquema (ej. "https://https" o "https://http")
+      final hostPart = afterProto.split('/').first.split(':').first;
+      if (hostPart.isEmpty ||
+          hostPart == 'http' ||
+          hostPart == 'https') {
+        return '';
+      }
+    } else {
+      // Sin "://" (ej. solo "https" o "http") -> no es una URL válida
+      return '';
+    }
+    return t;
+  }
+
+  /// Extrae el origen (scheme + host + port) de una URL base para usar en Socket.IO.
+  /// Evita construir URLs inválidas como "https://https" cuando base está mal formada.
+  static String _originFromBase(String base) {
+    if (base.isEmpty) return '';
+    final normalized = base.trim();
+    final protoEnd = normalized.indexOf('://');
+    if (protoEnd == -1) return '';
+    final scheme = normalized.substring(0, protoEnd);
+    final afterProto = normalized.substring(protoEnd + 3);
+    final hostPart = afterProto.split('/').first;
+    if (hostPart.isEmpty) return '';
+    final host = hostPart.split(':').first;
+    final portPart = hostPart.contains(':') ? hostPart.split(':').last : null;
+    if (host == 'http' || host == 'https') return '';
+    final port = portPart != null && portPart.isNotEmpty ? ':$portPart' : '';
+    return '$scheme://$host$port';
+  }
+
   /// IP local detectada automáticamente (para dispositivos físicos Android)
   /// Se detecta en tiempo de ejecución la primera vez que se accede
   static String? _cachedLocalIp;
@@ -334,19 +393,55 @@ class ApiConfig {
   );
 
   // ============================================
+  // FALLBACK EN WEB (build con API_URL mal)
+  // ============================================
+
+  /// En web en producción: si la URL del build está mal, derivar desde el host actual del navegador.
+  /// Así la app desplegada en comancleth.com usará https://api.comancleth.com sin recompilar.
+  static String? get _webProductionFallbackBaseUrl {
+    if (!kIsWeb || _environment != 'production') return null;
+    final host = Uri.base.host;
+    if (host.isEmpty || host == 'localhost') return null;
+    final scheme = Uri.base.scheme;
+    return '$scheme://api.$host/api';
+  }
+
+  static String? get _webProductionFallbackSocketUrl {
+    if (!kIsWeb || _environment != 'production') return null;
+    final host = Uri.base.host;
+    if (host.isEmpty || host == 'localhost') return null;
+    final scheme = Uri.base.scheme;
+    return '$scheme://api.$host';
+  }
+
+  /// True si la URL está claramente mal formada (ej. "https://https" o "https:/.dominio").
+  static bool _isUrlBroken(String url) {
+    if (url.isEmpty) return true;
+    return url.contains('https://https') ||
+        url.contains('http://http') ||
+        _originFromBase(url).isEmpty;
+  }
+
+  // ============================================
   // URL BASE DE LA API
   // ============================================
 
   /// URL base del backend
   static String get baseUrl {
-    // Si hay una URL personalizada, usarla
+    // Si hay una URL personalizada, usarla (normalizada)
     if (_customApiUrl.isNotEmpty) {
-      return _customApiUrl;
+      final u = _normalizeUrl(_customApiUrl);
+      if (u.isNotEmpty) return u;
     }
 
-    // En producción, usar la URL del VPS
+    // En producción, usar la URL del VPS (normalizada por si API_URL tiene typo)
     if (_environment == 'production') {
-      return _productionApiUrl;
+      final u = _normalizeUrl(_productionApiUrl);
+      if (u.isNotEmpty && !_isUrlBroken(u)) return u;
+      // Fallback en web: derivar desde el host actual (app en comancleth.com → api.comancleth.com)
+      final webFallback = _webProductionFallbackBaseUrl;
+      if (webFallback != null) return webFallback;
+      return 'https://api.comandix.com/api';
     }
 
     // En desarrollo, usar localhost/10.0.2.2/IP local
@@ -357,45 +452,45 @@ class ApiConfig {
   // URL DE SOCKET.IO
   // ============================================
 
-  /// URL para Socket.IO
+  /// URL para Socket.IO (origen: scheme + host + port, sin path).
   ///
-  /// En producción, debe ser la misma base que baseUrl pero sin /api
+  /// Se deriva de baseUrl de forma segura para no generar URLs inválidas
+  /// como "wss://https/socket.io" cuando API_URL está mal (ej. solo "https").
   static String get socketUrl {
-    // Si hay una URL personalizada, derivar Socket.IO de ella
+    // Si hay una URL personalizada, derivar origen de ella
     if (_customApiUrl.isNotEmpty) {
-      // Remover /api si existe
-      final url = _customApiUrl.replaceAll('/api', '');
-      return url;
+      final normalized = _normalizeUrl(_customApiUrl.replaceAll('/api', '').trim());
+      final origin = _originFromBase(normalized.isEmpty ? _customApiUrl : normalized);
+      return origin.isEmpty ? 'http://localhost:3000' : origin;
     }
 
-    // En producción, usar la URL del VPS sin /api
+    // En producción: derivar origen de baseUrl (nunca concatenar "https://" + url)
     if (_environment == 'production') {
-      // Remover /api si existe en la URL de producción
-      return _productionApiUrl.replaceAll('/api', '');
+      final base = baseUrl;
+      final origin = _originFromBase(base);
+      if (origin.isNotEmpty && !_isUrlBroken(origin)) {
+        return origin.endsWith('/') ? origin.substring(0, origin.length - 1) : origin;
+      }
+      // Fallback en web: mismo host que la app (app en comancleth.com → api.comancleth.com)
+      final webFallback = _webProductionFallbackSocketUrl;
+      if (webFallback != null) return webFallback;
+      return 'https://api.comandix.com';
     }
 
     // En desarrollo, usar localhost/10.0.2.2/IP local sin /api
     if (kIsWeb) {
       return 'http://localhost:3000';
     } else {
-      // Usar la misma lógica que baseUrl pero sin /api
-      // Prioridad 1: IP guardada manualmente por el usuario (más confiable)
       final manualIp = _manualLocalIp;
       if (manualIp != null && manualIp.isNotEmpty) {
         return 'http://$manualIp:3000';
       }
-      
-      // Prioridad 2: IP del servidor detectada automáticamente
       if (_serverIpFromBackend != null) {
         return 'http://$_serverIpFromBackend:3000';
       }
-      
-      // Prioridad 3: IP local detectada del dispositivo
       if (_cachedLocalIp != null) {
         return 'http://$_cachedLocalIp:3000';
       }
-      
-      // Por defecto, usar IP del servidor para pruebas locales
       return 'http://192.168.0.198:3000';
     }
   }

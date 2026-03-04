@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../services/auth_storage.dart';
 import '../models/table_model.dart';
 import '../models/product_model.dart';
 import '../models/payment_model.dart';
@@ -41,7 +41,7 @@ class MeseroController extends ChangeNotifier {
   final Map<String, bool> _historyCleared = {};
 
   // Storage para persistir el estado de historial limpiado
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthStorage _storage = AuthStorage();
 
   // Notificaciones pendientes
   final List<Map<String, dynamic>> _pendingNotifications = [];
@@ -139,10 +139,10 @@ class MeseroController extends ChangeNotifier {
       final cart = _tableOrders[tableId] ?? [];
       final key = '$_cartStoragePrefix$tableId';
       if (cart.isEmpty) {
-        await _storage.delete(key: key);
+        await _storage.delete(key);
       } else {
         final list = cart.map((e) => e.toJson()).toList();
-        await _storage.write(key: key, value: jsonEncode(list));
+        await _storage.write(key, jsonEncode(list));
       }
     } catch (e) {
       print('⚠️ Mesero: Error al persistir carrito mesa $tableId: $e');
@@ -153,7 +153,7 @@ class MeseroController extends ChangeNotifier {
   Future<void> _loadPersistedCartForTable(String tableId) async {
     try {
       final key = '$_cartStoragePrefix$tableId';
-      final raw = await _storage.read(key: key);
+      final raw = await _storage.read(key);
       if (raw == null || raw.isEmpty) return;
       final list = jsonDecode(raw) as List<dynamic>?;
       if (list == null || list.isEmpty) return;
@@ -284,9 +284,7 @@ class MeseroController extends ChangeNotifier {
   // Cargar notificaciones limpiadas desde storage
   Future<void> _loadClearedNotifications() async {
     try {
-      final clearedData = await _storage.read(
-        key: 'mesero_cleared_notifications',
-      );
+      final clearedData = await _storage.read('mesero_cleared_notifications');
       if (clearedData != null) {
         final List<dynamic> clearedList = clearedData
             .split(',')
@@ -303,10 +301,7 @@ class MeseroController extends ChangeNotifier {
   Future<void> _saveClearedNotifications() async {
     try {
       final clearedData = _clearedNotifications.join(',');
-      await _storage.write(
-        key: 'mesero_cleared_notifications',
-        value: clearedData,
-      );
+      await _storage.write('mesero_cleared_notifications', clearedData);
     } catch (e) {
       print('Error al guardar notificaciones limpiadas: $e');
     }
@@ -467,7 +462,7 @@ class MeseroController extends ChangeNotifier {
   // Cargar órdenes enviadas al cajero desde storage
   Future<void> _loadSentToCashierOrders() async {
     try {
-      final data = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+      final data = await _storage.read('mesero_sent_to_cashier_orders');
       print('📋 Storage data leído: $data');
       if (data != null && data.isNotEmpty) {
         final ids = data.split(',').where((id) => id.isNotEmpty);
@@ -492,7 +487,7 @@ class MeseroController extends ChangeNotifier {
   Future<void> _saveSentToCashierOrders() async {
     try {
       final data = _sentToCashierOrders.map((id) => id.toString()).join(',');
-      await _storage.write(key: 'mesero_sent_to_cashier_orders', value: data);
+      await _storage.write('mesero_sent_to_cashier_orders', data);
     } catch (e) {
       print('Error al guardar órdenes enviadas al cajero: $e');
     }
@@ -540,7 +535,7 @@ class MeseroController extends ChangeNotifier {
   Future<void> _loadClearedHistoryFlags() async {
     try {
       final clearedTablesJson =
-          await _storage.read(key: 'cleared_table_history') ?? '{}';
+          await _storage.read('cleared_table_history') ?? '{}';
       // Parsear JSON simple: {"1":true,"2":true}
       final clearedTables = <String, bool>{};
       if (clearedTablesJson != '{}' && clearedTablesJson.isNotEmpty) {
@@ -597,7 +592,7 @@ class MeseroController extends ChangeNotifier {
           .toList();
 
       if (clearedEntries.isEmpty) {
-        await _storage.write(key: 'cleared_table_history', value: '{}');
+        await _storage.write('cleared_table_history', '{}');
         print('💾 Mesero: No hay historiales limpiados para guardar');
         return;
       }
@@ -610,10 +605,10 @@ class MeseroController extends ChangeNotifier {
       print(
         '💾 Mesero: Guardando historiales limpiados: ${clearedEntries.map((e) => e.key).toList()}',
       );
-      await _storage.write(key: 'cleared_table_history', value: json);
+      await _storage.write('cleared_table_history', json);
 
       // Verificar que se guardó correctamente
-      final verification = await _storage.read(key: 'cleared_table_history');
+      final verification = await _storage.read('cleared_table_history');
       print(
         '✅ Mesero: Historiales limpiados guardados: ${clearedEntries.map((e) => e.key).toList()}',
       );
@@ -1525,9 +1520,7 @@ class MeseroController extends ChangeNotifier {
   // Seleccionar mesa
   void selectTable(TableModel table) async {
     _selectedTable = table;
-    setCurrentView('table');
-
-    // Notificar cambio inmediatamente para actualizar la UI
+    // No fijar vista todavía: se decidirá tras cargar historial (ir directo a cuenta dividida si ya hay datos)
     notifyListeners();
 
     // Cargar historial de forma asíncrona respetando los flags
@@ -1540,16 +1533,19 @@ class MeseroController extends ChangeNotifier {
       if ((_tableOrders[tableId] ?? []).isNotEmpty) notifyListeners();
     }
     
-    // Después de cargar el historial, verificar si hay órdenes en modo dividido
-    // y restaurar el modo dividido si es necesario
+    // Después de cargar el historial, verificar si hay órdenes en modo dividido o personas en memoria
     final history = _tableOrderHistory[tableId] ?? [];
     final hasDividedOrders = history.any((order) => order['isDividedAccount'] == true);
+    final alreadyHasPersons = (_personNamesByTable[tableId]?.isNotEmpty ?? false);
     
-    if (hasDividedOrders && !(_isDividedAccountModeByTable[tableId] ?? false)) {
+    if ((hasDividedOrders || alreadyHasPersons) && !(_isDividedAccountModeByTable[tableId] ?? false)) {
+      _isDividedAccountModeByTable[tableId] = true;
+    }
+    
+    if (hasDividedOrders) {
       // Restaurar modo dividido si hay órdenes en modo dividido
       _isDividedAccountModeByTable[tableId] = true;
       
-      // Restaurar información de personas desde el historial
       final personNamesFromHistory = <String, String>{};
       final personAssignmentsFromHistory = <String, List<String>>{};
       
@@ -1581,16 +1577,13 @@ class MeseroController extends ChangeNotifier {
         }
       }
       
-      // Restaurar nombres de personas si existen
       if (personNamesFromHistory.isNotEmpty) {
         _personNamesByTable[tableId] = personNamesFromHistory;
         
-        // Inicializar listas de items por persona si no existen
         if (!_personCartItemsByTable.containsKey(tableId)) {
           _personCartItemsByTable[tableId] = {};
         }
         
-        // Restaurar el siguiente ID de persona
         if (personNamesFromHistory.isNotEmpty) {
           final maxId = personNamesFromHistory.keys
               .map((id) {
@@ -1601,16 +1594,17 @@ class MeseroController extends ChangeNotifier {
           _nextPersonIdByTable[tableId] = maxId + 1;
         }
         
-        // Seleccionar la primera persona si no hay ninguna seleccionada
         if (_selectedPersonIdByTable[tableId] == null && personNamesFromHistory.isNotEmpty) {
           _selectedPersonIdByTable[tableId] = personNamesFromHistory.keys.first;
         }
       }
-      
-      // Redirigir a vista de cuenta dividida
-      setCurrentView('divided_account');
-      notifyListeners();
     }
+    
+    // Si la mesa ya tiene personas o datos de cuenta dividida, ir directo a Cuenta Dividida; si no, a Consumo de Mesa
+    final hasDividedData = (_personNamesByTable[tableId]?.isNotEmpty ?? false) || 
+        (_isDividedAccountModeByTable[tableId] ?? false);
+    setCurrentView(hasDividedData ? 'divided_account' : 'table');
+    notifyListeners();
   }
 
   // Seleccionar vista de Para Llevar
@@ -1847,6 +1841,30 @@ class MeseroController extends ChangeNotifier {
   }
 
   // ========== MÉTODOS PARA CUENTA DIVIDIDA POR PERSONA ==========
+  
+  /// True si la mesa actual tiene personas o productos en cuenta dividida (órdenes enviadas o en carrito).
+  bool get hasDividedAccountDataForCurrentTable {
+    if (_selectedTable == null) return false;
+    final tableId = _selectedTable!.id.toString();
+    if (personNames.isNotEmpty) return true;
+    final byPerson = _personCartItemsByTable[tableId];
+    if (byPerson != null && byPerson.values.any((list) => list.isNotEmpty)) return true;
+    final history = _tableOrderHistory[tableId] ?? [];
+    return history.any((order) => order['isDividedAccount'] == true);
+  }
+  
+  /// Llamar desde el botón atrás de Cuenta Dividida: ir a consumo de mesa si no hay datos, o al plano si hay.
+  void navigateBackFromDividedAccount() {
+    if (_selectedTable == null) return;
+    final tableId = _selectedTable!.id.toString();
+    if (!hasDividedAccountDataForCurrentTable) {
+      _isDividedAccountModeByTable[tableId] = false;
+      setCurrentView('table');
+    } else {
+      setCurrentView('floor');
+    }
+    notifyListeners();
+  }
   
   /// Activar/desactivar modo cuenta dividida (por mesa)
   void setDividedAccountMode(bool enabled) {
@@ -3338,7 +3356,7 @@ class MeseroController extends ChangeNotifier {
           await _saveSentToCashierOrders();
           
           // Verificar que se guardó correctamente
-          final savedData = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+          final savedData = await _storage.read('mesero_sent_to_cashier_orders');
           print('✅ Mesero: Storage guardado correctamente: $savedData');
 
           // Remover órdenes del historial local INMEDIATAMENTE
@@ -3576,7 +3594,7 @@ class MeseroController extends ChangeNotifier {
         await _saveSentToCashierOrders();
         
         // Verificar que se guardó correctamente
-        final savedData = await _storage.read(key: 'mesero_sent_to_cashier_orders');
+        final savedData = await _storage.read('mesero_sent_to_cashier_orders');
         print('✅ Mesero: ${ordenIdsACerrar.length} órdenes registradas localmente como enviadas al cajero: $_sentToCashierOrders');
         print('✅ Mesero: Storage guardado correctamente: $savedData');
 
