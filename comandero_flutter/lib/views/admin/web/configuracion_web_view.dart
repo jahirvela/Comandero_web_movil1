@@ -11,13 +11,19 @@ import '../../../utils/app_colors.dart';
 /// Mensaje legible para errores al generar clave (red, CORS, servidor, etc.).
 String _mensajeErrorGenerarClave(Object e) {
   final s = e.toString().toLowerCase();
-  if (s.contains('socket') || s.contains('connection') || s.contains('failed')) {
+  if (s.contains('socket') ||
+      s.contains('connection') ||
+      s.contains('failed')) {
     return 'No se pudo conectar al servidor. Verifica que la API esté en api.comancleth.com (o la URL configurada).';
   }
-  if (s.contains('timeout')) return 'Tiempo de espera agotado. El servidor no respondió.';
-  if (s.contains('404')) return 'Ruta no encontrada en el servidor. ¿El backend está actualizado?';
-  if (s.contains('500')) return 'Error en el servidor. Revisa los logs del backend.';
-  if (s.contains('403') || s.contains('401')) return 'Sin permiso o sesión expirada. Vuelve a iniciar sesión.';
+  if (s.contains('timeout'))
+    return 'Tiempo de espera agotado. El servidor no respondió.';
+  if (s.contains('404'))
+    return 'Ruta no encontrada en el servidor. ¿El backend está actualizado?';
+  if (s.contains('500'))
+    return 'Error en el servidor. Revisa los logs del backend.';
+  if (s.contains('403') || s.contains('401'))
+    return 'Sin permiso o sesión expirada. Vuelve a iniciar sesión.';
   return e.toString().replaceFirst('Exception: ', '');
 }
 
@@ -83,7 +89,9 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
             final isTablet = constraints.maxWidth > 800;
 
             return SingleChildScrollView(
-              padding: EdgeInsets.all(isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0)),
+              padding: EdgeInsets.all(
+                isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -116,7 +124,10 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                             SizedBox(height: 16),
                             Text(
                               'Cargando configuración...',
-                              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 14,
+                              ),
                             ),
                           ],
                         ),
@@ -136,9 +147,19 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                               children: [
                                 Row(
                                   children: [
-                                    Icon(Icons.error_outline, color: Colors.red.shade700),
+                                    Icon(
+                                      Icons.error_outline,
+                                      color: Colors.red.shade700,
+                                    ),
                                     const SizedBox(width: 12),
-                                    Expanded(child: Text(_error!, style: TextStyle(color: Colors.red.shade700))),
+                                    Expanded(
+                                      child: Text(
+                                        _error!,
+                                        style: TextStyle(
+                                          color: Colors.red.shade700,
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 12),
@@ -154,9 +175,19 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                       ),
                     _buildIvaCard(controller, isDesktop, isTablet),
                     const SizedBox(height: 24),
-                    _buildImpresorasCard(context, controller, isDesktop, isTablet),
+                    _buildImpresorasCard(
+                      context,
+                      controller,
+                      isDesktop,
+                      isTablet,
+                    ),
                     const SizedBox(height: 24),
-                    _buildPlantillaTicketsCard(context, controller, isDesktop, isTablet),
+                    _buildPlantillaTicketsCard(
+                      context,
+                      controller,
+                      isDesktop,
+                      isTablet,
+                    ),
                     const SizedBox(height: 24),
                     _buildCajonCard(context, controller, isDesktop, isTablet),
                   ],
@@ -242,7 +273,12 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                 TextButton.icon(
                   onPressed: controller.isLoadingImpresoras
                       ? null
-                      : () => _showImpresoraDialog(context, controller, isDesktop: isDesktop, isTablet: isTablet),
+                      : () => _showImpresoraDialog(
+                          context,
+                          controller,
+                          isDesktop: isDesktop,
+                          isTablet: isTablet,
+                        ),
                   icon: const Icon(Icons.add, size: 20),
                   label: const Text('Agregar'),
                 ),
@@ -275,7 +311,10 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                 padding: const EdgeInsets.symmetric(vertical: 16.0),
                 child: Text(
                   'No hay impresoras configuradas. Agregue una para imprimir tickets y comandas.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 14,
+                  ),
                 ),
               )
             else
@@ -295,13 +334,18 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                       p.nombre,
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
-                        color: p.activo ? AppColors.textPrimary : AppColors.textSecondary,
+                        color: p.activo
+                            ? AppColors.textPrimary
+                            : AppColors.textSecondary,
                       ),
                     ),
                     subtitle: Text(
                       '${p.tipo.label} · ${p.paperWidth} mm${p.marcaModelo != null && p.marcaModelo!.isNotEmpty ? " · ${p.marcaModelo}" : ""}\n'
                       'Ticket: ${p.imprimeTicket ? "Sí" : "No"} · Comanda: ${p.imprimeComanda ? "Sí" : "No"}${p.impresionRemota ? " · Remota" : ""}${p.tieneClaveAgente ? " · Clave configurada" : ""}',
-                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -310,7 +354,11 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                           IconButton(
                             icon: const Icon(Icons.key),
                             tooltip: 'Generar clave para agente',
-                            onPressed: () => _showGenerarClaveAgenteDialog(context, controller, p),
+                            onPressed: () => _showGenerarClaveAgenteDialog(
+                              context,
+                              controller,
+                              p,
+                            ),
                           ),
                         IconButton(
                           icon: const Icon(Icons.edit_outlined),
@@ -323,7 +371,10 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                           ),
                         ),
                         IconButton(
-                          icon: Icon(Icons.delete_outline, color: Colors.red.shade700),
+                          icon: Icon(
+                            Icons.delete_outline,
+                            color: Colors.red.shade700,
+                          ),
                           onPressed: () async {
                             final confirm = await showDialog<bool>(
                               context: context,
@@ -331,10 +382,18 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                                 title: const Text('Eliminar impresora'),
                                 content: Text('¿Eliminar "${p.nombre}"?'),
                                 actions: [
-                                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancelar'),
+                                  ),
                                   TextButton(
                                     onPressed: () => Navigator.pop(ctx, true),
-                                    child: Text('Eliminar', style: TextStyle(color: Colors.red.shade700)),
+                                    child: Text(
+                                      'Eliminar',
+                                      style: TextStyle(
+                                        color: Colors.red.shade700,
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -355,7 +414,11 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
     );
   }
 
-  Future<void> _showGenerarClaveAgenteDialog(BuildContext context, AdminController controller, ImpresoraModel p) async {
+  Future<void> _showGenerarClaveAgenteDialog(
+    BuildContext context,
+    AdminController controller,
+    ImpresoraModel p,
+  ) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -363,17 +426,24 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
         content: Text(
           'Se generará una nueva clave para la impresora "${p.nombre}". '
           'Péguela en el archivo .bat del PC donde está la impresora (variable AGENT_API_KEY). '
-          'Si ya había una clave, dejará de funcionar.'
+          'Si ya había una clave, dejará de funcionar.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Generar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Generar'),
+          ),
         ],
       ),
     );
     if (confirm != true || !context.mounted) return;
 
     // Mostrar loading mientras se genera la clave
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -396,30 +466,41 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
     String? clave;
     String? errorParaMostrar;
     try {
-      clave = await controller.generarClaveAgente(p.id).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw TimeoutException(
-            'El servidor no respondió a tiempo. Comprueba que el backend esté en marcha (api.comancleth.com o la URL configurada).',
+      clave = await controller
+          .generarClaveAgente(p.id)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException(
+                'El servidor no respondió a tiempo. Comprueba que el backend esté en marcha (api.comancleth.com o la URL configurada).',
+              );
+            },
           );
-        },
-      );
     } on TimeoutException catch (e) {
       errorParaMostrar = e.message ?? 'Tiempo de espera agotado';
       clave = null;
     } catch (e, st) {
       clave = null;
-      errorParaMostrar = controller.impresorasError ?? _mensajeErrorGenerarClave(e);
+      errorParaMostrar =
+          controller.impresorasError ?? _mensajeErrorGenerarClave(e);
       // Log en consola para depurar en producción (pestaña Console de DevTools)
       debugPrint('Error al generar clave agente: $e');
       debugPrint('Stack: $st');
     } finally {
-      if (context.mounted) Navigator.of(context).pop(); // Cerrar siempre el diálogo de carga
+      // Cerrar siempre el diálogo de carga aunque el context se haya desmontado.
+      try {
+        if (rootNavigator.canPop()) rootNavigator.pop();
+      } catch (_) {
+        // Ignorar: si el Navigator ya no existe o no se puede cerrar.
+      }
     }
 
     if (!context.mounted) return;
     if (clave == null || clave.isEmpty) {
-      final mensaje = errorParaMostrar ?? controller.impresorasError ?? 'No se pudo generar la clave';
+      final mensaje =
+          errorParaMostrar ??
+          controller.impresorasError ??
+          'No se pudo generar la clave';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(mensaje),
@@ -454,7 +535,10 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
               const SizedBox(height: 16),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade200,
                   borderRadius: BorderRadius.circular(8),
@@ -489,7 +573,10 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
               );
             },
           ),
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
+          ),
         ],
       ),
     );
@@ -521,7 +608,11 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
     );
   }
 
-  Widget _buildIvaCard(AdminController controller, bool isDesktop, bool isTablet) {
+  Widget _buildIvaCard(
+    AdminController controller,
+    bool isDesktop,
+    bool isTablet,
+  ) {
     final ivaHabilitado = controller.ivaHabilitado;
 
     return Card(
@@ -621,8 +712,12 @@ class _CajonCardContentState extends State<_CajonCardContent> {
   void initState() {
     super.initState();
     _syncFromController();
-    _marcaController = TextEditingController(text: widget.controller.configuracionCajon.marca ?? '');
-    _modeloController = TextEditingController(text: widget.controller.configuracionCajon.modelo ?? '');
+    _marcaController = TextEditingController(
+      text: widget.controller.configuracionCajon.marca ?? '',
+    );
+    _modeloController = TextEditingController(
+      text: widget.controller.configuracionCajon.modelo ?? '',
+    );
   }
 
   void _syncFromController() {
@@ -640,7 +735,8 @@ class _CajonCardContentState extends State<_CajonCardContent> {
     if (oldWidget.controller != widget.controller) {
       _syncFromController();
       _marcaController.text = widget.controller.configuracionCajon.marca ?? '';
-      _modeloController.text = widget.controller.configuracionCajon.modelo ?? '';
+      _modeloController.text =
+          widget.controller.configuracionCajon.modelo ?? '';
     }
   }
 
@@ -657,9 +753,15 @@ class _CajonCardContentState extends State<_CajonCardContent> {
       'abrirEnEfectivo': _abrirEnEfectivo,
       'abrirEnTarjeta': _abrirEnTarjeta,
       'tipoConexion': _tipoConexion.value,
-      'impresoraId': _tipoConexion == CajonTipoConexion.viaImpresora ? _impresoraId : null,
-      'marca': _marcaController.text.trim().isEmpty ? null : _marcaController.text.trim(),
-      'modelo': _modeloController.text.trim().isEmpty ? null : _modeloController.text.trim(),
+      'impresoraId': _tipoConexion == CajonTipoConexion.viaImpresora
+          ? _impresoraId
+          : null,
+      'marca': _marcaController.text.trim().isEmpty
+          ? null
+          : _marcaController.text.trim(),
+      'modelo': _modeloController.text.trim().isEmpty
+          ? null
+          : _modeloController.text.trim(),
     };
     await widget.controller.actualizarConfiguracionCajon(cajon);
     if (mounted) widget.onError();
@@ -731,7 +833,9 @@ class _CajonCardContentState extends State<_CajonCardContent> {
               .toList(),
           onChanged: controller.isSavingConfiguracion
               ? null
-              : (v) => setState(() => _tipoConexion = v ?? CajonTipoConexion.viaImpresora),
+              : (v) => setState(
+                  () => _tipoConexion = v ?? CajonTipoConexion.viaImpresora,
+                ),
         ),
         if (_tipoConexion == CajonTipoConexion.viaImpresora) ...[
           const SizedBox(height: 12),
@@ -742,9 +846,13 @@ class _CajonCardContentState extends State<_CajonCardContent> {
               border: OutlineInputBorder(),
             ),
             items: [
-              const DropdownMenuItem(value: null, child: Text('— Sin asignar —')),
-              ...controller.impresoras
-                  .map((p) => DropdownMenuItem(value: p.id, child: Text(p.nombre))),
+              const DropdownMenuItem(
+                value: null,
+                child: Text('— Sin asignar —'),
+              ),
+              ...controller.impresoras.map(
+                (p) => DropdownMenuItem(value: p.id, child: Text(p.nombre)),
+              ),
             ],
             onChanged: controller.isSavingConfiguracion
                 ? null
@@ -796,15 +904,24 @@ class _CajonCardContentState extends State<_CajonCardContent> {
         Row(
           children: [
             FilledButton.icon(
-              onPressed: controller.isSavingConfiguracion ? null : () => _guardar(),
+              onPressed: controller.isSavingConfiguracion
+                  ? null
+                  : () => _guardar(),
               icon: controller.isSavingConfiguracion
                   ? SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : const Icon(Icons.save, size: 18),
-              label: Text(controller.isSavingConfiguracion ? 'Guardando…' : 'Guardar configuración cajón'),
+              label: Text(
+                controller.isSavingConfiguracion
+                    ? 'Guardando…'
+                    : 'Guardar configuración cajón',
+              ),
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
@@ -857,7 +974,9 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
     _nombreController = TextEditingController(text: p?.nombre ?? '');
     _deviceController = TextEditingController(text: p?.device ?? '');
     _hostController = TextEditingController(text: p?.host ?? '');
-    _portController = TextEditingController(text: p?.port?.toString() ?? '9100');
+    _portController = TextEditingController(
+      text: p?.port?.toString() ?? '9100',
+    );
     _marcaController = TextEditingController(text: p?.marcaModelo ?? '');
     _tipo = p?.tipo ?? TipoImpresora.usb;
     _paperWidth = p?.paperWidth ?? 80;
@@ -885,18 +1004,28 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
       'imprimeTicket': _imprimeTicket,
       'imprimeComanda': _imprimeComanda,
       'impresionRemota': _impresionRemota,
-      'marcaModelo': _marcaController.text.trim().isEmpty ? null : _marcaController.text.trim(),
+      'marcaModelo': _marcaController.text.trim().isEmpty
+          ? null
+          : _marcaController.text.trim(),
     };
     if (_tipo == TipoImpresora.usb || _tipo == TipoImpresora.bluetooth) {
-      body['device'] = _deviceController.text.trim().isEmpty ? null : _deviceController.text.trim();
+      body['device'] = _deviceController.text.trim().isEmpty
+          ? null
+          : _deviceController.text.trim();
       body['host'] = null;
       body['port'] = null;
     } else if (_tipo == TipoImpresora.tcp) {
       body['device'] = null;
-      body['host'] = _hostController.text.trim().isEmpty ? null : _hostController.text.trim();
-      body['port'] = _portController.text.trim().isEmpty ? null : (int.tryParse(_portController.text) ?? 9100);
+      body['host'] = _hostController.text.trim().isEmpty
+          ? null
+          : _hostController.text.trim();
+      body['port'] = _portController.text.trim().isEmpty
+          ? null
+          : (int.tryParse(_portController.text) ?? 9100);
     } else {
-      body['device'] = _deviceController.text.trim().isEmpty ? null : _deviceController.text.trim();
+      body['device'] = _deviceController.text.trim().isEmpty
+          ? null
+          : _deviceController.text.trim();
       body['host'] = null;
       body['port'] = null;
     }
@@ -907,7 +1036,9 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.impresora == null ? 'Agregar impresora' : 'Editar impresora'),
+      title: Text(
+        widget.impresora == null ? 'Agregar impresora' : 'Editar impresora',
+      ),
       content: SingleChildScrollView(
         child: SizedBox(
           width: widget.isDesktop ? 420 : 320,
@@ -925,14 +1056,20 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
               const SizedBox(height: 12),
               DropdownButtonFormField<TipoImpresora>(
                 value: _tipo,
-                decoration: const InputDecoration(labelText: 'Tipo de conexión'),
+                decoration: const InputDecoration(
+                  labelText: 'Tipo de conexión',
+                ),
                 items: TipoImpresora.values
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
+                    .map(
+                      (t) => DropdownMenuItem(value: t, child: Text(t.label)),
+                    )
                     .toList(),
-                onChanged: (v) => setState(() => _tipo = v ?? TipoImpresora.usb),
+                onChanged: (v) =>
+                    setState(() => _tipo = v ?? TipoImpresora.usb),
               ),
               const SizedBox(height: 12),
-              if (_tipo == TipoImpresora.usb || _tipo == TipoImpresora.bluetooth)
+              if (_tipo == TipoImpresora.usb ||
+                  _tipo == TipoImpresora.bluetooth)
                 TextField(
                   decoration: const InputDecoration(
                     labelText: 'Nombre de impresora (Windows)',
@@ -942,12 +1079,18 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                 ),
               if (_tipo == TipoImpresora.tcp) ...[
                 TextField(
-                  decoration: const InputDecoration(labelText: 'IP', hintText: '192.168.1.50'),
+                  decoration: const InputDecoration(
+                    labelText: 'IP',
+                    hintText: '192.168.1.50',
+                  ),
                   controller: _hostController,
                 ),
                 const SizedBox(height: 8),
                 TextField(
-                  decoration: const InputDecoration(labelText: 'Puerto', hintText: '9100'),
+                  decoration: const InputDecoration(
+                    labelText: 'Puerto',
+                    hintText: '9100',
+                  ),
                   controller: _portController,
                   keyboardType: TextInputType.number,
                 ),
@@ -985,18 +1128,21 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                 data: Theme.of(context).copyWith(
                   checkboxTheme: CheckboxThemeData(
                     fillColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected)) return AppColors.primary;
+                      if (states.contains(WidgetState.selected))
+                        return AppColors.primary;
                       return null;
                     }),
                     checkColor: WidgetStateProperty.all(Colors.white),
                   ),
                   switchTheme: SwitchThemeData(
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected)) return AppColors.primary;
+                      if (states.contains(WidgetState.selected))
+                        return AppColors.primary;
                       return null;
                     }),
                     trackColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected)) return AppColors.primary.withValues(alpha: 0.5);
+                      if (states.contains(WidgetState.selected))
+                        return AppColors.primary.withValues(alpha: 0.5);
                       return null;
                     }),
                   ),
@@ -1007,14 +1153,16 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                     CheckboxListTile(
                       title: const Text('Imprime tickets de cobro'),
                       value: _imprimeTicket,
-                      onChanged: (v) => setState(() => _imprimeTicket = v ?? true),
+                      onChanged: (v) =>
+                          setState(() => _imprimeTicket = v ?? true),
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                     ),
                     CheckboxListTile(
                       title: const Text('Imprime comandas (cocina)'),
                       value: _imprimeComanda,
-                      onChanged: (v) => setState(() => _imprimeComanda = v ?? false),
+                      onChanged: (v) =>
+                          setState(() => _imprimeComanda = v ?? false),
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                     ),
@@ -1025,7 +1173,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                         style: TextStyle(fontSize: 12),
                       ),
                       value: _impresionRemota,
-                      onChanged: (v) => setState(() => _impresionRemota = v ?? false),
+                      onChanged: (v) =>
+                          setState(() => _impresionRemota = v ?? false),
                       controlAffinity: ListTileControlAffinity.leading,
                       contentPadding: EdgeInsets.zero,
                     ),
@@ -1076,10 +1225,12 @@ class _PlantillaTicketsCardContent extends StatefulWidget {
   });
 
   @override
-  State<_PlantillaTicketsCardContent> createState() => _PlantillaTicketsCardContentState();
+  State<_PlantillaTicketsCardContent> createState() =>
+      _PlantillaTicketsCardContentState();
 }
 
-class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardContent> {
+class _PlantillaTicketsCardContentState
+    extends State<_PlantillaTicketsCardContent> {
   late final TextEditingController _contenidoController;
   late final TextEditingController _lineaItemController;
   bool _initialized = false;
@@ -1126,14 +1277,18 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
   Widget build(BuildContext context) {
     final c = widget.controller;
     final isDesktop = widget.isDesktop;
-    if (c.selectedTipoPlantilla != _lastTipo) _lastTipo = c.selectedTipoPlantilla;
+    if (c.selectedTipoPlantilla != _lastTipo)
+      _lastTipo = c.selectedTipoPlantilla;
     final p = c.plantillaTicket;
     if (p != null && !c.isLoadingPlantillaTicket) _syncFromPlantilla(p);
-    final labelActual = AdminController.tiposPlantilla
-            .firstWhere(
-              (e) => e['tipo'] == c.selectedTipoPlantilla,
-              orElse: () => {'tipo': c.selectedTipoPlantilla, 'label': c.selectedTipoPlantilla},
-            )['label'] ??
+    final labelActual =
+        AdminController.tiposPlantilla.firstWhere(
+          (e) => e['tipo'] == c.selectedTipoPlantilla,
+          orElse: () => {
+            'tipo': c.selectedTipoPlantilla,
+            'label': c.selectedTipoPlantilla,
+          },
+        )['label'] ??
         c.selectedTipoPlantilla;
     if (c.isLoadingPlantillaTicket && c.plantillaTicket == null) {
       return Column(
@@ -1141,10 +1296,19 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
         children: [
           Text(
             'Plantillas de tickets y comandas',
-            style: TextStyle(fontSize: isDesktop ? 18 : 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+            style: TextStyle(
+              fontSize: isDesktop ? 18 : 16,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
           ),
           const SizedBox(height: 16),
-          const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
+            ),
+          ),
         ],
       );
     }
@@ -1161,7 +1325,11 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
             Expanded(
               child: Text(
                 'Plantillas de tickets y comandas',
-                style: TextStyle(fontSize: isDesktop ? 18 : 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                style: TextStyle(
+                  fontSize: isDesktop ? 18 : 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
           ],
@@ -1169,7 +1337,11 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
         const SizedBox(height: 8),
         Text(
           'Elija el tipo: cobro (general), en mesa, para llevar, cuenta dividida o comanda. Al imprimir se usa la plantilla que corresponda; si no hay una guardada, se usa "Ticket de cobro (general)". Use los placeholders entre {{}}. El ancho de {{SEPARADOR}} y {{GUION}} se adapta al papel.',
-          style: TextStyle(fontSize: isDesktop ? 14 : 13, color: AppColors.textSecondary, height: 1.4),
+          style: TextStyle(
+            fontSize: isDesktop ? 14 : 13,
+            color: AppColors.textSecondary,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
@@ -1179,7 +1351,12 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
           items: AdminController.tiposPlantilla
-              .map((e) => DropdownMenuItem(value: e['tipo'], child: Text(e['label']!)))
+              .map(
+                (e) => DropdownMenuItem(
+                  value: e['tipo'],
+                  child: Text(e['label']!),
+                ),
+              )
               .toList(),
           onChanged: (String? value) {
             if (value != null) c.setSelectedTipoPlantilla(value);
@@ -1187,7 +1364,10 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
         ),
         if (c.plantillaTicketError != null) ...[
           const SizedBox(height: 12),
-          Text(c.plantillaTicketError!, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
+          Text(
+            c.plantillaTicketError!,
+            style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+          ),
         ],
         const SizedBox(height: 12),
         TextField(
@@ -1214,7 +1394,10 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
           style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
         ),
         const SizedBox(height: 8),
-        Text(placeholdersHelp, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+        Text(
+          placeholdersHelp,
+          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+        ),
         const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: c.isSavingPlantillaTicket
@@ -1223,18 +1406,30 @@ class _PlantillaTicketsCardContentState extends State<_PlantillaTicketsCardConte
                   _initialized = true;
                   final ok = await c.savePlantillaTicket(
                     _contenidoController.text,
-                    _lineaItemController.text.trim().isEmpty ? null : _lineaItemController.text.trim(),
+                    _lineaItemController.text.trim().isEmpty
+                        ? null
+                        : _lineaItemController.text.trim(),
                   );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(ok ? 'Plantilla guardada' : 'Error al guardar')),
+                      SnackBar(
+                        content: Text(
+                          ok ? 'Plantilla guardada' : 'Error al guardar',
+                        ),
+                      ),
                     );
                   }
                 },
           icon: c.isSavingPlantillaTicket
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Icon(Icons.save, size: 20),
-          label: Text(c.isSavingPlantillaTicket ? 'Guardando...' : 'Guardar plantilla'),
+          label: Text(
+            c.isSavingPlantillaTicket ? 'Guardando...' : 'Guardar plantilla',
+          ),
         ),
       ],
     );

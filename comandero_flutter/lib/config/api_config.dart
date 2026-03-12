@@ -24,6 +24,19 @@ class ApiConfig {
     defaultValue: 'development',
   );
 
+  /// Ambiente efectivo en Flutter Web.
+  /// Si el build no define API_ENV, pero se está ejecutando en un dominio real
+  /// (no localhost), asumir producción para evitar que la app apunte a localhost.
+  static String get environment {
+    if (kIsWeb) {
+      final host = Uri.base.host;
+      if (host.isNotEmpty && host != 'localhost' && host != '127.0.0.1') {
+        return 'production';
+      }
+    }
+    return _environment;
+  }
+
   /// URL base del servidor en producción
   ///
   /// IMPORTANTE: Cambiar esta URL cuando se tenga el dominio/IP del VPS
@@ -62,9 +75,7 @@ class ApiConfig {
       }
       // Rechazar URL cuyo "host" sea solo el esquema (ej. "https://https" o "https://http")
       final hostPart = afterProto.split('/').first.split(':').first;
-      if (hostPart.isEmpty ||
-          hostPart == 'http' ||
-          hostPart == 'https') {
+      if (hostPart.isEmpty || hostPart == 'http' || hostPart == 'https') {
         return '';
       }
     } else {
@@ -399,7 +410,7 @@ class ApiConfig {
   /// En web en producción: si la URL del build está mal, derivar desde el host actual del navegador.
   /// Así la app desplegada en comancleth.com usará https://api.comancleth.com sin recompilar.
   static String? get _webProductionFallbackBaseUrl {
-    if (!kIsWeb || _environment != 'production') return null;
+    if (!kIsWeb || environment != 'production') return null;
     final host = Uri.base.host;
     if (host.isEmpty || host == 'localhost') return null;
     final scheme = Uri.base.scheme;
@@ -407,7 +418,7 @@ class ApiConfig {
   }
 
   static String? get _webProductionFallbackSocketUrl {
-    if (!kIsWeb || _environment != 'production') return null;
+    if (!kIsWeb || environment != 'production') return null;
     final host = Uri.base.host;
     if (host.isEmpty || host == 'localhost') return null;
     final scheme = Uri.base.scheme;
@@ -436,7 +447,7 @@ class ApiConfig {
 
     // En producción: en web usar siempre el mismo dominio (comancleth.com → api.comancleth.com)
     // para que el mismo build funcione en cualquier servidor sin recompilar.
-    if (_environment == 'production') {
+    if (environment == 'production') {
       final webFallback = _webProductionFallbackBaseUrl;
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final u = _normalizeUrl(_productionApiUrl);
@@ -459,19 +470,25 @@ class ApiConfig {
   static String get socketUrl {
     // Si hay una URL personalizada, derivar origen de ella
     if (_customApiUrl.isNotEmpty) {
-      final normalized = _normalizeUrl(_customApiUrl.replaceAll('/api', '').trim());
-      final origin = _originFromBase(normalized.isEmpty ? _customApiUrl : normalized);
+      final normalized = _normalizeUrl(
+        _customApiUrl.replaceAll('/api', '').trim(),
+      );
+      final origin = _originFromBase(
+        normalized.isEmpty ? _customApiUrl : normalized,
+      );
       return origin.isEmpty ? 'http://localhost:3000' : origin;
     }
 
     // En producción: en web usar mismo dominio (comancleth.com → api.comancleth.com)
-    if (_environment == 'production') {
+    if (environment == 'production') {
       final webFallback = _webProductionFallbackSocketUrl;
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final base = baseUrl;
       final origin = _originFromBase(base);
       if (origin.isNotEmpty && !_isUrlBroken(origin)) {
-        return origin.endsWith('/') ? origin.substring(0, origin.length - 1) : origin;
+        return origin.endsWith('/')
+            ? origin.substring(0, origin.length - 1)
+            : origin;
       }
       return 'https://api.comandix.com';
     }
@@ -502,7 +519,7 @@ class ApiConfig {
   ///
   /// En producción con internet móvil, usar timeouts más largos
   static Duration get timeout {
-    if (_environment == 'production') {
+    if (environment == 'production') {
       // Internet móvil puede ser más lento
       return const Duration(seconds: 45);
     }
@@ -512,7 +529,7 @@ class ApiConfig {
 
   /// Número de reintentos para peticiones fallidas
   static int get maxRetries {
-    if (_environment == 'production') {
+    if (environment == 'production') {
       // En producción, más reintentos por cortes de red
       return 3;
     }
@@ -521,7 +538,7 @@ class ApiConfig {
 
   /// Delay entre reintentos (en segundos)
   static Duration get retryDelay {
-    if (_environment == 'production') {
+    if (environment == 'production') {
       // En producción, esperar más entre reintentos
       return const Duration(seconds: 2);
     }
