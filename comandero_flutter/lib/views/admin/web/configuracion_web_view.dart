@@ -1,12 +1,25 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../controllers/admin_controller.dart';
 import '../../../services/configuracion_service.dart';
 import '../../../services/impresoras_service.dart';
 import '../../../utils/app_colors.dart';
+
+/// Mensaje legible para errores al generar clave (red, CORS, servidor, etc.).
+String _mensajeErrorGenerarClave(Object e) {
+  final s = e.toString().toLowerCase();
+  if (s.contains('socket') || s.contains('connection') || s.contains('failed')) {
+    return 'No se pudo conectar al servidor. Verifica que la API esté en api.comancleth.com (o la URL configurada).';
+  }
+  if (s.contains('timeout')) return 'Tiempo de espera agotado. El servidor no respondió.';
+  if (s.contains('404')) return 'Ruta no encontrada en el servidor. ¿El backend está actualizado?';
+  if (s.contains('500')) return 'Error en el servidor. Revisa los logs del backend.';
+  if (s.contains('403') || s.contains('401')) return 'Sin permiso o sesión expirada. Vuelve a iniciar sesión.';
+  return e.toString().replaceFirst('Exception: ', '');
+}
 
 /// Vista de configuración del negocio (IVA y futuras opciones). Solo administrador.
 class ConfiguracionWebView extends StatefulWidget {
@@ -381,37 +394,37 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
     );
 
     String? clave;
+    String? errorParaMostrar;
     try {
       clave = await controller.generarClaveAgente(p.id).timeout(
         const Duration(seconds: 15),
         onTimeout: () {
           throw TimeoutException(
-            'El servidor no respondió a tiempo. Comprueba que el backend esté en marcha y la base de datos accesible.',
+            'El servidor no respondió a tiempo. Comprueba que el backend esté en marcha (api.comancleth.com o la URL configurada).',
           );
         },
       );
     } on TimeoutException catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message ?? 'Tiempo de espera agotado'),
-            backgroundColor: Colors.red.shade700,
-          ),
-        );
-      }
+      errorParaMostrar = e.message ?? 'Tiempo de espera agotado';
       clave = null;
-    } catch (_) {
+    } catch (e, st) {
       clave = null;
+      errorParaMostrar = controller.impresorasError ?? _mensajeErrorGenerarClave(e);
+      // Log en consola para depurar en producción (pestaña Console de DevTools)
+      debugPrint('Error al generar clave agente: $e');
+      debugPrint('Stack: $st');
     } finally {
       if (context.mounted) Navigator.of(context).pop(); // Cerrar siempre el diálogo de carga
     }
 
     if (!context.mounted) return;
     if (clave == null || clave.isEmpty) {
+      final mensaje = errorParaMostrar ?? controller.impresorasError ?? 'No se pudo generar la clave';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(controller.impresorasError ?? 'No se pudo generar la clave'),
+          content: Text(mensaje),
           backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 6),
         ),
       );
       return;

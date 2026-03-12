@@ -434,13 +434,13 @@ class ApiConfig {
       if (u.isNotEmpty) return u;
     }
 
-    // En producción, usar la URL del VPS (normalizada por si API_URL tiene typo)
+    // En producción: en web usar siempre el mismo dominio (comancleth.com → api.comancleth.com)
+    // para que el mismo build funcione en cualquier servidor sin recompilar.
     if (_environment == 'production') {
+      final webFallback = _webProductionFallbackBaseUrl;
+      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final u = _normalizeUrl(_productionApiUrl);
       if (u.isNotEmpty && !_isUrlBroken(u)) return u;
-      // Fallback en web: derivar desde el host actual (app en comancleth.com → api.comancleth.com)
-      final webFallback = _webProductionFallbackBaseUrl;
-      if (webFallback != null) return webFallback;
       return 'https://api.comandix.com/api';
     }
 
@@ -464,16 +464,15 @@ class ApiConfig {
       return origin.isEmpty ? 'http://localhost:3000' : origin;
     }
 
-    // En producción: derivar origen de baseUrl (nunca concatenar "https://" + url)
+    // En producción: en web usar mismo dominio (comancleth.com → api.comancleth.com)
     if (_environment == 'production') {
+      final webFallback = _webProductionFallbackSocketUrl;
+      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final base = baseUrl;
       final origin = _originFromBase(base);
       if (origin.isNotEmpty && !_isUrlBroken(origin)) {
         return origin.endsWith('/') ? origin.substring(0, origin.length - 1) : origin;
       }
-      // Fallback en web: mismo host que la app (app en comancleth.com → api.comancleth.com)
-      final webFallback = _webProductionFallbackSocketUrl;
-      if (webFallback != null) return webFallback;
       return 'https://api.comandix.com';
     }
 
