@@ -158,13 +158,29 @@ export const imprimirComanda = async (
   const { getPrinterConfigsForDocument } = await import('../../config/printers.config.js');
   let configs = await getImpresorasAsPrinterConfig('comanda');
   if (configs.length === 0) configs = getPrinterConfigsForDocument('comanda');
+  logger.info({ ordenId: orden.id, numImpresoras: configs.length, nombres: configs.map(c => c.name) }, 'Impresoras para comanda');
+  if (configs.length === 0) {
+    logger.warn({ ordenId: orden.id }, 'No hay impresoras configuradas para comanda (revisar tabla impresora, activo=1 e imprime_comanda=1)');
+  }
   const tipoImpresion = esReimpresion ? 'reimpresión manual' : 'impresión automática';
   const rutas: string[] = [];
   let successCount = 0;
 
   for (const config of configs) {
+    const contenido = generarContenidoComanda(orden, config.paperWidth ?? 80);
+    if (config.impresionRemota) {
+      try {
+        const { encolarImpresion } = await import('../impresoras/cola-impresion.repository.js');
+        const impresoraId = parseInt(config.id, 10);
+        await encolarImpresion(impresoraId, 'comanda', contenido, orden.id);
+        successCount++;
+        logger.info({ ordenId: orden.id, printerId: config.id, tipoImpresion }, 'Comanda encolada para agente local');
+      } catch (err: unknown) {
+        logger.warn({ err, ordenId: orden.id, printerId: config.id }, 'Error al encolar comanda');
+      }
+      continue;
+    }
     try {
-      const contenido = generarContenidoComanda(orden, config.paperWidth ?? 80);
       const printer = createPrinterFromConfig(config);
       await printer.print(contenido);
       await printer.close();

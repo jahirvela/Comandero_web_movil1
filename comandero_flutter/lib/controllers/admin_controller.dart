@@ -219,6 +219,13 @@ class AdminController extends ChangeNotifier {
   bool _isLoadingImpresoras = false;
   String? _impresorasError;
 
+  // Plantilla de impresión: varios tipos (ticket_mesa, ticket_para_llevar, ticket_dividida, ticket_cobro, comanda)
+  String _selectedTipoPlantilla = 'ticket_cobro';
+  PlantillaImpresionModel? _plantillaTicket;
+  bool _isLoadingPlantillaTicket = false;
+  bool _isSavingPlantillaTicket = false;
+  String? _plantillaTicketError;
+
   // Getters
   List<AdminUser> get users => _users;
   List<Role> get roles => _roles;
@@ -266,6 +273,20 @@ class AdminController extends ChangeNotifier {
   List<ImpresoraModel> get impresoras => _impresoras;
   bool get isLoadingImpresoras => _isLoadingImpresoras;
   String? get impresorasError => _impresorasError;
+  String get selectedTipoPlantilla => _selectedTipoPlantilla;
+  PlantillaImpresionModel? get plantillaTicket => _plantillaTicket;
+  bool get isLoadingPlantillaTicket => _isLoadingPlantillaTicket;
+  bool get isSavingPlantillaTicket => _isSavingPlantillaTicket;
+  String? get plantillaTicketError => _plantillaTicketError;
+
+  /// Tipos de plantilla: ticket de cobro (general), en mesa, para llevar, cuenta dividida, comanda.
+  static const List<Map<String, String>> tiposPlantilla = [
+    {'tipo': 'ticket_cobro', 'label': 'Ticket de cobro (general)'},
+    {'tipo': 'ticket_mesa', 'label': 'Ticket en mesa'},
+    {'tipo': 'ticket_para_llevar', 'label': 'Ticket para llevar'},
+    {'tipo': 'ticket_dividida', 'label': 'Ticket cuenta dividida'},
+    {'tipo': 'comanda', 'label': 'Comanda (cocina)'},
+  ];
 
   // Obtener usuarios filtrados
   List<AdminUser> get filteredUsers {
@@ -738,6 +759,53 @@ class AdminController extends ChangeNotifier {
     }
   }
 
+  /// Carga la plantilla del tipo seleccionado (o del tipo indicado si se pasa).
+  Future<void> loadPlantillaTicket([String? tipo]) async {
+    final t = tipo ?? _selectedTipoPlantilla;
+    try {
+      _isLoadingPlantillaTicket = true;
+      _plantillaTicketError = null;
+      notifyListeners();
+      _plantillaTicket = await _configuracionService.getPlantillaImpresion(t);
+    } catch (e) {
+      print('Error al cargar plantilla $t: $e');
+      _plantillaTicketError = _mensajeAmigableConfig(e);
+      _plantillaTicket = null;
+    } finally {
+      _isLoadingPlantillaTicket = false;
+      notifyListeners();
+    }
+  }
+
+  void setSelectedTipoPlantilla(String tipo) {
+    if (_selectedTipoPlantilla == tipo) return;
+    _selectedTipoPlantilla = tipo;
+    _plantillaTicket = null;
+    notifyListeners();
+    loadPlantillaTicket(tipo);
+  }
+
+  Future<bool> savePlantillaTicket(String contenido, String? plantillaLineaItem) async {
+    try {
+      _isSavingPlantillaTicket = true;
+      _plantillaTicketError = null;
+      notifyListeners();
+      _plantillaTicket = await _configuracionService.putPlantillaImpresion(
+        _selectedTipoPlantilla,
+        contenido,
+        plantillaLineaItem,
+      );
+      return true;
+    } catch (e) {
+      print('Error al guardar plantilla $_selectedTipoPlantilla: $e');
+      _plantillaTicketError = _mensajeAmigableConfig(e);
+      return false;
+    } finally {
+      _isSavingPlantillaTicket = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> loadImpresoras() async {
     try {
       _isLoadingImpresoras = true;
@@ -798,6 +866,22 @@ class AdminController extends ChangeNotifier {
       _impresorasError = e.toString().replaceFirst('Exception: ', '');
       notifyListeners();
       return false;
+    }
+  }
+
+  /// Genera clave para el agente de impresión (solo se muestra una vez). Recargar impresoras después.
+  Future<String?> generarClaveAgente(int impresoraId) async {
+    try {
+      _impresorasError = null;
+      final clave = await _impresorasService.generarClaveAgente(impresoraId);
+      if (clave != null) await loadImpresoras();
+      notifyListeners();
+      return clave;
+    } catch (e) {
+      print('Error al generar clave agente: $e');
+      _impresorasError = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+      return null;
     }
   }
 

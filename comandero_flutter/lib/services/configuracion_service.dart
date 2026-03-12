@@ -181,4 +181,59 @@ class ConfiguracionService {
       type: DioExceptionType.badResponse,
     );
   }
+
+  /// Obtener plantilla de impresión (ticket_cobro, comanda).
+  Future<PlantillaImpresionModel> getPlantillaImpresion(String tipo) async {
+    final response = await _api.get('/configuracion/plantillas-impresion/$tipo');
+    if (response.statusCode == 200 && response.data != null) {
+      final data = response.data is Map ? response.data as Map<String, dynamic> : null;
+      if (data != null) return PlantillaImpresionModel.fromJson(data);
+    }
+    return PlantillaImpresionModel(tipoDocumento: tipo, contenido: '', plantillaLineaItem: null, actualizadoEn: null);
+  }
+
+  /// Guardar plantilla de impresión. Solo administrador.
+  Future<PlantillaImpresionModel> putPlantillaImpresion(
+    String tipo,
+    String contenido, [
+    String? plantillaLineaItem,
+  ]) async {
+    final response = await _api.put(
+      '/configuracion/plantillas-impresion/$tipo',
+      data: {'contenido': contenido, 'plantillaLineaItem': plantillaLineaItem},
+    );
+    if (response.statusCode == 200 && response.data != null) {
+      final data = response.data is Map ? response.data as Map<String, dynamic> : null;
+      if (data != null) return PlantillaImpresionModel.fromJson(data);
+    }
+    throw DioException(
+      requestOptions: response.requestOptions,
+      response: response,
+      type: DioExceptionType.badResponse,
+    );
+  }
+}
+
+/// Plantilla editable para impresión (ticket de cobro, comanda).
+class PlantillaImpresionModel {
+  final String tipoDocumento;
+  final String contenido;
+  final String? plantillaLineaItem;
+  final String? actualizadoEn;
+
+  PlantillaImpresionModel({
+    required this.tipoDocumento,
+    required this.contenido,
+    this.plantillaLineaItem,
+    this.actualizadoEn,
+  });
+
+  factory PlantillaImpresionModel.fromJson(Map<String, dynamic> json) {
+    return PlantillaImpresionModel(
+      tipoDocumento: json['tipoDocumento'] as String? ?? '',
+      contenido: json['contenido'] as String? ?? '',
+      plantillaLineaItem: json['plantillaLineaItem'] as String?,
+      actualizadoEn: json['actualizadoEn'] as String?,
+    );
+  }
 }

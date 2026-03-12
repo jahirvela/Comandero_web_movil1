@@ -86,10 +86,11 @@ class TableView extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 24),
-          // Columna lateral - Historial de pedidos
+          // Columna lateral - Historial de pedidos (altura acotada por Row)
           Expanded(
             flex: 1,
-            child: _buildOrderHistoryColumn(context, controller, table, true),
+            child: _buildOrderHistoryColumn(
+                context, controller, table, true, hasBoundedHeight: true),
           ),
         ],
       ),
@@ -114,7 +115,8 @@ class TableView extends StatelessWidget {
         children: [
           _buildMainColumn(context, controller, table, cart, isTablet),
           const SizedBox(height: 24),
-          _buildOrderHistoryColumn(context, controller, table, isTablet),
+          _buildOrderHistoryColumn(context, controller, table, isTablet,
+              hasBoundedHeight: false),
         ],
       ),
     );
@@ -859,8 +861,9 @@ class TableView extends StatelessWidget {
     BuildContext context,
     MeseroController controller,
     TableModel table,
-    bool isTablet,
-  ) {
+    bool isTablet, {
+    bool hasBoundedHeight = true,
+  }) {
     // Usar Consumer para que se actualice cuando cambie el historial
     return Consumer<MeseroController>(
       builder: (context, ctrl, child) {
@@ -1003,17 +1006,29 @@ class TableView extends StatelessWidget {
                   ),
                 ),
 
-                // Lista de pedidos
-                Expanded(
-                  child: normalizedHistory.isEmpty
+                // Lista de pedidos (en móvil sin altura acotada no usar Expanded)
+                if (hasBoundedHeight)
+                  Expanded(
+                    child: normalizedHistory.isEmpty
+                        ? _buildEmptyOrderHistory(isTablet, table, ctrl)
+                        : _buildOrderHistoryList(
+                            context,
+                            normalizedHistory,
+                            isTablet,
+                            table,
+                            shrinkWrap: false,
+                          ),
+                  )
+                else
+                  normalizedHistory.isEmpty
                       ? _buildEmptyOrderHistory(isTablet, table, ctrl)
                       : _buildOrderHistoryList(
                           context,
                           normalizedHistory,
                           isTablet,
                           table,
+                          shrinkWrap: true,
                         ),
-                ),
               ],
             ),
           ),
@@ -1069,20 +1084,28 @@ class TableView extends StatelessWidget {
     BuildContext context,
     List<Map<String, dynamic>> orderHistory,
     bool isTablet,
-    TableModel table,
-  ) {
+    TableModel table, {
+    bool shrinkWrap = false,
+  }) {
+    final listView = ListView.builder(
+      shrinkWrap: shrinkWrap,
+      physics: shrinkWrap
+          ? const NeverScrollableScrollPhysics()
+          : null,
+      padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
+      itemCount: orderHistory.length,
+      itemBuilder: (context, index) {
+        final order = orderHistory[index];
+        return _buildOrderHistoryItem(context, order, isTablet, table);
+      },
+    );
     return Column(
+      mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
       children: [
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.symmetric(horizontal: isTablet ? 20.0 : 16.0),
-            itemCount: orderHistory.length,
-            itemBuilder: (context, index) {
-              final order = orderHistory[index];
-              return _buildOrderHistoryItem(context, order, isTablet, table);
-            },
-          ),
-        ),
+        if (shrinkWrap)
+          listView
+        else
+          Expanded(child: listView),
         // Botón de recargar historial siempre visible
         Padding(
           padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),

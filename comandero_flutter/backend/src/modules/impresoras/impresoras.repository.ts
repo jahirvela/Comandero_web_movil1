@@ -18,6 +18,8 @@ interface ImpresoraRow extends RowDataPacket {
   orden: number;
   activo: number;
   marca_modelo: string | null;
+  impresion_remota?: number;
+  agente_api_key?: string | null;
 }
 
 export interface Impresora {
@@ -33,6 +35,9 @@ export interface Impresora {
   orden: number;
   activo: boolean;
   marcaModelo: string | null;
+  impresionRemota: boolean;
+  /** Solo indica si tiene clave; la clave nunca se devuelve en list/get. */
+  tieneClaveAgente: boolean;
 }
 
 function rowToImpresora(row: ImpresoraRow): Impresora {
@@ -49,6 +54,8 @@ function rowToImpresora(row: ImpresoraRow): Impresora {
     orden: row.orden,
     activo: Boolean(row.activo),
     marcaModelo: row.marca_modelo ?? null,
+    impresionRemota: Boolean(row.impresion_remota),
+    tieneClaveAgente: Boolean(row.agente_api_key),
   };
 }
 
@@ -87,14 +94,16 @@ export interface CrearImpresoraInput {
   imprimeComanda?: boolean;
   orden?: number;
   marcaModelo?: string | null;
+  impresionRemota?: boolean;
 }
 
 export async function crearImpresora(input: CrearImpresoraInput): Promise<number> {
+  const impresionRemota = input.impresionRemota ? 1 : 0;
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO impresora (
       nombre, tipo, device, host, port, paper_width,
-      imprime_ticket, imprime_comanda, orden, marca_modelo
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      imprime_ticket, imprime_comanda, orden, marca_modelo, impresion_remota
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.nombre,
       input.tipo,
@@ -106,6 +115,7 @@ export async function crearImpresora(input: CrearImpresoraInput): Promise<number
       input.imprimeComanda ? 1 : 0,
       input.orden ?? 0,
       input.marcaModelo ?? null,
+      impresionRemota,
     ]
   );
   return result.insertId;
@@ -123,6 +133,7 @@ export interface ActualizarImpresoraInput {
   orden?: number;
   activo?: boolean;
   marcaModelo?: string | null;
+  impresionRemota?: boolean;
 }
 
 export async function actualizarImpresora(id: number, input: ActualizarImpresoraInput): Promise<boolean> {
@@ -139,6 +150,7 @@ export async function actualizarImpresora(id: number, input: ActualizarImpresora
   if (input.orden !== undefined) { sets.push('orden = ?'); values.push(input.orden); }
   if (input.activo !== undefined) { sets.push('activo = ?'); values.push(input.activo ? 1 : 0); }
   if (input.marcaModelo !== undefined) { sets.push('marca_modelo = ?'); values.push(input.marcaModelo); }
+  if (input.impresionRemota !== undefined) { sets.push('impresion_remota = ?'); values.push(input.impresionRemota ? 1 : 0); }
   if (sets.length === 0) return true;
   values.push(id);
   const [result] = await pool.execute<ResultSetHeader>(
@@ -151,6 +163,28 @@ export async function actualizarImpresora(id: number, input: ActualizarImpresora
 export async function eliminarImpresora(id: number): Promise<boolean> {
   const [result] = await pool.execute<ResultSetHeader>('DELETE FROM impresora WHERE id = ?', [id]);
   return (result.affectedRows ?? 0) > 0;
+}
+
+/** Busca impresora por clave de agente (solo para validar cola). No expone la clave. */
+export async function obtenerImpresoraPorAgenteApiKey(apiKey: string): Promise<{ id: number } | null> {
+  if (!apiKey || apiKey.length < 16) return null;
+  const [rows] = await pool.query<ImpresoraRow[]>(
+    'SELECT id FROM impresora WHERE agente_api_key = ? AND activo = 1',
+    [apiKey.trim()]
+  );
+  const row = rows[0];
+  return row ? { id: row.id } : null;
+}
+
+/** Genera una nueva clave para el agente y la guarda. Devuelve la clave en texto (solo se muestra una vez). */
+export async function generarClaveAgente(impresoraId: number): Promise<string | null> {
+  const crypto = await import('crypto');
+  const key = crypto.randomBytes(32).toString('hex');
+  const [result] = await pool.execute<ResultSetHeader>(
+    'UPDATE impresora SET agente_api_key = ? WHERE id = ?',
+    [key, impresoraId]
+  );
+  return (result.affectedRows ?? 0) > 0 ? key : null;
 }
 
 /** Convierte impresoras de la BD al formato que usa el sistema de impresión (tickets/comandas). Bluetooth se mapea a usb. */
@@ -170,6 +204,7 @@ export async function getImpresorasAsPrinterConfig(document: DocumentType): Prom
       device: i.device ?? undefined,
       host: i.host ?? undefined,
       port: i.port ?? undefined,
+      impresionRemota: type === 'usb' && i.impresionRemota,
     };
   });
 }

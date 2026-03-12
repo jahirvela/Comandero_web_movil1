@@ -14,6 +14,7 @@ export const crearImpresoraSchema = z.object({
   imprimeComanda: z.boolean().optional().default(false),
   orden: z.number().int().optional().default(0),
   marcaModelo: z.string().max(120).nullable().optional(),
+  impresionRemota: z.boolean().optional().default(false),
 });
 
 export const actualizarImpresoraSchema = z.object({
@@ -28,6 +29,7 @@ export const actualizarImpresoraSchema = z.object({
   orden: z.number().int().optional(),
   activo: z.boolean().optional(),
   marcaModelo: z.string().max(120).nullable().optional(),
+  impresionRemota: z.boolean().optional(),
 });
 
 export type CrearImpresoraBody = z.infer<typeof crearImpresoraSchema>;

@@ -1,5 +1,7 @@
 import { obtenerDatosTicket, listarTickets } from './tickets.repository.js';
 import { createPrinter, createPrinterFromConfig, generarContenidoTicket } from './tickets.printer.js';
+import { renderTicketConPlantilla } from './tickets.plantilla.js';
+import { obtenerPlantilla } from '../configuracion/plantilla-impresion.repository.js';
 import { getPrinterConfigsForDocument } from '../../config/printers.config.js';
 import { getImpresorasAsPrinterConfig } from '../impresoras/impresoras.repository.js';
 import { logger } from '../../config/logger.js';
@@ -103,15 +105,40 @@ export const imprimirTicket = async (
     if (configs.length === 0) configs = getPrinterConfigsForDocument('ticket');
     let successCount = 0;
     let rutaArchivo: string | undefined;
+    const ordenIdsForTemplate = (input.ordenIds && input.ordenIds.length > 1) ? input.ordenIds : undefined;
+    const isTakeaway = !datosTicket.orden.mesaCodigo && datosTicket.orden.clienteNombre;
+    const isDividida = Boolean(ordenIdsForTemplate && ordenIdsForTemplate.length > 1);
+    const tipoPlantilla =
+      isDividida ? 'ticket_dividida' : isTakeaway ? 'ticket_para_llevar' : 'ticket_mesa';
+    let plantillaTicket = await obtenerPlantilla(tipoPlantilla);
+    if (!plantillaTicket || !plantillaTicket.contenido.trim()) {
+      plantillaTicket = await obtenerPlantilla('ticket_cobro');
+    }
 
     if (configs.length > 0) {
+      const paperWidthDefault = 80;
       for (const config of configs) {
+        const paperWidth = (config.paperWidth ?? paperWidthDefault) as 57 | 58 | 72 | 80;
+        const contenido = plantillaTicket
+          ? renderTicketConPlantilla(datosTicket, plantillaTicket, paperWidth)
+          : generarContenidoTicket(
+              datosTicket,
+              input.incluirCodigoBarras ?? true,
+              paperWidth
+            );
+        if (config.impresionRemota) {
+          try {
+            const { encolarImpresion } = await import('../impresoras/cola-impresion.repository.js');
+            const impresoraId = parseInt(config.id, 10);
+            await encolarImpresion(impresoraId, 'ticket', contenido, input.ordenId);
+            successCount++;
+            logger.info({ ordenId: input.ordenId, printerId: config.id }, 'Ticket encolado para agente local');
+          } catch (err: unknown) {
+            logger.warn({ err, ordenId: input.ordenId, printerId: config.id }, 'Error al encolar ticket');
+          }
+          continue;
+        }
         try {
-          const contenido = generarContenidoTicket(
-            datosTicket,
-            input.incluirCodigoBarras ?? true,
-            config.paperWidth ?? 80
-          );
           const printer = createPrinterFromConfig(config);
           await printer.print(contenido);
           await printer.close();
@@ -134,7 +161,9 @@ export const imprimirTicket = async (
       }
     } else {
       // Sin impresoras en config: usar simulación en ./tickets para que el ticket siempre se genere
-      const contenido = generarContenidoTicket(datosTicket, input.incluirCodigoBarras ?? true);
+      const contenido = plantillaTicket
+        ? renderTicketConPlantilla(datosTicket, plantillaTicket, 80)
+        : generarContenidoTicket(datosTicket, input.incluirCodigoBarras ?? true);
       try {
         const printer = createPrinter();
         await printer.print(contenido);
