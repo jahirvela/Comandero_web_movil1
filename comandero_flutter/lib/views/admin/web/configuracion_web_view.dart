@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
@@ -286,7 +287,7 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                     ),
                     subtitle: Text(
                       '${p.tipo.label} · ${p.paperWidth} mm${p.marcaModelo != null && p.marcaModelo!.isNotEmpty ? " · ${p.marcaModelo}" : ""}\n'
-                      'Ticket: ${p.imprimeTicket ? "Sí" : "No"} · Comanda: ${p.imprimeComanda ? "Sí" : "No"}${p.impresionRemota ? " · Remota" : ""}',
+                      'Ticket: ${p.imprimeTicket ? "Sí" : "No"} · Comanda: ${p.imprimeComanda ? "Sí" : "No"}${p.impresionRemota ? " · Remota" : ""}${p.tieneClaveAgente ? " · Clave configurada" : ""}',
                       style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
                     trailing: Row(
@@ -358,34 +359,121 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
       ),
     );
     if (confirm != true || !context.mounted) return;
-    final clave = await controller.generarClaveAgente(p.id);
+
+    // Mostrar loading mientras se genera la clave
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const AlertDialog(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 16),
+            Text('Generando clave...'),
+          ],
+        ),
+      ),
+    );
+
+    String? clave;
+    try {
+      clave = await controller.generarClaveAgente(p.id).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw TimeoutException(
+            'El servidor no respondió a tiempo. Comprueba que el backend esté en marcha y la base de datos accesible.',
+          );
+        },
+      );
+    } on TimeoutException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message ?? 'Tiempo de espera agotado'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      clave = null;
+    } catch (_) {
+      clave = null;
+    } finally {
+      if (context.mounted) Navigator.of(context).pop(); // Cerrar siempre el diálogo de carga
+    }
+
     if (!context.mounted) return;
-    if (clave == null) {
+    if (clave == null || clave.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(controller.impresorasError ?? 'No se pudo generar la clave')),
+        SnackBar(
+          content: Text(controller.impresorasError ?? 'No se pudo generar la clave'),
+          backgroundColor: Colors.red.shade700,
+        ),
       );
       return;
     }
-    await showDialog(
+
+    final String claveParaMostrar = clave;
+    // Mostrar la clave de forma clara y visible en la interfaz
+    await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Clave para el agente'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        title: Row(
           children: [
-            const Text('Copie esta clave y péguela en el .bat (AGENT_API_KEY). No caduca.'),
-            const SizedBox(height: 12),
-            SelectableText(clave, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            Icon(Icons.key, color: AppColors.primary, size: 28),
+            const SizedBox(width: 8),
+            const Text('Clave para el agente'),
           ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Copie esta clave y péguela en el archivo .bat del PC con la impresora (variable AGENT_API_KEY). No caduca.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade400),
+                ),
+                child: SelectableText(
+                  claveParaMostrar,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Impresora: ${p.nombre}',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
         ),
         actions: [
           FilledButton.icon(
             icon: const Icon(Icons.copy, size: 18),
-            label: const Text('Copiar'),
+            label: const Text('Copiar al portapapeles'),
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: clave));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clave copiada')));
+              Clipboard.setData(ClipboardData(text: claveParaMostrar));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Clave copiada al portapapeles')),
+              );
             },
           ),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),

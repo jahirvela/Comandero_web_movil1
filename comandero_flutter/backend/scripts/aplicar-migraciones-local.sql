@@ -9,6 +9,53 @@
 USE comandero;
 
 -- -----------------------------------------------------------------------------
+-- 0) Tablas base que pueden no existir en BDs antiguas (crear si faltan)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS comanda_impresion (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  orden_id BIGINT UNSIGNED NOT NULL,
+  usuario_id BIGINT UNSIGNED NULL,
+  exito TINYINT(1) NOT NULL DEFAULT 1,
+  mensaje_error VARCHAR(255) NULL,
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY ix_comanda_orden (orden_id, creado_en),
+  KEY ix_comanda_usuario (usuario_id),
+  CONSTRAINT fk_comanda_orden FOREIGN KEY (orden_id) REFERENCES orden(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_comanda_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS configuracion (
+  id TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  iva_habilitado TINYINT(1) NOT NULL DEFAULT 0,
+  actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO configuracion (id, iva_habilitado)
+SELECT 1, 0 FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM configuracion WHERE id = 1);
+
+CREATE TABLE IF NOT EXISTS impresora (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(100) NOT NULL,
+  tipo ENUM('usb','tcp','bluetooth','simulation') NOT NULL DEFAULT 'usb',
+  device VARCHAR(255) NULL,
+  host VARCHAR(255) NULL,
+  port INT UNSIGNED NULL,
+  paper_width TINYINT UNSIGNED NOT NULL DEFAULT 80,
+  imprime_ticket TINYINT(1) NOT NULL DEFAULT 1,
+  imprime_comanda TINYINT(1) NOT NULL DEFAULT 0,
+  orden SMALLINT NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  marca_modelo VARCHAR(120) NULL,
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY ix_impresora_activo (activo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
 -- 1) Tabla producto_ingrediente (recetas) y columna es_opcional
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS producto_ingrediente (
@@ -66,9 +113,16 @@ SET
 ALTER TABLE orden_item
   MODIFY COLUMN producto_id BIGINT UNSIGNED NULL;
 
--- Si falla DROP FOREIGN KEY (ej. "check that column/key exists"), el nombre de la FK puede ser otro.
--- Ejecuta: SHOW CREATE TABLE orden_item; y sustituye abajo el nombre correcto (ej. fk_orden_item_producto).
-ALTER TABLE orden_item DROP FOREIGN KEY fk_item_producto;
+-- Obtener el nombre real de la FK orden_item -> producto y eliminarla (puede ser fk_item_producto, fk_orden_item_producto, etc.)
+SET @fk_name = (SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orden_item' AND REFERENCED_TABLE_NAME = 'producto' LIMIT 1);
+SET @drop_fk = IF(@fk_name IS NOT NULL,
+  CONCAT('ALTER TABLE orden_item DROP FOREIGN KEY `', REPLACE(@fk_name, '`', '``'), '`'),
+  'SELECT 1');
+PREPARE stmt_drop_fk FROM @drop_fk;
+EXECUTE stmt_drop_fk;
+DEALLOCATE PREPARE stmt_drop_fk;
+
 ALTER TABLE orden_item
   ADD CONSTRAINT fk_item_producto
   FOREIGN KEY (producto_id) REFERENCES producto(id) ON UPDATE CASCADE ON DELETE SET NULL;

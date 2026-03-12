@@ -1,4 +1,3 @@
-import 'package:dio/dio.dart';
 import 'api_service.dart';
 
 /// Anchos de papel soportados (mm).
@@ -128,7 +127,7 @@ class ImpresorasService {
     if (response.statusCode != 200) return [];
     final data = response.data;
     if (data is! List) return [];
-    return (data as List).map((e) => ImpresoraModel.fromJson(e as Map<String, dynamic>)).toList();
+    return data.map((e) => ImpresoraModel.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<ImpresoraModel?> getImpresora(int id) async {
@@ -157,8 +156,15 @@ class ImpresorasService {
   /// Genera una nueva clave para el agente de impresión. Solo se devuelve una vez; guardarla en el .bat.
   Future<String?> generarClaveAgente(int id) async {
     final response = await _api.post('/impresoras/$id/generar-clave-agente');
-    if (response.statusCode != 200 || response.data == null) return null;
-    final data = response.data as Map<String, dynamic>;
-    return data['clave'] as String?;
+    final data = response.data;
+    if (response.statusCode != 200) {
+      final msg = data is Map && data['error'] != null
+          ? data['error'].toString()
+          : 'No se pudo generar la clave (${response.statusCode})';
+      throw Exception(msg);
+    }
+    if (data == null || data is! Map<String, dynamic>) return null;
+    final clave = data['clave'] as String?;
+    return clave != null && clave.isNotEmpty ? clave : null;
   }
 }

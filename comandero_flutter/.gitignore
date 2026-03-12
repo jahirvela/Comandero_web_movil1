@@ -48,6 +48,7 @@ app.*.map.json
 backend/node_modules/
 backend/.env
 backend/.env.local
+backend/.env.remote
 backend/dist/
 backend/build/
 backend/*.log

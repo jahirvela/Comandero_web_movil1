@@ -128,13 +128,18 @@ export async function colaMarcarErrorController(req: Request, res: Response) {
 
 /** POST /impresoras/:id/generar-clave-agente - Genera clave para el agente (solo se muestra una vez). */
 export async function generarClaveAgenteController(req: Request, res: Response) {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id < 1) {
-    return res.status(400).json({ error: 'ID de impresora inválido' });
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'ID de impresora inválido' });
+    }
+    const clave = await generarClaveAgente(id);
+    if (!clave) {
+      return res.status(404).json({ error: 'Impresora no encontrada' });
+    }
+    return res.json({ clave });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Error al generar la clave';
+    return res.status(500).json({ error: message });
   }
-  const clave = await generarClaveAgente(id);
-  if (!clave) {
-    return res.status(404).json({ error: 'Impresora no encontrada' });
-  }
-  res.json({ clave });
 }
