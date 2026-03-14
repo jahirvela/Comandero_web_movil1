@@ -20,6 +20,34 @@ import 'transfer_payment_modal.dart';
 import 'mixed_payment_modal.dart';
 import '../../services/tickets_service.dart';
 
+/// Envuelve la vista principal del cajero y fuerza una recarga de cuentas por cobrar
+/// al mostrarse (lap, celular, tablet), para que en móvil siempre se carguen desde el API.
+class _CajeroMainViewRefresher extends StatefulWidget {
+  const _CajeroMainViewRefresher({
+    required this.controller,
+    required this.child,
+  });
+
+  final CajeroController controller;
+  final Widget child;
+
+  @override
+  State<_CajeroMainViewRefresher> createState() => _CajeroMainViewRefresherState();
+}
+
+class _CajeroMainViewRefresherState extends State<_CajeroMainViewRefresher> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.controller.refreshBills();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 class CajeroApp extends StatelessWidget {
   const CajeroApp({super.key});
 
@@ -240,35 +268,38 @@ class CajeroApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Botones de acción
-          _buildActionButtons(context, cajeroController, isTablet),
-          const SizedBox(height: 24),
+    return _CajeroMainViewRefresher(
+      controller: cajeroController,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Botones de acción
+            _buildActionButtons(context, cajeroController, isTablet),
+            const SizedBox(height: 24),
 
-          // Información de apertura de caja
-          _buildCashOpeningInfo(context, cajeroController, isTablet),
-          const SizedBox(height: 24),
+            // Información de apertura de caja
+            _buildCashOpeningInfo(context, cajeroController, isTablet),
+            const SizedBox(height: 24),
 
-          // Resumen de consumo del día
-          _buildDailyConsumptionSummary(context, cajeroController, isTablet),
-          const SizedBox(height: 24),
+            // Resumen de consumo del día
+            _buildDailyConsumptionSummary(context, cajeroController, isTablet),
+            const SizedBox(height: 24),
 
-          // Historial de cobros
-          _buildCollectionHistorySection(context, cajeroController, isTablet),
-          const SizedBox(height: 24),
+            // Historial de cobros
+            _buildCollectionHistorySection(context, cajeroController, isTablet),
+            const SizedBox(height: 24),
 
-          // Lista de facturas con filtro
-          _buildBillsListWithFilter(
-            context,
-            cajeroController,
-            isTablet,
-            isDesktop,
-          ),
-        ],
+            // Lista de facturas con filtro (cuentas por cobrar)
+            _buildBillsListWithFilter(
+              context,
+              cajeroController,
+              isTablet,
+              isDesktop,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -511,7 +542,7 @@ class CajeroApp extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        date_utils.AppDateUtils.formatDateTime(apertura.fecha),
+                        date_utils.AppDateUtils.formatDateTimeWithAmPm(apertura.fecha),
                         style: TextStyle(
                           fontSize: isTablet ? 14.0 : 12.0,
                           fontWeight: FontWeight.w500,

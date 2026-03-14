@@ -129,12 +129,31 @@ export function formatMx(
 }
 
 /**
- * Formatea una fecha para formato de ticket/impresión
+ * Formatea una fecha para formato de ticket/impresión (24h)
  * @param date - Fecha en UTC
  * @returns String formateado tipo "03/12/2025 14:30"
  */
 export function formatMxTicket(date: Date | string | DateTime | null | undefined): string {
   return formatMx(date, 'dd/MM/yyyy HH:mm');
+}
+
+/**
+ * Formatea la hora actual en CDMX para ticket/impresión con AM/PM
+ * @returns String formateado tipo "03/12/2025 8:30 PM"
+ */
+export function formatMxNowAmPm(): string {
+  return nowMx().toFormat('dd/MM/yyyy h:mm a');
+}
+
+/**
+ * Formatea una fecha para ticket/impresión con AM/PM (hora CDMX)
+ * @param date - Fecha en UTC o null (si es null usa nowMx())
+ * @returns String formateado tipo "03/12/2025 8:30 PM"
+ */
+export function formatMxTicketAmPm(date: Date | string | DateTime | null | undefined): string {
+  const converted = date != null ? utcToMx(date) : nowMx();
+  if (!converted) return '';
+  return converted.toFormat('dd/MM/yyyy h:mm a');
 }
 
 /**

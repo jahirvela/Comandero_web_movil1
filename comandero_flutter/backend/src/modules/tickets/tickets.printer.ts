@@ -5,7 +5,7 @@ import { getCharsPerLine, getPrintersConfigSync, getTicketColumnWidths, type Pap
 import type { TicketData } from './tickets.repository.js';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { nowMx, formatMxLocale } from '../../config/time.js';
+import { nowMx, formatMxNowAmPm } from '../../config/time.js';
 
 /**
  * Convierte string UTF-16 a buffer CP850 para impresoras térmicas (México/LATAM).
@@ -342,9 +342,9 @@ export const generarContenidoTicket = (
     contenido += `${'-'.repeat(w)}\n`;
   }
 
-  // Datos del ticket - fecha/hora de impresión en CDMX
+  // Datos del ticket - fecha/hora de impresión en CDMX con AM/PM
   contenido += `Folio: ${norm(orden.folio)}\n`;
-  contenido += `Fecha: ${formatMxLocale(nowMx(), { dateStyle: 'short', timeStyle: 'short' })}\n`;
+  contenido += `Fecha: ${formatMxNowAmPm()}\n`;
 
   // Mesa (y opcionalmente cuenta dividida: "Cuenta de: [nombre]") — compacto, sin huecos
   if (!isTakeaway && orden.mesaCodigo) {

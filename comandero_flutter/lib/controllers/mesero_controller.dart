@@ -583,6 +583,71 @@ class MeseroController extends ChangeNotifier {
     // No hacer nada - el historial se carga siempre del backend
   }
 
+  static String _dividirCuentaKey(String tableId) =>
+      'mesero_dividir_cuenta_$tableId';
+
+  /// Persiste el estado de "dividir cuenta" para una mesa (nombres y asignaciones).
+  /// Así al cerrar sesión y volver a entrar, se restaura la interfaz de división.
+  Future<void> _persistDividedAccountState(String tableId) async {
+    try {
+      final names = _personNamesByTable[tableId];
+      if (names == null || names.isEmpty) return;
+      final assignments = _personCartItemsByTable[tableId];
+      final selectedId = _selectedPersonIdByTable[tableId];
+      final nextId = _nextPersonIdByTable[tableId] ?? 1;
+      final payload = {
+        'personNames': names,
+        'personAssignments': assignments ?? {},
+        'selectedPersonId': selectedId,
+        'nextPersonId': nextId,
+      };
+      await _storage.write(_dividirCuentaKey(tableId), jsonEncode(payload));
+    } catch (e) {
+      print('⚠️ Mesero: Error al persistir estado dividir cuenta: $e');
+    }
+  }
+
+  /// Restaura desde storage el estado de "dividir cuenta" para una mesa.
+  /// Devuelve true si se restauró algo (personNames no vacío).
+  Future<bool> _restoreDividedAccountState(String tableId) async {
+    try {
+      final raw = await _storage.read(_dividirCuentaKey(tableId));
+      if (raw == null || raw.isEmpty) return false;
+      final data = jsonDecode(raw) as Map<String, dynamic>?;
+      if (data == null) return false;
+      final personNames = data['personNames'] as Map<String, dynamic>?;
+      if (personNames == null || personNames.isEmpty) return false;
+      final names = personNames.map((k, v) => MapEntry(k, v.toString()));
+      _personNamesByTable[tableId] = names;
+      _isDividedAccountModeByTable[tableId] = true;
+      if (!_personCartItemsByTable.containsKey(tableId)) {
+        _personCartItemsByTable[tableId] = {};
+      }
+      final assignments = data['personAssignments'] as Map<String, dynamic>?;
+      if (assignments != null) {
+        for (final e in assignments.entries) {
+          final list = e.value;
+          if (list is List) {
+            _personCartItemsByTable[tableId]![e.key] =
+                list.map((x) => x.toString()).toList();
+          }
+        }
+      }
+      final nextId = data['nextPersonId'] as int?;
+      if (nextId != null) _nextPersonIdByTable[tableId] = nextId;
+      final selectedId = data['selectedPersonId'] as String?;
+      if (selectedId != null && names.containsKey(selectedId)) {
+        _selectedPersonIdByTable[tableId] = selectedId;
+      } else if (names.isNotEmpty) {
+        _selectedPersonIdByTable[tableId] = names.keys.first;
+      }
+      return true;
+    } catch (e) {
+      print('⚠️ Mesero: Error al restaurar estado dividir cuenta: $e');
+      return false;
+    }
+  }
+
   // Guardar flags de historial limpiado en storage
   Future<void> _saveClearedHistoryFlags() async {
     try {
@@ -1600,9 +1665,14 @@ class MeseroController extends ChangeNotifier {
       }
     }
     
-    // Si la mesa ya tiene personas o datos de cuenta dividida, ir directo a Cuenta Dividida; si no, a Consumo de Mesa
-    final hasDividedData = (_personNamesByTable[tableId]?.isNotEmpty ?? false) || 
+    // Restaurar estado "dividir cuenta" desde storage al reentrar a la mesa (tras cerrar sesión o cambiar de rol)
+    bool hasDividedData = (_personNamesByTable[tableId]?.isNotEmpty ?? false) ||
         (_isDividedAccountModeByTable[tableId] ?? false);
+    if (!hasDividedData) {
+      final restored = await _restoreDividedAccountState(tableId);
+      if (restored) hasDividedData = true;
+    }
+    // Si la mesa ya tiene personas o datos de cuenta dividida, ir directo a Cuenta Dividida; si no, a Consumo de Mesa
     setCurrentView(hasDividedData ? 'divided_account' : 'table');
     notifyListeners();
   }
@@ -1898,12 +1968,15 @@ class MeseroController extends ChangeNotifier {
   }
   
   /// Resetear modo dividido para una mesa (cuando se cierra la cuenta completamente)
-  void resetDividedAccountModeForTable(String tableId) {
+  Future<void> resetDividedAccountModeForTable(String tableId) async {
     _isDividedAccountModeByTable.remove(tableId);
     _personCartItemsByTable.remove(tableId);
     _personNamesByTable.remove(tableId);
     _selectedPersonIdByTable.remove(tableId);
     _nextPersonIdByTable.remove(tableId);
+    try {
+      await _storage.delete(_dividirCuentaKey(tableId));
+    } catch (_) {}
     notifyListeners();
   }
 
@@ -1928,6 +2001,7 @@ class MeseroController extends ChangeNotifier {
     personNames[personId] = name ?? 'Persona ${personNames.length + 1}';
     _personCartItemsByTable[tableId]![personId] = [];
     notifyListeners();
+    _persistDividedAccountState(tableId);
     return personId;
   }
 
@@ -1958,6 +2032,7 @@ class MeseroController extends ChangeNotifier {
         ? 'Persona ${personNames.keys.toList().indexOf(personId) + 1}'
         : newName.trim();
     notifyListeners();
+    _persistDividedAccountState(tableId);
   }
 
   /// Asignar un producto del carrito a una persona
@@ -5057,6 +5132,10 @@ class MeseroController extends ChangeNotifier {
         notifyListeners();
         // Guardar historial persistido después de agregar orden
         _savePersistedHistory();
+        // Persistir estado dividir cuenta para restaurar al reentrar a la mesa
+        if (isDividedAccountMode) {
+          _persistDividedAccountState(mesaTableId);
+        }
       } else if (isTakeaway && _selectedTable == null) {
         // Si es pedido para llevar sin mesa seleccionada, guardar con clave especial
         final takeawayKey = 'takeaway-$ordenIdInt';

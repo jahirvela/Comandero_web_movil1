@@ -330,6 +330,23 @@ class AppDateUtils {
     return '$day/$month/$year $hour:$minute';
   }
 
+  /// Formatea fecha y hora con AM/PM (ej: 13/03/2026 8:30 PM).
+  /// Usa hora local; para reportes y tickets evita confusiones de zona horaria.
+  static String formatDateTimeWithAmPm(DateTime fecha) {
+    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final day = localDate.day.toString().padLeft(2, '0');
+    final month = localDate.month.toString().padLeft(2, '0');
+    final year = localDate.year;
+    final hour12 = localDate.hour == 0
+        ? 12
+        : localDate.hour > 12
+            ? localDate.hour - 12
+            : localDate.hour;
+    final minute = localDate.minute.toString().padLeft(2, '0');
+    final amPm = localDate.hour < 12 ? 'AM' : 'PM';
+    return '$day/$month/$year $hour12:$minute $amPm';
+  }
+
   /// Formatea solo la fecha (sin hora)
   /// Formato: dd/MM/yyyy
   static String formatDate(DateTime fecha) {
