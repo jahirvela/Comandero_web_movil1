@@ -44,15 +44,17 @@ class _CaptainAlertToKitchenModalState extends State<CaptainAlertToKitchenModal>
 
   @override
   Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.of(context).size.height * 0.85;
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 500),
+        constraints: BoxConstraints(maxWidth: 500, maxHeight: maxHeight),
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             // Header
             Row(
               children: [
@@ -304,6 +306,7 @@ class _CaptainAlertToKitchenModalState extends State<CaptainAlertToKitchenModal>
               ],
             ),
           ],
+          ),
         ),
       ),
     );
