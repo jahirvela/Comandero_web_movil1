@@ -2330,10 +2330,12 @@ class AdminController extends ChangeNotifier {
 
       // Datos
       for (final cierre in cierresOrdenados) {
-        final fecha = date_utils.AppDateUtils.formatDateTime(cierre.fecha);
+        final fecha = date_utils.AppDateUtils.formatDateTimeWithAmPm(cierre.fecha);
         final fechaParts = fecha.split(' ');
         final fechaStr = fechaParts.isNotEmpty ? fechaParts[0] : '';
-        final horaStr = fechaParts.length > 1 ? fechaParts[1] : '';
+        final horaStr = fechaParts.length >= 3
+            ? '${fechaParts[1]} ${fechaParts[2]}'
+            : (fechaParts.length > 1 ? fechaParts[1] : '');
 
         final estadoStr = formatStatus(cierre.estado);
         final notas = (cierre.notaCajero ?? '')
@@ -2502,7 +2504,7 @@ class AdminController extends ChangeNotifier {
                       ),
                     ),
                     pdf_widgets.Text(
-                      date_utils.AppDateUtils.formatDateTime(date_utils.AppDateUtils.nowCdmx()),
+                      date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx()),
                       style: const pdf_widgets.TextStyle(fontSize: 12),
                     ),
                   ],
@@ -2537,10 +2539,10 @@ class AdminController extends ChangeNotifier {
                       if (_cashCloseStartDate != null &&
                           _cashCloseEndDate != null) ...[
                         pdf_widgets.Text(
-                          'Desde: ${date_utils.AppDateUtils.formatDateTime(_cashCloseStartDate!)}',
+                          'Desde: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(_cashCloseStartDate!)}',
                         ),
                         pdf_widgets.Text(
-                          'Hasta: ${date_utils.AppDateUtils.formatDateTime(_cashCloseEndDate!)}',
+                          'Hasta: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(_cashCloseEndDate!)}',
                         ),
                       ],
                       pdf_widgets.Text(

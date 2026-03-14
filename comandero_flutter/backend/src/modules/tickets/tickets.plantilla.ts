@@ -1,7 +1,7 @@
 import type { TicketData } from './tickets.repository.js';
 import type { PlantillaImpresion } from '../configuracion/plantilla-impresion.repository.js';
 import { getCharsPerLine, getTicketColumnWidths, type PaperWidth } from '../../config/printers.config.js';
-import { formatMxLocale, nowMx } from '../../config/time.js';
+import { formatMxNowAmPm } from '../../config/time.js';
 
 const ESC = '\x1B';
 const init = `${ESC}@`;
@@ -156,7 +156,7 @@ export function renderTicketConPlantilla(
   const restaurante = data.restaurante;
 
   const nombreRestaurante = (norm(restaurante.nombre) || 'Restaurante').trim() || 'Restaurante';
-  const fechaStr = formatMxLocale(nowMx(), { dateStyle: 'short', timeStyle: 'short' });
+  const fechaStr = formatMxNowAmPm();
   const itemsBlock = generarBloqueItems(data, paperWidth, plantilla.plantillaLineaItem);
 
   const ivaFormatted = orden.impuestoTotal.toFixed(2).padStart(totalColLen);

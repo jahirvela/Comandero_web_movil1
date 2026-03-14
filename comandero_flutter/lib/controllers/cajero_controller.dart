@@ -2054,7 +2054,7 @@ class CajeroController extends ChangeNotifier {
                       ),
                     ),
                     pdf_widgets.Text(
-                      date_utils.AppDateUtils.formatDateTime(hoy),
+                      date_utils.AppDateUtils.formatDateTimeWithAmPm(hoy),
                       style: const pdf_widgets.TextStyle(fontSize: 12),
                     ),
                   ],
@@ -2089,7 +2089,7 @@ class CajeroController extends ChangeNotifier {
                           'Efectivo Inicial: ${formatCurrency(apertura.efectivoInicial)}',
                         ),
                         pdf_widgets.Text(
-                          'Fecha: ${date_utils.AppDateUtils.formatDateTime(apertura.fecha)}',
+                          'Fecha: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(apertura.fecha)}',
                         ),
                         if (apertura.notaCajero != null &&
                             apertura.notaCajero!.isNotEmpty)
@@ -2283,7 +2283,7 @@ class CajeroController extends ChangeNotifier {
                               pdf_widgets.Padding(
                                 padding: const pdf_widgets.EdgeInsets.all(5),
                                 child: pdf_widgets.Text(
-                                  date_utils.AppDateUtils.formatDateTime(
+                                  date_utils.AppDateUtils.formatDateTimeWithAmPm(
                                     cierre.fecha,
                                   ),
                                   style: const pdf_widgets.TextStyle(
