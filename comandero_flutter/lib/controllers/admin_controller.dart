@@ -3427,6 +3427,8 @@ class AdminController extends ChangeNotifier {
         'disponible': item.isAvailable,
         'sku': null,
         'inventariable': false,
+        'descuentoPorcentaje': item.descuentoPorcentaje,
+        'duracionDescuento': item.duracionDescuento,
       };
 
       if (item.hasSizes && (item.sizes?.isNotEmpty ?? false)) {
@@ -3470,6 +3472,8 @@ class AdminController extends ChangeNotifier {
         'descripcion': item.description,
         'precio': basePrice,
         'disponible': item.isAvailable,
+        'descuentoPorcentaje': item.descuentoPorcentaje,
+        'duracionDescuento': item.duracionDescuento,
       };
 
       if (item.hasSizes) {
@@ -3658,6 +3662,15 @@ class AdminController extends ChangeNotifier {
       allowSauces: false,
       allowExtraIngredients: false,
       recipeIngredients: ingredientes,
+      descuentoPorcentaje: (data['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
+      descuentoActivo: data['descuentoActivo'] as bool? ?? false,
+      descuentoInicio: data['descuentoInicio'] != null
+          ? date_utils.AppDateUtils.parseToLocal(data['descuentoInicio'])
+          : null,
+      descuentoFin: data['descuentoFin'] != null
+          ? date_utils.AppDateUtils.parseToLocal(data['descuentoFin'])
+          : null,
+      duracionDescuento: data['duracionDescuento'] as String?,
     );
   }
 
@@ -3819,6 +3832,8 @@ class AdminController extends ChangeNotifier {
         return Colors.purple;
       case UserRole.admin:
         return Colors.red;
+      case UserRole.gerente:
+        return const Color(0xFF0F172A);
       default:
         return Colors.grey;
     }

@@ -49,7 +49,14 @@ class _CajeroMainViewRefresherState extends State<_CajeroMainViewRefresher> {
 }
 
 class CajeroApp extends StatelessWidget {
-  const CajeroApp({super.key});
+  final VoidCallback? onLogoutPressed;
+  final String roleLabel;
+
+  const CajeroApp({
+    super.key,
+    this.onLogoutPressed,
+    this.roleLabel = 'Cajero',
+  });
 
   // Consolidar items de bill por nombre (sumar cantidades)
   /// Consolida items con el mismo nombre COMPLETO (incluyendo tamaño) y calcula el total correctamente
@@ -190,7 +197,7 @@ class CajeroApp extends StatelessWidget {
                 ),
               ),
               Text(
-                '${authController.userName} • Cajero',
+                '${authController.userName} • $roleLabel',
                 style: TextStyle(
                   fontSize: isTablet ? 14.0 : 12.0,
                   color: Colors.white.withValues(alpha: 0.8),
@@ -221,6 +228,10 @@ class CajeroApp extends StatelessWidget {
           child: LogoutButton(
             isTablet: isTablet,
             onPressed: () async {
+              if (onLogoutPressed != null) {
+                onLogoutPressed!.call();
+                return;
+              }
               await authController.logout();
               if (context.mounted) {
                 // Usar go_router en lugar de Navigator.pushReplacementNamed

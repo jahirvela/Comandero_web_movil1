@@ -16,7 +16,14 @@ import 'takeaway_view.dart';
 import 'divided_account_view.dart';
 
 class MeseroApp extends StatelessWidget {
-  const MeseroApp({super.key});
+  final VoidCallback? onLogoutPressed;
+  final String roleLabel;
+
+  const MeseroApp({
+    super.key,
+    this.onLogoutPressed,
+    this.roleLabel = 'Mesero',
+  });
 
   String _formatTimeAgo(DateTime timestamp) {
     return date_utils.AppDateUtils.formatTimeAgoShort(
@@ -108,7 +115,7 @@ class MeseroApp extends StatelessWidget {
                 ),
               ),
               Text(
-                '${authController.userName} • Mesero',
+                '${authController.userName} • $roleLabel',
                 style: TextStyle(
                   fontSize: isTablet ? 14.0 : 12.0,
                   color: Colors.white.withValues(alpha: 0.8),
@@ -250,6 +257,10 @@ class MeseroApp extends StatelessWidget {
             backgroundColor: Colors.white,
             foregroundColor: AppColors.textPrimary,
             onPressed: () async {
+              if (onLogoutPressed != null) {
+                onLogoutPressed!.call();
+                return;
+              }
               await authController.logout();
               if (context.mounted) {
                 // Usar go_router en lugar de Navigator.pushReplacementNamed

@@ -13,7 +13,6 @@ class CartView extends StatefulWidget {
 }
 
 class _CartViewState extends State<CartView> {
-  double discountPercentage = 0.0;
   bool isTakeaway = false;
   String customerName = '';
   String customerPhone = '';
@@ -33,8 +32,6 @@ class _CartViewState extends State<CartView> {
       builder: (context, controller, child) {
         final cart = controller.getCurrentCart();
         final subtotal = controller.calculateTotal();
-        final discountAmount = subtotal * (discountPercentage / 100);
-        final subtotalAfterDiscount = subtotal - discountAmount;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -65,10 +62,6 @@ class _CartViewState extends State<CartView> {
                             ],
                             const SizedBox(height: 24),
 
-                            // Sección de descuento
-                            _buildDiscountSection(isTablet),
-                            const SizedBox(height: 24),
-
                             // Sección para llevar
                             _buildTakeawaySection(isTablet),
                             const SizedBox(height: 24),
@@ -86,11 +79,10 @@ class _CartViewState extends State<CartView> {
                               future: controller.getIvaHabilitado(),
                               builder: (context, snapshot) {
                                 final ivaHabilitado = snapshot.data ?? false;
-                                final impuesto = ivaHabilitado ? (subtotalAfterDiscount * 0.16) : 0.0;
-                                final totalConIva = subtotalAfterDiscount + impuesto;
+                                final impuesto = ivaHabilitado ? (subtotal * 0.16) : 0.0;
+                                final totalConIva = subtotal + impuesto;
                                 return _buildSummarySection(
                                   subtotal,
-                                  discountAmount,
                                   totalConIva,
                                   splitCount,
                                   isTablet,
@@ -499,85 +491,6 @@ class _CartViewState extends State<CartView> {
     );
   }
 
-  Widget _buildDiscountSection(bool isTablet) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.border),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Descuento',
-              style: TextStyle(
-                fontSize: isTablet ? 20.0 : 18.0,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Botones de porcentaje
-            Row(
-              children: [
-                _buildDiscountButton('0%', 0.0, isTablet),
-                const SizedBox(width: 8),
-                _buildDiscountButton('5%', 5.0, isTablet),
-                const SizedBox(width: 8),
-                _buildDiscountButton('10%', 10.0, isTablet),
-                const SizedBox(width: 8),
-                _buildDiscountButton('15%', 15.0, isTablet),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Campo personalizado
-            TextField(
-              onChanged: (value) {
-                setState(() {
-                  discountPercentage = double.tryParse(value) ?? 0.0;
-                });
-              },
-              decoration: InputDecoration(
-                labelText: 'Descuento personalizado (%)',
-                hintText: '0',
-                suffixText: '%',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              keyboardType: TextInputType.number,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDiscountButton(String label, double percentage, bool isTablet) {
-    final isSelected = discountPercentage == percentage;
-
-    return Expanded(
-      child: ElevatedButton(
-        onPressed: () {
-          setState(() {
-            discountPercentage = percentage;
-          });
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isSelected ? AppColors.primary : AppColors.secondary,
-          foregroundColor: isSelected ? Colors.white : AppColors.textPrimary,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-        child: Text(label, style: TextStyle(fontSize: isTablet ? 14.0 : 12.0)),
-      ),
-    );
-  }
-
   Widget _buildTakeawaySection(bool isTablet) {
     return Consumer<MeseroController>(
       builder: (context, controller, child) {
@@ -820,7 +733,6 @@ class _CartViewState extends State<CartView> {
 
   Widget _buildSummarySection(
     double subtotal,
-    double discountAmount,
     double total,
     int splitCount,
     bool isTablet, {
@@ -858,28 +770,6 @@ class _CartViewState extends State<CartView> {
                 ),
               ],
             ),
-            if (discountAmount > 0) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Descuento (${discountPercentage.toInt()}%):',
-                    style: TextStyle(
-                      fontSize: isTablet ? 16.0 : 14.0,
-                      color: AppColors.success,
-                    ),
-                  ),
-                  Text(
-                    '-\$${discountAmount.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 16.0 : 14.0,
-                      color: AppColors.success,
-                    ),
-                  ),
-                ],
-              ),
-            ],
             if (ivaHabilitado) ...[
               const SizedBox(height: 8),
               Row(
@@ -1217,16 +1107,13 @@ class _CartViewState extends State<CartView> {
                     return;
                   }
 
-                  // Calcular descuento
-                  final subtotal = controller.calculateTotal();
-                  final discountAmount = subtotal * (discountPercentage / 100);
                   // Enviar pedido a cocina
                   await controller.sendOrderToKitchen(
                     isTakeaway: finalIsTakeaway,
                     customerName: finalIsTakeaway ? finalCustomerName : null,
                     customerPhone: finalIsTakeaway && finalCustomerPhone.isNotEmpty ? finalCustomerPhone : null,
                     waiterName: userName,
-                    discount: discountAmount,
+                    discount: 0,
                     orderNote: orderNote.trim().isNotEmpty ? orderNote.trim() : null,
                     splitCount: splitCount,
                   );

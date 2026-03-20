@@ -43,10 +43,17 @@ class MixedPaymentModal extends StatefulWidget {
 class _MixedPaymentModalState extends State<MixedPaymentModal> {
   final _formKey = GlobalKey<FormState>();
   final List<_MixedPaymentEntry> _entries = [];
+  final _discountController = TextEditingController();
   final _tipController = TextEditingController();
   bool _submitted = false;
 
-  double get _billTotal => widget.bill.calculatedTotal;
+  double get _originalBillTotal => widget.bill.calculatedTotal;
+  double get _discountPercentage {
+    final value = double.tryParse(_discountController.text) ?? 0;
+    return value.clamp(0, 100).toDouble();
+  }
+  double get _discountAmount => _originalBillTotal * (_discountPercentage / 100);
+  double get _billTotal => (_originalBillTotal - _discountAmount).clamp(0, double.infinity);
   double get _totalPaid =>
       _entries.fold(0.0, (sum, entry) => sum + entry.amount);
   double get _tipAmount => double.tryParse(_tipController.text) ?? 0;
@@ -68,6 +75,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
       entry.dispose();
     }
     _tipController.dispose();
+    _discountController.dispose();
     super.dispose();
   }
 
@@ -109,6 +117,8 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
                 const SizedBox(height: 12),
                 _buildSummary(isTablet),
                 const SizedBox(height: 12),
+                _buildDiscountField(isTablet),
+                const SizedBox(height: 12),
                 _buildTipField(isTablet),
                 const SizedBox(height: 12),
                 Expanded(
@@ -139,6 +149,19 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildDiscountField(bool isTablet) {
+    return TextFormField(
+      controller: _discountController,
+      decoration: InputDecoration(
+        labelText: 'Descuento global (%)',
+        prefixIcon: const Icon(Icons.percent),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      keyboardType: TextInputType.number,
+      onChanged: (_) => setState(() {}),
     );
   }
 
@@ -661,6 +684,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           entry,
           cashierName,
           includeTip: isLast && _tipAmount > 0,
+          includeDiscount: isLast && _discountPercentage > 0,
         );
 
         // Asegurar que el billId sea el correcto usando el bill original
@@ -734,10 +758,13 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
     _MixedPaymentEntry entry,
     String cashierName, {
     bool includeTip = false,
+    bool includeDiscount = false,
   }) {
     final timestamp = date_utils.AppDateUtils.now();
     final tipToApply = includeTip ? _tipAmount : 0.0;
-    final totalWithTip = entry.amount + tipToApply;
+    final discountToApply = includeDiscount ? _discountAmount : 0.0;
+    final totalWithTip =
+        (entry.amount + tipToApply - discountToApply).clamp(0.0, double.infinity).toDouble();
     switch (entry.type) {
       case PaymentType.card:
         // Construir referencia con tipo de tarjeta
@@ -755,7 +782,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           transactionId: entry.referenceCtrl.text.trim().isNotEmpty
               ? entry.referenceCtrl.text.trim()
               : null,
-          reference: referencia,
+          reference: includeDiscount
+              ? '$referencia | Descuento ${_discountPercentage.toStringAsFixed(0)}%'
+              : referencia,
           notes: entry.notesCtrl.text.trim().isEmpty
               ? null
               : entry.notesCtrl.text.trim(),
@@ -774,7 +803,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           type: PaymentType.transfer,
           totalAmount: totalWithTip,
           bankName: entry.bankCtrl.text.trim(),
-          reference: entry.referenceCtrl.text.trim(),
+          reference: includeDiscount
+              ? '${entry.referenceCtrl.text.trim()} | Descuento ${_discountPercentage.toStringAsFixed(0)}%'
+              : entry.referenceCtrl.text.trim(),
           notes: entry.notesCtrl.text.trim().isEmpty
               ? null
               : entry.notesCtrl.text.trim(),

@@ -240,3 +240,17 @@ export const emitProductUpdated = (producto: any) => {
   io.to(getSocketRooms.role('administrador')).emit('producto.actualizado', producto);
 };
 
+// Evento específico de descuentos de producto (tiempo real).
+export const emitProductDiscountUpdated = (producto: any) => {
+  const io = getIO();
+  logger.info(
+    { productoId: producto?.id, descuentoPorcentaje: producto?.descuentoPorcentaje },
+    'Emitiendo evento producto.descuento_actualizado'
+  );
+  io.to(getSocketRooms.role('mesero')).emit('producto.descuento_actualizado', producto);
+  io.to(getSocketRooms.role('capitan')).emit('producto.descuento_actualizado', producto);
+  io.to(getSocketRooms.role('cocinero')).emit('producto.descuento_actualizado', producto);
+  io.to(getSocketRooms.role('administrador')).emit('producto.descuento_actualizado', producto);
+  io.to(getSocketRooms.role('cajero')).emit('producto.descuento_actualizado', producto);
+};
+

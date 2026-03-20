@@ -917,13 +917,15 @@ class _CaptainAppState extends State<CaptainApp> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  order.isTakeaway || order.tableNumber == null
+                  order.isTakeaway || (order.tableNumber == null && (order.mesaCodigo == null || order.mesaCodigo!.isEmpty))
                       ? 'Para llevar' 
-                      : 'Mesa ${order.tableNumber}',
+                      : order.displayTableLabel,
                   style: TextStyle(
                     fontSize: isTablet ? 11.0 : 9.0,
                     fontWeight: FontWeight.w600,
-                    color: (order.isTakeaway || order.tableNumber == null) ? AppColors.warning : AppColors.success,
+                    color: (order.isTakeaway || (order.tableNumber == null && (order.mesaCodigo == null || order.mesaCodigo!.isEmpty)))
+                        ? AppColors.warning
+                        : AppColors.success,
                   ),
                 ),
               ],

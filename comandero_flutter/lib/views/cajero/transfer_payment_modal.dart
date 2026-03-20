@@ -43,6 +43,7 @@ class TransferPaymentModal extends StatefulWidget {
 class _TransferPaymentModalState extends State<TransferPaymentModal> {
   final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
+  final _discountController = TextEditingController();
   final _tipController = TextEditingController();
   final _bankController = TextEditingController();
   final _referenceController = TextEditingController();
@@ -51,6 +52,12 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   bool _submitted = false;
 
   double get _billTotal => widget.bill.calculatedTotal;
+  double get _discountPercentage {
+    final value = double.tryParse(_discountController.text) ?? 0;
+    return value.clamp(0, 100).toDouble();
+  }
+  double get _discountAmount => _billTotal * (_discountPercentage / 100);
+  double get _billTotalAfterDiscount => (_billTotal - _discountAmount).clamp(0, double.infinity);
   double get _amount => double.tryParse(_amountController.text) ?? 0;
   double get _tip => double.tryParse(_tipController.text) ?? 0;
   double get _paidWithTip => _amount + _tip;
@@ -60,12 +67,13 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   void initState() {
     super.initState();
     // Precargar con el total pendiente para agilizar el cobro
-    _amountController.text = widget.bill.calculatedTotal.toStringAsFixed(2);
+    _amountController.text = _billTotal.toStringAsFixed(2);
   }
 
   @override
   void dispose() {
     _amountController.dispose();
+    _discountController.dispose();
     _tipController.dispose();
     _bankController.dispose();
     _referenceController.dispose();
@@ -104,6 +112,8 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
                   const SizedBox(height: 12),
                   _buildSummaryCard(isTablet),
                   const SizedBox(height: 16),
+                  _buildDiscountField(isTablet),
+                  const SizedBox(height: 12),
                   _buildAmountField(isTablet),
                   const SizedBox(height: 12),
                   _buildBankField(isTablet),
@@ -209,7 +219,7 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
                 ),
               ),
               Text(
-                widget.controller.formatCurrency(_billTotal),
+                widget.controller.formatCurrency(_billTotalAfterDiscount),
                 style: TextStyle(
                   fontSize: isTablet ? 18 : 16,
                   fontWeight: FontWeight.w700,
@@ -276,6 +286,28 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
     );
   }
 
+  Widget _buildDiscountField(bool isTablet) {
+    return TextFormField(
+      controller: _discountController,
+      decoration: InputDecoration(
+        labelText: 'Descuento (%)',
+        prefixIcon: const Icon(Icons.percent),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      keyboardType: TextInputType.number,
+      onChanged: (_) {
+        final suggested = _billTotalAfterDiscount.toStringAsFixed(2);
+        _amountController.text = suggested;
+        _amountController.selection = TextSelection.fromPosition(
+          TextPosition(offset: _amountController.text.length),
+        );
+        setState(() {});
+      },
+    );
+  }
+
   Widget _buildAmountField(bool isTablet) {
     return TextFormField(
       controller: _amountController,
@@ -292,7 +324,7 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
         if (_amount <= 0) return 'Ingresa un monto mayor a 0';
         // Permitir que el monto sea mayor si incluye propina
         // La propina es un extra, así que monto + propina puede ser mayor que el total
-        if (_amount < _billTotal - _tip) {
+        if (_amount < _billTotalAfterDiscount - _tip) {
           return 'El monto debe cubrir al menos el total de la cuenta';
         }
         return null;
@@ -407,7 +439,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
         timestamp: date_utils.AppDateUtils.now(),
         cashierName: auth.userName.isNotEmpty ? auth.userName : 'Cajero',
         bankName: _bankController.text.trim(),
-        reference: _referenceController.text.trim(),
+        reference: _discountPercentage > 0
+            ? '${_referenceController.text.trim()} | Descuento ${_discountPercentage.toStringAsFixed(0)}%'
+            : _referenceController.text.trim(),
         tipAmount: _tip > 0 ? _tip : null,
         notes: _notesController.text.trim().isEmpty
             ? null

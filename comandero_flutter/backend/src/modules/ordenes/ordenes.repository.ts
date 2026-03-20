@@ -28,6 +28,7 @@ interface OrdenItemRow extends RowDataPacket {
   producto_nombre: string;
   producto_tamano_id: number | null;
   producto_tamano_etiqueta: string | null;
+  categoria_nombre: string | null;
   cantidad: number;
   precio_unitario: number;
   total_linea: number;
@@ -206,9 +207,11 @@ export const obtenerItemsOrden = async (ordenId: number) => {
       oi.total_linea,
       oi.nota,
       p.nombre AS producto_nombre,
+      c.nombre AS categoria_nombre,
       pt.etiqueta AS producto_tamano_etiqueta
     FROM orden_item oi
     LEFT JOIN producto p ON p.id = oi.producto_id
+    LEFT JOIN categoria c ON c.id = p.categoria_id
     LEFT JOIN producto_tamano pt ON pt.id = oi.producto_tamano_id
     WHERE oi.orden_id = :ordenId
     ORDER BY oi.id
@@ -220,6 +223,7 @@ export const obtenerItemsOrden = async (ordenId: number) => {
     ordenId: row.orden_id,
     productoId: row.producto_id,
     productoNombre: row.producto_nombre ?? 'Producto',
+    categoriaNombre: row.categoria_nombre ?? null,
     productoTamanoId: row.producto_tamano_id,
     productoTamanoEtiqueta: row.producto_tamano_etiqueta ?? null,
     cantidad: Number(row.cantidad),

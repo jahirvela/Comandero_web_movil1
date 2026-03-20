@@ -14,6 +14,11 @@ class ProductModel {
   final Map<String, dynamic>? customizations;
   final List<ProductSize> sizes;
   final bool hasSizes;
+  final double descuentoPorcentaje;
+  final bool descuentoActivo;
+  final DateTime? descuentoInicio;
+  final DateTime? descuentoFin;
+  final double? precioOriginal;
 
   ProductModel({
     required this.id,
@@ -29,6 +34,11 @@ class ProductModel {
     this.customizations,
     this.sizes = const [],
     this.hasSizes = false,
+    this.descuentoPorcentaje = 0,
+    this.descuentoActivo = false,
+    this.descuentoInicio,
+    this.descuentoFin,
+    this.precioOriginal,
   });
 
   /// Nombre de categoría para mostrar: el del backend si existe, si no el del enum.
@@ -56,6 +66,15 @@ class ProductModel {
       customizations: json['customizations'],
       sizes: sizes,
       hasSizes: sizes.isNotEmpty || (json['hasSizes'] as bool? ?? false),
+      descuentoPorcentaje: (json['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
+      descuentoActivo: json['descuentoActivo'] as bool? ?? false,
+      descuentoInicio: json['descuentoInicio'] != null
+          ? DateTime.tryParse(json['descuentoInicio'].toString())?.toLocal()
+          : null,
+      descuentoFin: json['descuentoFin'] != null
+          ? DateTime.tryParse(json['descuentoFin'].toString())?.toLocal()
+          : null,
+      precioOriginal: (json['precioOriginal'] as num?)?.toDouble(),
     );
   }
 
@@ -74,6 +93,11 @@ class ProductModel {
       'customizations': customizations,
       'sizes': sizes.map((s) => s.toJson()).toList(),
       'hasSizes': hasSizes,
+      'descuentoPorcentaje': descuentoPorcentaje,
+      'descuentoActivo': descuentoActivo,
+      'descuentoInicio': descuentoInicio?.toIso8601String(),
+      'descuentoFin': descuentoFin?.toIso8601String(),
+      if (precioOriginal != null) 'precioOriginal': precioOriginal,
     };
   }
 
@@ -91,6 +115,11 @@ class ProductModel {
     Map<String, dynamic>? customizations,
     List<ProductSize>? sizes,
     bool? hasSizes,
+    double? descuentoPorcentaje,
+    bool? descuentoActivo,
+    DateTime? descuentoInicio,
+    DateTime? descuentoFin,
+    double? precioOriginal,
   }) {
     return ProductModel(
       id: id ?? this.id,
@@ -106,6 +135,11 @@ class ProductModel {
       customizations: customizations ?? this.customizations,
       sizes: sizes ?? this.sizes,
       hasSizes: hasSizes ?? this.hasSizes,
+      descuentoPorcentaje: descuentoPorcentaje ?? this.descuentoPorcentaje,
+      descuentoActivo: descuentoActivo ?? this.descuentoActivo,
+      descuentoInicio: descuentoInicio ?? this.descuentoInicio,
+      descuentoFin: descuentoFin ?? this.descuentoFin,
+      precioOriginal: precioOriginal ?? this.precioOriginal,
     );
   }
 }
@@ -114,11 +148,13 @@ class ProductSize {
   final int? id;
   final String name;
   final double price;
+  final double? originalPrice;
 
   ProductSize({
     this.id,
     required this.name,
     required this.price,
+    this.originalPrice,
   });
 
   factory ProductSize.fromJson(Map<String, dynamic> json) {
@@ -126,6 +162,7 @@ class ProductSize {
       id: (json['id'] as num?)?.toInt(),
       name: (json['name'] ?? json['nombre'] ?? json['etiqueta'] ?? '').toString(),
       price: (json['price'] ?? json['precio'] ?? 0).toDouble(),
+      originalPrice: (json['precioOriginal'] as num?)?.toDouble(),
     );
   }
 
@@ -134,6 +171,7 @@ class ProductSize {
       'id': id,
       'name': name,
       'price': price,
+      if (originalPrice != null) 'precioOriginal': originalPrice,
     };
   }
 }

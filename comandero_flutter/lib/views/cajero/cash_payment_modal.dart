@@ -42,6 +42,7 @@ class CashPaymentModal extends StatefulWidget {
 class _CashPaymentModalState extends State<CashPaymentModal> {
   final _cashReceivedController = TextEditingController();
   final _tipAmountController = TextEditingController();
+  final _discountPercentageController = TextEditingController();
   final _notesController = TextEditingController();
   bool _tipDelivered = false;
 
@@ -49,14 +50,20 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
   void dispose() {
     _cashReceivedController.dispose();
     _tipAmountController.dispose();
+    _discountPercentageController.dispose();
     _notesController.dispose();
     super.dispose();
   }
 
   double get _cashReceived => double.tryParse(_cashReceivedController.text) ?? 0.0;
   double get _tipAmount => double.tryParse(_tipAmountController.text) ?? 0.0;
+  double get _discountPercentage {
+    final value = double.tryParse(_discountPercentageController.text) ?? 0.0;
+    return value.clamp(0, 100).toDouble();
+  }
+  double get _discountAmount => widget.bill.calculatedTotal * (_discountPercentage / 100);
   // Usar el total calculado desde los items para asegurar que sea correcto
-  double get _totalAmount => widget.bill.calculatedTotal;
+  double get _totalAmount => (widget.bill.calculatedTotal - _discountAmount).clamp(0, double.infinity);
   
   // Cambio = efectivo recibido - total (sin restar propina)
   double get _change => _cashReceived - _totalAmount;
@@ -122,10 +129,35 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
                         ),
                       ),
                     ],
+                    if (_discountPercentage > 0) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Incluye descuento ${_discountPercentage.toStringAsFixed(0)}% (-${widget.controller.formatCurrency(_discountAmount)})',
+                        style: TextStyle(
+                          fontSize: widget.isTablet ? 13.0 : 12.0,
+                          color: AppColors.success,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
               const SizedBox(height: 24),
+
+              TextFormField(
+                controller: _discountPercentageController,
+                decoration: InputDecoration(
+                  labelText: 'Descuento (%)',
+                  prefixIcon: const Icon(Icons.percent),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
 
               // Efectivo recibido
               TextFormField(
@@ -341,6 +373,9 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
         notes: _notesController.text.trim().isEmpty
             ? null
             : _notesController.text.trim(),
+        reference: _discountPercentage > 0
+            ? 'Descuento aplicado: ${_discountPercentage.toStringAsFixed(0)}%'
+            : null,
         tableNumber: widget.bill.tableNumber,
         billId: widget.bill.id,
         timestamp: date_utils.AppDateUtils.now(),

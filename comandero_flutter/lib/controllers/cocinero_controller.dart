@@ -6,6 +6,7 @@ import '../models/kitchen_alert.dart';
 import '../services/ordenes_service.dart';
 import '../services/socket_service.dart';
 import '../services/kitchen_alerts_service.dart';
+import '../services/categorias_service.dart';
 import '../config/api_config.dart';
 import 'package:dio/dio.dart';
 import '../utils/date_utils.dart' as date_utils;
@@ -41,6 +42,7 @@ class OldKitchenAlert {
 
 class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   final OrdenesService _ordenesService = OrdenesService();
+  final CategoriasService _categoriasService = CategoriasService();
   // Estado de los pedidos
   List<OrderModel> _orders = [];
   final List<OldKitchenAlert> _alerts = [];
@@ -58,6 +60,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   String _selectedAlert =
       'todas'; // 'todas', 'demoras', 'canceladas', 'cambios'
   bool _showTakeawayOnly = false;
+  Map<String, String> _stationOptions = {'todas': 'Todas las Estaciones'};
 
   // Vista actual
   String _currentView = 'main';
@@ -71,6 +74,44 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   bool get showTakeawayOnly => _showTakeawayOnly;
   String get currentView => _currentView;
   List<OldKitchenAlert> get alerts => List.unmodifiable(_alerts);
+  Map<String, String> get stationOptions => Map.unmodifiable(_stationOptions);
+
+  String _stationKeyFromCategory(String? rawName) {
+    if (rawName == null || rawName.trim().isEmpty) return KitchenStation.tacos;
+    final normalized = rawName
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'[áàäâ]'), 'a')
+        .replaceAll(RegExp(r'[éèëê]'), 'e')
+        .replaceAll(RegExp(r'[íìïî]'), 'i')
+        .replaceAll(RegExp(r'[óòöô]'), 'o')
+        .replaceAll(RegExp(r'[úùüû]'), 'u')
+        .replaceAll('ñ', 'n')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return normalized.isEmpty ? KitchenStation.tacos : normalized;
+  }
+
+  Future<void> loadStationOptions() async {
+    try {
+      final categorias = await _categoriasService.getCategorias();
+      final options = <String, String>{'todas': 'Todas las Estaciones'};
+      for (final raw in categorias) {
+        final c = raw as Map<String, dynamic>;
+        final nombre = (c['nombre'] as String?)?.trim();
+        final activo = c['activo'] as bool? ?? true;
+        if (nombre == null || nombre.isEmpty || !activo) continue;
+        options[_stationKeyFromCategory(nombre)] = nombre;
+      }
+      _stationOptions = options;
+      if (_selectedStation != 'todas' &&
+          !_stationOptions.containsKey(_selectedStation)) {
+        _selectedStation = 'todas';
+      }
+    } catch (e) {
+      print('⚠️ Cocinero: No se pudieron cargar categorías dinámicas: $e');
+    }
+  }
 
   // Obtener pedidos filtrados
   List<OrderModel> get filteredOrders {
@@ -116,6 +157,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   }
 
   CocineroController() {
+    loadStationOptions();
     _initializeOrders();
     // NO configurar listeners aquí - se configurarán después de que el socket esté conectado
     // Reducido delay para inicio más rápido
@@ -1109,6 +1151,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   // Cargar órdenes desde el backend
   Future<void> loadOrders() async {
     try {
+      await loadStationOptions();
       // Asegurar que las órdenes completadas estén cargadas antes de filtrar
       await _ensureCompletedOrdersLoaded();
 
@@ -1261,15 +1304,19 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           ?.toString();
       final displayName = _formatProductNameWithSize(baseName, tamano);
 
-      // Determinar estación basada en el nombre del producto o categoría
-      String station = KitchenStation.tacos;
+      // Determinar estación basada en categoría real (dinámica) y fallback por nombre.
+      final categoriaNombre = (itemJson['categoriaNombre'] as String?) ??
+          (itemJson['categoria'] as String?);
+      String station = _stationKeyFromCategory(categoriaNombre);
       final productName = baseName.toLowerCase();
-      if (productName.contains('consom') || productName.contains('mix')) {
+      if (station == KitchenStation.tacos &&
+          (productName.contains('consom') || productName.contains('mix'))) {
         station = KitchenStation.consomes;
-      } else if (productName.contains('agua') ||
-          productName.contains('horchata') ||
-          productName.contains('refresco') ||
-          productName.contains('bebida')) {
+      } else if (station == KitchenStation.tacos &&
+          (productName.contains('agua') ||
+              productName.contains('horchata') ||
+              productName.contains('refresco') ||
+              productName.contains('bebida'))) {
         station = KitchenStation.bebidas;
       }
 
@@ -1342,6 +1389,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     return OrderModel(
       id: formattedOrderId,
       tableNumber: mesaCodigoParsed ?? (data['mesaId'] as int?),
+      mesaCodigo: mesaCodigoRaw,
       items: orderItems,
       status: status,
       orderTime: finalOrderTime,
@@ -1368,7 +1416,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
 
   // Cambiar filtro de estación
   void setSelectedStation(String station) {
-    _selectedStation = station;
+    _selectedStation = _stationOptions.containsKey(station) ? station : 'todas';
     notifyListeners();
   }
 

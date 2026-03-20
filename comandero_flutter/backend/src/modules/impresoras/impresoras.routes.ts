@@ -24,10 +24,11 @@ impresorasRouter.post('/cola/job/:id/error', authenticateCola, colaMarcarErrorCo
 /** Resto de rutas: solo JWT de usuario */
 impresorasRouter.use(authenticate);
 impresorasRouter.get('/', listarImpresorasController);
-impresorasRouter.get('/:id', obtenerImpresoraController);
 impresorasRouter.post('/', requireRoles('administrador'), crearImpresoraController);
+// Ruta específica antes de GET /:id para que Express no interprete "generar-clave-agente" como :id
+impresorasRouter.post('/:id/generar-clave-agente', requireRoles('administrador'), generarClaveAgenteController);
+impresorasRouter.get('/:id', obtenerImpresoraController);
 impresorasRouter.put('/:id', requireRoles('administrador'), actualizarImpresoraController);
 impresorasRouter.delete('/:id', requireRoles('administrador'), eliminarImpresoraController);
-impresorasRouter.post('/:id/generar-clave-agente', requireRoles('administrador'), generarClaveAgenteController);
 
 export default impresorasRouter;

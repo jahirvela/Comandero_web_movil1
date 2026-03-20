@@ -31,11 +31,15 @@ export const requireRoles = (...roles: string[]) => {
     
     // Comparar en minúsculas para evitar problemas de case sensitivity
     const userRolesLower = userRoles.map(r => String(r).toLowerCase().trim());
+    // "gerente" hereda permisos operativos de mesero/cajero/cocinero sin duplicar roles en BD.
+    const effectiveRoles = userRolesLower.includes('gerente')
+      ? [...new Set([...userRolesLower, 'mesero', 'cajero', 'cocinero'])]
+      : userRolesLower;
     const requiredRolesLower = roles.map(r => String(r).toLowerCase().trim());
     
-    const hasRole = userRolesLower.some((role) => requiredRolesLower.includes(role));
+    const hasRole = effectiveRoles.some((role) => requiredRolesLower.includes(role));
 
-    console.log(`🔒 Authorization: Roles normalizados del usuario: [${userRolesLower.join(', ')}]`);
+    console.log(`🔒 Authorization: Roles normalizados del usuario: [${effectiveRoles.join(', ')}]`);
     console.log(`🔒 Authorization: ¿Tiene permiso? ${hasRole}`);
 
     if (!hasRole) {

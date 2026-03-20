@@ -43,7 +43,22 @@ class CardPaymentModal extends StatefulWidget {
 class _CardPaymentModalState extends State<CardPaymentModal> {
   String _selectedMethod = 'debito'; // 'debito' o 'credito'
   String _selectedTerminal = 'Terminal 1';
+  final _discountController = TextEditingController();
   final bool _isTerminalConnected = true; // Simulado
+  double get _discountPercentage {
+    final value = double.tryParse(_discountController.text) ?? 0;
+    return value.clamp(0, 100).toDouble();
+  }
+  double get _discountAmount =>
+      widget.bill.calculatedTotal * (_discountPercentage / 100);
+  double get _totalWithDiscount =>
+      (widget.bill.calculatedTotal - _discountAmount).clamp(0, double.infinity);
+
+  @override
+  void dispose() {
+    _discountController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +131,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                               ),
                             ),
                             Text(
-                              '${widget.controller.formatCurrency(widget.bill.calculatedTotal)} MXN',
+                              '${widget.controller.formatCurrency(_totalWithDiscount)} MXN',
                               style: TextStyle(
                                 fontSize: widget.isTablet ? 18.0 : 16.0,
                                 fontWeight: FontWeight.w600,
@@ -139,7 +154,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                               children: [
                                 Text(
                                   widget.controller
-                                      .formatCurrency(widget.bill.calculatedTotal),
+                                      .formatCurrency(_totalWithDiscount),
                                   style: TextStyle(
                                     fontSize: widget.isTablet ? 18.0 : 16.0,
                                     fontWeight: FontWeight.bold,
@@ -249,6 +264,20 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                   ),
                   const SizedBox(height: 24),
 
+                  TextFormField(
+                    controller: _discountController,
+                    decoration: InputDecoration(
+                      labelText: 'Descuento (%)',
+                      prefixIcon: const Icon(Icons.percent),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 16),
+
                   // Terminal
                   Text(
                     'Terminal',
@@ -349,7 +378,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                             ),
                             Text(
                               widget.controller.formatCurrency(
-                                widget.bill.calculatedTotal,
+                                _totalWithDiscount,
                               ),
                               style: TextStyle(
                                 fontSize: widget.isTablet ? 18.0 : 16.0,
@@ -446,6 +475,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
       terminal,
       controller,
       isTablet,
+      _discountPercentage,
     );
   }
 }

@@ -217,6 +217,39 @@ PREPARE stmt5 FROM @prepared5;
 EXECUTE stmt5;
 DEALLOCATE PREPARE stmt5;
 
+-- -----------------------------------------------------------------------------
+-- 8) producto: descuento por porcentaje con ventana de vigencia
+-- -----------------------------------------------------------------------------
+SET @sql8a = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'producto' AND COLUMN_NAME = 'descuento_porcentaje') = 0,
+  'ALTER TABLE producto ADD COLUMN descuento_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER inventariable',
+  'SELECT 1'
+);
+PREPARE stmt8a FROM @sql8a;
+EXECUTE stmt8a;
+DEALLOCATE PREPARE stmt8a;
+
+SET @sql8b = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'producto' AND COLUMN_NAME = 'descuento_inicio') = 0,
+  'ALTER TABLE producto ADD COLUMN descuento_inicio DATETIME NULL AFTER descuento_porcentaje',
+  'SELECT 1'
+);
+PREPARE stmt8b FROM @sql8b;
+EXECUTE stmt8b;
+DEALLOCATE PREPARE stmt8b;
+
+SET @sql8c = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'producto' AND COLUMN_NAME = 'descuento_fin') = 0,
+  'ALTER TABLE producto ADD COLUMN descuento_fin DATETIME NULL AFTER descuento_inicio',
+  'SELECT 1'
+);
+PREPARE stmt8c FROM @sql8c;
+EXECUTE stmt8c;
+DEALLOCATE PREPARE stmt8c;
+
 -- =============================================================================
 -- Fin de migraciones. Reinicia el backend y prueba en local.
 -- =============================================================================

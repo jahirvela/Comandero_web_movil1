@@ -76,6 +76,10 @@ class MeseroController extends ChangeNotifier {
   final Map<String, int> _nextPersonIdByTable = {}; // tableId -> siguiente ID de persona
   final Map<String, String?> _selectedPersonIdByTable = {}; // tableId -> ID de persona seleccionada
 
+  /// Por mesa (id string): personIds que ya fueron incluidos en un bill enviado al cajero (cuenta dividida).
+  final Map<String, Set<String>> _dividedPersonsBillSentByTable = {};
+  static const String _storageDividedPersonsBillSent = 'mesero_divided_persons_bill_sent';
+
   // Información del cliente para pedidos "Para llevar"
   String? _takeawayCustomerName;
   String? _takeawayCustomerPhone;
@@ -174,24 +178,90 @@ class MeseroController extends ChangeNotifier {
     return _tableOrders.values.fold(0, (total, items) => total + items.length);
   }
 
-  // Verificar si una persona tiene una cuenta cerrada (bill pendiente)
+  int? _mesaNumeroForTableId(int tableId) {
+    try {
+      return _tables.firstWhere((t) => t.id == tableId).number;
+    } catch (_) {
+      if (_selectedTable?.id == tableId) return _selectedTable!.number;
+      return null;
+    }
+  }
+
+  /// True si esta persona aún tiene cuenta **pendiente de cobro** en cajero (bill activo).
+  bool _hasPendingBillForPerson(int tableId, String personId) {
+    final mesaNum = _mesaNumeroForTableId(tableId);
+    if (mesaNum == null) return false;
+    return _billRepository.bills.any(
+      (bill) =>
+          bill.status == BillStatus.pending &&
+          bill.isDividedAccount == true &&
+          bill.personAccounts != null &&
+          bill.tableNumber == mesaNum &&
+          bill.personAccounts!.any((p) => p.id == personId),
+    );
+  }
+
+  /// Cuenta dividida: cobro del cajero **ya hecho** para esta persona (sin bill pendiente y ya envió cuenta).
+  /// Antes estaba invertido y comparaba tableId con tableNumber (mesa).
   bool isPersonAccountClosed(int tableId, String personId) {
-    final bills = _billRepository.bills.where((bill) => 
-      bill.tableNumber == tableId && 
-      bill.isDividedAccount && 
-      bill.personAccounts != null &&
-      bill.status == BillStatus.pending
-    ).toList();
-    
-    return bills.any((bill) {
-      return bill.personAccounts!.any((personAccount) => personAccount.id == personId);
-    });
+    if (getItemsForPerson(personId).isNotEmpty) return false;
+    if (_hasPendingBillForPerson(tableId, personId)) return false;
+    final key = tableId.toString();
+    final sent = _dividedPersonsBillSentByTable[key];
+    return sent != null && sent.contains(personId);
+  }
+
+  void _registerDividedPersonsBillSent(String tableIdStr, List<PersonAccount>? personAccounts) {
+    if (personAccounts == null || personAccounts.isEmpty) return;
+    _dividedPersonsBillSentByTable.putIfAbsent(tableIdStr, () => <String>{});
+    for (final pa in personAccounts) {
+      _dividedPersonsBillSentByTable[tableIdStr]!.add(pa.id);
+    }
+  }
+
+  Future<void> _loadDividedPersonsBillSent() async {
+    try {
+      final raw = await _storage.read(_storageDividedPersonsBillSent);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw) as Map<String, dynamic>?;
+      decoded?.forEach((k, v) {
+        if (v is List) {
+          _dividedPersonsBillSentByTable[k] = v.map((e) => e.toString()).toSet();
+        }
+      });
+    } catch (e) {
+      print('⚠️ Mesero: Error al cargar divided persons bill sent: $e');
+    }
+  }
+
+  Future<void> _saveDividedPersonsBillSent() async {
+    try {
+      final map = <String, dynamic>{};
+      _dividedPersonsBillSentByTable.forEach((k, v) {
+        map[k] = v.toList();
+      });
+      await _storage.write(_storageDividedPersonsBillSent, jsonEncode(map));
+    } catch (e) {
+      print('⚠️ Mesero: Error al guardar divided persons bill sent: $e');
+    }
   }
 
   MeseroController({required BillRepository billRepository})
     : _billRepository = billRepository {
+    // Al cobrar en cajero se eliminan bills: refrescar UI (ej. botón "Cerrar división de cuenta")
+    _billRepository.addListener(_onBillsChanged);
     // Inicialización simplificada para mejor rendimiento
     _initializeAsync();
+  }
+
+  void _onBillsChanged() {
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _billRepository.removeListener(_onBillsChanged);
+    super.dispose();
   }
 
   // Inicialización asíncrona optimizada (no bloquea la UI)
@@ -200,6 +270,7 @@ class MeseroController extends ChangeNotifier {
       // 1. PRIMERO cargar órdenes enviadas al cajero (CRÍTICO - antes de todo)
       // Esto es rápido (solo lectura de storage local)
       await _loadSentToCashierOrders();
+      await _loadDividedPersonsBillSent();
       print('✅ Órdenes enviadas al cajero cargadas: $_sentToCashierOrders');
       notifyListeners();
 
@@ -1547,6 +1618,15 @@ class MeseroController extends ChangeNotifier {
       customizations: null,
       sizes: tamanos,
       hasSizes: tamanos.isNotEmpty,
+      descuentoPorcentaje: (data['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
+      descuentoActivo: data['descuentoActivo'] as bool? ?? false,
+      descuentoInicio: data['descuentoInicio'] != null
+          ? date_utils.AppDateUtils.parseToLocal(data['descuentoInicio'])
+          : null,
+      descuentoFin: data['descuentoFin'] != null
+          ? date_utils.AppDateUtils.parseToLocal(data['descuentoFin'])
+          : null,
+      precioOriginal: (data['precioOriginal'] as num?)?.toDouble(),
     );
   }
 
@@ -1974,8 +2054,10 @@ class MeseroController extends ChangeNotifier {
     _personNamesByTable.remove(tableId);
     _selectedPersonIdByTable.remove(tableId);
     _nextPersonIdByTable.remove(tableId);
+    _dividedPersonsBillSentByTable.remove(tableId);
     try {
       await _storage.delete(_dividirCuentaKey(tableId));
+      await _saveDividedPersonsBillSent();
     } catch (_) {}
     notifyListeners();
   }
@@ -3901,6 +3983,12 @@ class MeseroController extends ChangeNotifier {
           }
           await _saveSentToCashierOrders();
 
+          final eb = existingBill.first;
+          if (eb.isDividedAccount == true && eb.personAccounts != null) {
+            _registerDividedPersonsBillSent(tableIdStr, eb.personAccounts);
+            await _saveDividedPersonsBillSent();
+          }
+
           // Notificar cambios INMEDIATAMENTE para actualizar la UI
           notifyListeners();
 
@@ -4093,6 +4181,11 @@ class MeseroController extends ChangeNotifier {
 
         _billRepository.addBill(bill);
 
+        if (isDividedAccount && personAccounts != null && personAccounts.isNotEmpty) {
+          _registerDividedPersonsBillSent(tableIdStr, personAccounts);
+          await _saveDividedPersonsBillSent();
+        }
+
         // Emitir evento Socket.IO para notificar al cajero
         final socketService = SocketService();
         socketService.emit('cuenta.enviada', {
@@ -4153,34 +4246,9 @@ class MeseroController extends ChangeNotifier {
           return ordenId == null || !ordenIdsACerrar.contains(ordenId);
         }).toList();
 
-        // Si es cuenta dividida y se cerró completamente, resetear el modo dividido para esta mesa
-        // Esto permite que la próxima vez que se seleccione la mesa, pueda elegir entre general o dividida
-        // SOLO resetear si se cerraron TODAS las órdenes activas de la mesa
-        if (isDividedAccount) {
-          // Verificar si quedan órdenes activas para otras personas
-          final remainingOrders = historialCompleto.where((order) {
-            final ordenId = order['ordenId'] as int?;
-            if (ordenId == null) return false;
-            final status = (order['status'] as String?)?.toLowerCase() ?? '';
-            final esExcluida =
-                status.contains('pagada') ||
-                status.contains('cancelada') ||
-                status.contains('cerrada') ||
-                status.contains('enviada') ||
-                status.contains('cobrada') ||
-                ordenIdsACerrar.contains(ordenId);
-            return !esExcluida && order['isDividedAccount'] == true;
-          }).toList();
-          
-          // Solo resetear si no quedan órdenes activas
-          if (remainingOrders.isEmpty) {
-            resetDividedAccountModeForTable(tableIdStr);
-            print('✅ Mesero: Modo dividido reseteado para Mesa ${bill.tableNumber} (todas las cuentas cerradas)');
-          } else {
-            print('⚠️ Mesero: Quedan ${remainingOrders.length} órdenes activas, no se resetea modo dividido');
-          }
-        }
-        
+        // No resetear aquí el modo dividido: el mesero debe usar "Cerrar división de cuenta"
+        // después de que el cajero cobró, para volver a la vista de consumo.
+
         // Notificar cambios INMEDIATAMENTE para actualizar la UI
         notifyListeners();
 
@@ -4865,6 +4933,17 @@ class MeseroController extends ChangeNotifier {
             notaFinal = '$notaFinal | Salsa: $sauce';
           } else {
             notaFinal = 'Salsa: $sauce';
+          }
+        }
+
+        // Marcar descuento aplicado para reflejarlo en cuentas por cobrar (cajero/capitán).
+        if (cartItem.product.descuentoActivo && cartItem.product.descuentoPorcentaje > 0) {
+          final descuentoTag =
+              'Descuento aplicado: ${cartItem.product.descuentoPorcentaje.toStringAsFixed(0)}%';
+          if (notaFinal.isNotEmpty) {
+            notaFinal = '$notaFinal | $descuentoTag';
+          } else {
+            notaFinal = descuentoTag;
           }
         }
 

@@ -22,6 +22,7 @@ import 'views/cocinero/cocinero_app.dart';
 import 'views/home_screen.dart';
 import 'views/login_screen.dart';
 import 'views/mesero/mesero_app.dart';
+import 'views/gerente/gerente_app.dart';
 import 'views/splash_screen.dart';
 import 'views/server_config_screen.dart';
 
@@ -142,6 +143,8 @@ class ComanderoApp extends StatelessWidget {
               return const CaptainApp();
             } else if (userRole == 'admin') {
               return const AdminApp();
+            } else if (userRole == 'gerente') {
+              return const GerenteApp();
             } else {
               return const HomeScreen();
             }

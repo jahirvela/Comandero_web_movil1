@@ -11,6 +11,7 @@ export interface OrdenItemDetalle {
   ordenId: number;
   productoId: number;
   productoNombre: string;
+  categoriaNombre?: string | null;
   productoTamanoId: number | null;
   productoTamanoEtiqueta: string | null;
   cantidad: number;
