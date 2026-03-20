@@ -1434,26 +1434,18 @@ class _DividedAccountViewState extends State<DividedAccountView> {
   bool _areAllPersonAccountsClosed(MeseroController controller) {
     final table = controller.selectedTable;
     if (table == null) return false;
-    
+
     final personNames = controller.personNames;
     if (personNames.isEmpty) return false;
-    
-    // Verificar que todas las personas tengan historial y todas sus cuentas estén cerradas
-    bool allHaveHistory = true;
-    bool allClosed = true;
-    
+
+    // Cada persona: ya envió cuenta al cajero y el cajero ya cobró (sin bill pendiente).
+    // Ya no exigimos historial filtrado (las órdenes enviadas desaparecen del historial activo).
     for (final personId in personNames.keys) {
-      if (!_hasPersonHistory(controller, personId)) {
-        allHaveHistory = false;
-        break;
-      }
       if (!_isPersonAccountClosed(controller, personId)) {
-        allClosed = false;
-        break;
+        return false;
       }
     }
-    
-    return allHaveHistory && allClosed;
+    return true;
   }
 
   Widget _buildCloseTableButton(
