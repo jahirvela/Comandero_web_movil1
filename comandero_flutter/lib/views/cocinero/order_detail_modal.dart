@@ -65,7 +65,7 @@ class OrderDetailModal {
                           Text(
                             order.isTakeaway
                                 ? 'Para llevar - ${order.id}'
-                                : 'Mesa ${order.tableNumber} - ${order.id}',
+                                : '${order.displayTableLabel} - ${order.id}',
                             style: TextStyle(
                               fontSize: isTablet ? 14.0 : 12.0,
                               color: AppColors.textSecondary,

@@ -109,6 +109,7 @@ class UsuariosService {
     'cocinero': 'Cocinero',
     'cajero': 'Cajero',
     'capitan': 'Capitán',
+    'gerente': 'Gerente',
   };
 
   /// Obtener catálogo de roles del backend

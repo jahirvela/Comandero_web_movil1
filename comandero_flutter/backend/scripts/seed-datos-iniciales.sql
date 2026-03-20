@@ -19,7 +19,8 @@ INSERT IGNORE INTO rol (id, nombre, descripcion) VALUES
   (2, 'cajero', 'Gestión de caja y pagos'),
   (3, 'capitan', 'Coordinación de sala'),
   (4, 'mesero', 'Toma de órdenes'),
-  (5, 'cocinero', 'Gestión de cocina y KDS');
+  (5, 'cocinero', 'Gestión de cocina y KDS'),
+  (6, 'gerente', 'Acceso combinado a mesero, cajero y cocina');
 
 -- ============================================
 -- 2. PERMISOS (para CRUD de roles y módulos)

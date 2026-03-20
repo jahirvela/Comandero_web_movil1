@@ -305,11 +305,16 @@ class BillRepository extends ChangeNotifier {
             productoNombre,
             tamanoEtiqueta,
           );
+          final notaItem = itemJson['nota'] as String? ?? '';
+          final tieneDescuento = notaItem.toLowerCase().contains('descuento aplicado');
+          final nombreConDescuento = tieneDescuento
+              ? '$nombreConTamano (Desc.)'
+              : nombreConTamano;
           
-          print('📦 BillRepository: Nombre final del producto: "$nombreConTamano"');
+          print('📦 BillRepository: Nombre final del producto: "$nombreConDescuento"');
 
           return BillItem(
-            name: nombreConTamano,
+            name: nombreConDescuento,
             quantity: cantidad,
             price: precioUnitario,
             total: totalItem,

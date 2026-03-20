@@ -28,6 +28,7 @@ class CardVoucherModal extends StatefulWidget {
   final String terminal;
   final CajeroController controller;
   final bool isTablet;
+  final double discountPercentage;
 
   const CardVoucherModal({
     super.key,
@@ -36,6 +37,7 @@ class CardVoucherModal extends StatefulWidget {
     required this.terminal,
     required this.controller,
     required this.isTablet,
+    this.discountPercentage = 0,
   });
 
   static Future<void> show(
@@ -45,6 +47,7 @@ class CardVoucherModal extends StatefulWidget {
     String terminal,
     CajeroController controller,
     bool isTablet,
+    double discountPercentage,
   ) {
     return showDialog(
       context: context,
@@ -54,6 +57,7 @@ class CardVoucherModal extends StatefulWidget {
         terminal: terminal,
         controller: controller,
         isTablet: isTablet,
+        discountPercentage: discountPercentage,
       ),
     );
   }
@@ -63,6 +67,11 @@ class CardVoucherModal extends StatefulWidget {
 }
 
 class _CardVoucherModalState extends State<CardVoucherModal> {
+  double get _discountAmount =>
+      widget.bill.calculatedTotal * (widget.discountPercentage / 100);
+  double get _totalWithDiscount =>
+      (widget.bill.calculatedTotal - _discountAmount).clamp(0, double.infinity);
+
   final _formKey = GlobalKey<FormState>();
   final _transactionIdController = TextEditingController();
   final _authorizationCodeController = TextEditingController();
@@ -278,7 +287,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                 ),
               ),
               Text(
-                widget.controller.formatCurrency(widget.bill.calculatedTotal),
+                widget.controller.formatCurrency(_totalWithDiscount),
                 style: TextStyle(
                   color: AppColors.primary,
                   fontSize: widget.isTablet ? 16 : 14,
@@ -287,6 +296,29 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
               ),
             ],
           ),
+          if (widget.discountPercentage > 0) ...[
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Descuento (${widget.discountPercentage.toStringAsFixed(0)}%):',
+                  style: TextStyle(
+                    color: AppColors.success,
+                    fontSize: widget.isTablet ? 13 : 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  '-${widget.controller.formatCurrency(_discountAmount)}',
+                  style: TextStyle(
+                    color: AppColors.success,
+                    fontSize: widget.isTablet ? 13 : 11,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -590,7 +622,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
       final payment = PaymentModel(
         id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
         type: PaymentType.card,
-        totalAmount: widget.bill.calculatedTotal,
+        totalAmount: _totalWithDiscount,
         tableNumber: widget.bill.tableNumber,
         billId: widget.bill.id,
         timestamp: date_utils.AppDateUtils.now(),
@@ -610,6 +642,9 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
         cardPaymentDate: _selectedDateTime,
         notes: _notesController.text.trim().isNotEmpty
             ? _notesController.text.trim()
+            : null,
+        reference: widget.discountPercentage > 0
+            ? 'Descuento aplicado: ${widget.discountPercentage.toStringAsFixed(0)}%'
             : null,
         ordenId: ordenIdsList.isNotEmpty ? ordenIdsList.first : widget.bill.ordenId,
         ordenIds: ordenIdsList.length > 1 ? ordenIdsList : null,

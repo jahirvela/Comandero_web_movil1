@@ -1460,6 +1460,7 @@ class CaptainController extends ChangeNotifier {
     return OrderModel(
       id: ordenIdStr,
       tableNumber: tableNumber,
+      mesaCodigo: mesaCodigo,
       items: orderItems,
       status: status,
       orderTime: orderTime,

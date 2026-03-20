@@ -424,6 +424,11 @@ class MenuItem {
   final bool allowSauces;
   final bool allowExtraIngredients;
   final List<RecipeIngredient>? recipeIngredients; // Ingredientes para receta/descuento automático
+  final double descuentoPorcentaje;
+  final bool descuentoActivo;
+  final DateTime? descuentoInicio;
+  final DateTime? descuentoFin;
+  final String? duracionDescuento;
 
   MenuItem({
     required this.id,
@@ -446,6 +451,11 @@ class MenuItem {
     this.allowSauces = false,
     this.allowExtraIngredients = false,
     this.recipeIngredients,
+    this.descuentoPorcentaje = 0,
+    this.descuentoActivo = false,
+    this.descuentoInicio,
+    this.descuentoFin,
+    this.duracionDescuento,
   });
 
   factory MenuItem.fromJson(Map<String, dynamic> json) {
@@ -480,6 +490,15 @@ class MenuItem {
               .map((r) => RecipeIngredient.fromJson(r as Map<String, dynamic>))
               .toList()
           : null,
+      descuentoPorcentaje: (json['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
+      descuentoActivo: json['descuentoActivo'] as bool? ?? false,
+      descuentoInicio: json['descuentoInicio'] != null
+          ? date_utils.AppDateUtils.parseToLocal(json['descuentoInicio'])
+          : null,
+      descuentoFin: json['descuentoFin'] != null
+          ? date_utils.AppDateUtils.parseToLocal(json['descuentoFin'])
+          : null,
+      duracionDescuento: json['duracionDescuento'] as String?,
     );
   }
 
@@ -505,6 +524,11 @@ class MenuItem {
       'allowSauces': allowSauces,
       'allowExtraIngredients': allowExtraIngredients,
       'recipeIngredients': recipeIngredients?.map((r) => r.toJson()).toList(),
+      'descuentoPorcentaje': descuentoPorcentaje,
+      'descuentoActivo': descuentoActivo,
+      'descuentoInicio': descuentoInicio?.toIso8601String(),
+      'descuentoFin': descuentoFin?.toIso8601String(),
+      'duracionDescuento': duracionDescuento,
     };
   }
 
@@ -529,6 +553,11 @@ class MenuItem {
     bool? allowSauces,
     bool? allowExtraIngredients,
     List<RecipeIngredient>? recipeIngredients,
+    double? descuentoPorcentaje,
+    bool? descuentoActivo,
+    DateTime? descuentoInicio,
+    DateTime? descuentoFin,
+    String? duracionDescuento,
   }) {
     return MenuItem(
       id: id ?? this.id,
@@ -551,6 +580,11 @@ class MenuItem {
       allowSauces: allowSauces ?? this.allowSauces,
       allowExtraIngredients: allowExtraIngredients ?? this.allowExtraIngredients,
       recipeIngredients: recipeIngredients ?? this.recipeIngredients,
+      descuentoPorcentaje: descuentoPorcentaje ?? this.descuentoPorcentaje,
+      descuentoActivo: descuentoActivo ?? this.descuentoActivo,
+      descuentoInicio: descuentoInicio ?? this.descuentoInicio,
+      descuentoFin: descuentoFin ?? this.descuentoFin,
+      duracionDescuento: duracionDescuento ?? this.duracionDescuento,
     );
   }
 }
@@ -887,6 +921,7 @@ class UserRole {
   static const String cajero = 'cajero';
   static const String capitan = 'capitan';
   static const String admin = 'admin';
+  static const String gerente = 'gerente';
 
   static List<String> get allRoles => [
         mesero,
@@ -894,6 +929,7 @@ class UserRole {
         capitan,
         cajero,
         admin,
+        gerente,
       ];
 
   static String getRoleText(String role) {
@@ -908,6 +944,8 @@ class UserRole {
         return 'Capitán';
       case admin:
         return 'Administrador';
+      case gerente:
+        return 'Gerente';
       default:
         return 'Desconocido';
     }
@@ -925,6 +963,8 @@ class UserRole {
         return Colors.purple;
       case admin:
         return Colors.red;
+      case gerente:
+        return const Color(0xFF0F172A);
       default:
         return Colors.grey;
     }

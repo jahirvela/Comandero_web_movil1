@@ -1547,6 +1547,15 @@ class MeseroController extends ChangeNotifier {
       customizations: null,
       sizes: tamanos,
       hasSizes: tamanos.isNotEmpty,
+      descuentoPorcentaje: (data['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
+      descuentoActivo: data['descuentoActivo'] as bool? ?? false,
+      descuentoInicio: data['descuentoInicio'] != null
+          ? date_utils.AppDateUtils.parseToLocal(data['descuentoInicio'])
+          : null,
+      descuentoFin: data['descuentoFin'] != null
+          ? date_utils.AppDateUtils.parseToLocal(data['descuentoFin'])
+          : null,
+      precioOriginal: (data['precioOriginal'] as num?)?.toDouble(),
     );
   }
 
@@ -4865,6 +4874,17 @@ class MeseroController extends ChangeNotifier {
             notaFinal = '$notaFinal | Salsa: $sauce';
           } else {
             notaFinal = 'Salsa: $sauce';
+          }
+        }
+
+        // Marcar descuento aplicado para reflejarlo en cuentas por cobrar (cajero/capitán).
+        if (cartItem.product.descuentoActivo && cartItem.product.descuentoPorcentaje > 0) {
+          final descuentoTag =
+              'Descuento aplicado: ${cartItem.product.descuentoPorcentaje.toStringAsFixed(0)}%';
+          if (notaFinal.isNotEmpty) {
+            notaFinal = '$notaFinal | $descuentoTag';
+          } else {
+            notaFinal = descuentoTag;
           }
         }
 

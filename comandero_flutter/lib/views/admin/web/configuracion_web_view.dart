@@ -355,7 +355,6 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                             icon: const Icon(Icons.key),
                             tooltip: 'Generar clave para agente',
                             onPressed: () => _showGenerarClaveAgenteDialog(
-                              context,
                               controller,
                               p,
                             ),
@@ -415,7 +414,6 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
   }
 
   Future<void> _showGenerarClaveAgenteDialog(
-    BuildContext context,
     AdminController controller,
     ImpresoraModel p,
   ) async {
@@ -440,12 +438,12 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
         ],
       ),
     );
-    if (confirm != true || !context.mounted) return;
+    if (confirm != true || !mounted) return;
 
-    // Mostrar loading mientras se genera la clave
-    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    // Mostrar loading mientras se genera la clave (mismo navigator que el cierre en finally)
     showDialog<void>(
       context: context,
+      useRootNavigator: true,
       barrierDismissible: false,
       builder: (ctx) => const AlertDialog(
         content: Row(
@@ -487,15 +485,16 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
       debugPrint('Error al generar clave agente: $e');
       debugPrint('Stack: $st');
     } finally {
-      // Cerrar siempre el diálogo de carga aunque el context se haya desmontado.
-      try {
-        if (rootNavigator.canPop()) rootNavigator.pop();
-      } catch (_) {
-        // Ignorar: si el Navigator ya no existe o no se puede cerrar.
+      // Cerrar siempre el diálogo de carga (mismo overlay que showDialog anterior).
+      if (mounted) {
+        try {
+          final nav = Navigator.of(context, rootNavigator: true);
+          if (nav.canPop()) nav.pop();
+        } catch (_) {}
       }
     }
 
-    if (!context.mounted) return;
+    if (!mounted) return;
     if (clave == null || clave.isEmpty) {
       final mensaje =
           errorParaMostrar ??
@@ -515,6 +514,7 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
     // Mostrar la clave de forma clara y visible en la interfaz
     await showDialog<void>(
       context: context,
+      useRootNavigator: true,
       builder: (ctx) => AlertDialog(
         title: Row(
           children: [

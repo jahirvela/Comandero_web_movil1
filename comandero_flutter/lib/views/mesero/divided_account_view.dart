@@ -1415,6 +1415,8 @@ class _DividedAccountViewState extends State<DividedAccountView> {
         // Botón para cerrar cuenta completa (solo si hay historial)
         if (_hasAnyPersonHistory(controller))
           _buildCloseAllAccountsButton(context, controller, isTablet),
+        // Botón para salir del modo dividido y volver a consumo de mesa
+        _buildCloseDivisionModeButton(context, controller, isTablet),
         // Botón para cerrar mesa (siempre visible en modo división)
         _buildCloseTableButton(context, controller, isTablet),
       ],
@@ -1481,6 +1483,73 @@ class _DividedAccountViewState extends State<DividedAccountView> {
           label: Text('Cerrar ${table.displayLabel}'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.error,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(
+              vertical: isTablet ? 14.0 : 12.0,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCloseDivisionModeButton(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    final table = controller.selectedTable;
+    if (table == null) return const SizedBox.shrink();
+    final canCloseDivision = _areAllPersonAccountsClosed(controller);
+
+    return Container(
+      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+      decoration: BoxDecoration(
+        color: AppColors.success.withValues(alpha: 0.08),
+        border: Border(
+          top: BorderSide(
+            color: AppColors.border,
+            width: 1,
+          ),
+        ),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () async {
+            if (!canCloseDivision) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text(
+                    'Primero debes cerrar el cobro de todas las personas para salir de división de cuenta.',
+                  ),
+                  backgroundColor: AppColors.warning,
+                ),
+              );
+              return;
+            }
+
+            await controller.resetDividedAccountModeForTable(
+              table.id.toString(),
+            );
+            controller.setCurrentView('table');
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'División de cuenta cerrada. Regresaste a consumo de ${table.displayLabel}.',
+                  ),
+                  backgroundColor: AppColors.success,
+                ),
+              );
+            }
+          },
+          icon: const Icon(Icons.check_circle_outline),
+          label: const Text('Cerrar división de cuenta'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: canCloseDivision
+                ? AppColors.success
+                : Colors.grey,
             foregroundColor: Colors.white,
             padding: EdgeInsets.symmetric(
               vertical: isTablet ? 14.0 : 12.0,

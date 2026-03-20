@@ -311,6 +311,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                     color: Color(0xFF8B5CF6),
                                     isWide: true,
                                   ),
+                                  _RoleCard(
+                                    role: 'gerente',
+                                    icon: Icons.badge,
+                                    color: Color(0xFF0F172A),
+                                    isWide: true,
+                                  ),
                                 ],
                               ),
                             ],

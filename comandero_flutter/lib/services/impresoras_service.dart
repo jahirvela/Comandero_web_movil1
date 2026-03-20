@@ -1,4 +1,38 @@
+import 'dart:convert';
+
 import 'api_service.dart';
+
+/// Extrae el campo `clave` de la respuesta JSON (Dio/Web puede devolver Map dinámico o anidar datos).
+String? _parseClaveAgente(dynamic data) {
+  if (data == null) return null;
+  if (data is String) {
+    final t = data.trim();
+    if (t.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(t);
+      return _parseClaveAgente(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (data is Map) {
+    final map = Map<String, dynamic>.from(data);
+    final direct = map['clave'];
+    if (direct != null) {
+      final s = direct.toString().trim();
+      if (s.isNotEmpty) return s;
+    }
+    final inner = map['data'];
+    if (inner is Map) {
+      final c = Map<String, dynamic>.from(inner)['clave'];
+      if (c != null) {
+        final s = c.toString().trim();
+        if (s.isNotEmpty) return s;
+      }
+    }
+  }
+  return null;
+}
 
 /// Anchos de papel soportados (mm).
 const List<int> kPaperWidths = [57, 58, 72, 80];
@@ -157,14 +191,14 @@ class ImpresorasService {
   Future<String?> generarClaveAgente(int id) async {
     final response = await _api.post('/impresoras/$id/generar-clave-agente');
     final data = response.data;
-    if (response.statusCode != 200) {
+    final ok = response.statusCode == 200 || response.statusCode == 201;
+    if (!ok) {
       final msg = data is Map && data['error'] != null
           ? data['error'].toString()
           : 'No se pudo generar la clave (${response.statusCode})';
       throw Exception(msg);
     }
-    if (data == null || data is! Map<String, dynamic>) return null;
-    final clave = data['clave'] as String?;
+    final clave = _parseClaveAgente(data);
     return clave != null && clave.isNotEmpty ? clave : null;
   }
 }

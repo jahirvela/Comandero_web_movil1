@@ -10,7 +10,7 @@ import {
   actualizarProductoExistente,
   desactivarProductoExistente
 } from './productos.service.js';
-import { emitProductUpdated } from '../../realtime/events.js';
+import { emitProductDiscountUpdated, emitProductUpdated } from '../../realtime/events.js';
 
 export const listarProductosController = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -53,6 +53,9 @@ export const actualizarProductoController = async (
     const input = actualizarProductoSchema.parse(req.body);
     const producto = await actualizarProductoExistente(id, input);
     emitProductUpdated(producto);
+    if (input.descuentoPorcentaje !== undefined || input.duracionDescuento !== undefined) {
+      emitProductDiscountUpdated(producto);
+    }
     res.json({ data: producto });
   } catch (error) {
     next(error);

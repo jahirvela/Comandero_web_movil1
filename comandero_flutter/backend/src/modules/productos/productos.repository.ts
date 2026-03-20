@@ -13,6 +13,9 @@ interface ProductoRow extends RowDataPacket {
   disponible: number;
   sku: string | null;
   inventariable: number;
+  descuento_porcentaje?: number | null;
+  descuento_inicio?: Date | null;
+  descuento_fin?: Date | null;
   creado_en: Date;
   actualizado_en: Date;
 }
@@ -46,6 +49,7 @@ type ProductoTamano = {
   id: number;
   nombre: string;
   precio: number;
+  precioOriginal?: number;
 };
 
 type ProductoIngrediente = {
@@ -67,6 +71,70 @@ const mapTamanoRows = (rows: ProductoTamanoRow[]) => {
     nombre: row.etiqueta,
     precio: Number(row.precio)
   }));
+};
+
+type ProductoDiscountColumns = {
+  hasDescuentoPorcentaje: boolean;
+  hasDescuentoInicio: boolean;
+  hasDescuentoFin: boolean;
+};
+
+const obtenerColumnasProductoDescuento = async (
+  conn: Pick<typeof pool, 'query'> | PoolConnection
+): Promise<ProductoDiscountColumns> => {
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `
+      SELECT COLUMN_NAME
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'producto'
+        AND COLUMN_NAME IN ('descuento_porcentaje', 'descuento_inicio', 'descuento_fin')
+      `
+    );
+    const columnas = new Set(rows.map((r) => String(r.COLUMN_NAME).toLowerCase()));
+    return {
+      hasDescuentoPorcentaje: columnas.has('descuento_porcentaje'),
+      hasDescuentoInicio: columnas.has('descuento_inicio'),
+      hasDescuentoFin: columnas.has('descuento_fin')
+    };
+  } catch (_) {
+    return {
+      hasDescuentoPorcentaje: false,
+      hasDescuentoInicio: false,
+      hasDescuentoFin: false
+    };
+  }
+};
+
+const calcularDescuentoActivo = ({
+  precioBase,
+  descuentoPorcentaje,
+  descuentoInicio,
+  descuentoFin
+}: {
+  precioBase: number;
+  descuentoPorcentaje: number;
+  descuentoInicio?: Date | null;
+  descuentoFin?: Date | null;
+}) => {
+  const now = new Date();
+  const inicioOk = !descuentoInicio || descuentoInicio <= now;
+  const finOk = !descuentoFin || descuentoFin >= now;
+  const activo = descuentoPorcentaje > 0 && inicioOk && finOk;
+  if (!activo) {
+    return {
+      descuentoActivo: false,
+      precioFinal: precioBase,
+      porcentajeAplicado: 0
+    };
+  }
+  const precioFinal = Math.max(0, Number((precioBase * (1 - (descuentoPorcentaje / 100))).toFixed(2)));
+  return {
+    descuentoActivo: true,
+    precioFinal,
+    porcentajeAplicado: descuentoPorcentaje
+  };
 };
 
 const mapIngredienteRows = (rows: ProductoIngredienteRow[]) => {
@@ -568,6 +636,13 @@ const reemplazarIngredientesProducto = async (
 };
 
 export const listarProductos = async (categoriaId?: number) => {
+  const columnasDescuento = await obtenerColumnasProductoDescuento(pool);
+  const descuentoSelect = [
+    columnasDescuento.hasDescuentoPorcentaje ? 'p.descuento_porcentaje' : 'NULL AS descuento_porcentaje',
+    columnasDescuento.hasDescuentoInicio ? 'p.descuento_inicio' : 'NULL AS descuento_inicio',
+    columnasDescuento.hasDescuentoFin ? 'p.descuento_fin' : 'NULL AS descuento_fin'
+  ].join(',\n      ');
+
   const whereClause = [
     'p.disponible = 1',
     ...(categoriaId ? ['p.categoria_id = :categoriaId'] : [])
@@ -576,7 +651,8 @@ export const listarProductos = async (categoriaId?: number) => {
     `
     SELECT
       p.*,
-      c.nombre AS categoria_nombre
+      c.nombre AS categoria_nombre,
+      ${descuentoSelect}
     FROM producto p
     JOIN categoria c ON c.id = p.categoria_id
     WHERE ${whereClause}
@@ -585,38 +661,78 @@ export const listarProductos = async (categoriaId?: number) => {
     categoriaId ? { categoriaId } : {}
   );
 
-  const productos = rows.map((row) => ({
-    id: row.id,
-    categoriaId: row.categoria_id,
-    categoriaNombre: row.categoria_nombre,
-    nombre: row.nombre,
-    descripcion: row.descripcion,
-    precio: Number(row.precio),
-    disponible: Boolean(row.disponible),
-    sku: row.sku,
-    inventariable: Boolean(row.inventariable),
-    creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
-    actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
-    tamanos: [],
-    ingredientes: []
-  }));
+  const productos = rows.map((row) => {
+    const precioOriginal = Number(row.precio);
+    const descuentoPorcentaje = Number(row.descuento_porcentaje ?? 0);
+    const descuentoInicio = row.descuento_inicio ?? null;
+    const descuentoFin = row.descuento_fin ?? null;
+    const descuento = calcularDescuentoActivo({
+      precioBase: precioOriginal,
+      descuentoPorcentaje,
+      descuentoInicio,
+      descuentoFin
+    });
+    return {
+      id: row.id,
+      categoriaId: row.categoria_id,
+      categoriaNombre: row.categoria_nombre,
+      nombre: row.nombre,
+      descripcion: row.descripcion,
+      precio: descuento.precioFinal,
+      precioOriginal,
+      precioFinal: descuento.precioFinal,
+      descuentoPorcentaje,
+      descuentoActivo: descuento.descuentoActivo,
+      descuentoInicio: descuentoInicio ? utcToMxISO(descuentoInicio) : null,
+      descuentoFin: descuentoFin ? utcToMxISO(descuentoFin) : null,
+      disponible: Boolean(row.disponible),
+      sku: row.sku,
+      inventariable: Boolean(row.inventariable),
+      creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
+      actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null),
+      tamanos: [],
+      ingredientes: []
+    };
+  });
 
   const tamanosMap = await obtenerTamanosPorProductoIds(rows.map((row) => row.id));
   const ingredientesMap = await obtenerIngredientesPorProductoIds(rows.map((row) => row.id));
 
-  return productos.map((producto) => ({
-    ...producto,
-    tamanos: tamanosMap.get(producto.id) ?? [],
-    ingredientes: ingredientesMap.get(producto.id) ?? []
-  }));
+  return productos.map((producto) => {
+    const descuentoPct = Number(producto.descuentoPorcentaje ?? 0);
+    const tamanos = (tamanosMap.get(producto.id) ?? []).map((t) => {
+      const precioOriginal = Number(t.precio);
+      const precio = producto.descuentoActivo
+        ? Math.max(0, Number((precioOriginal * (1 - (descuentoPct / 100))).toFixed(2)))
+        : precioOriginal;
+      return {
+        ...t,
+        precioOriginal,
+        precio
+      };
+    });
+    return {
+      ...producto,
+      tamanos,
+      ingredientes: ingredientesMap.get(producto.id) ?? []
+    };
+  });
 };
 
 export const obtenerProductoPorId = async (id: number) => {
+  const columnasDescuento = await obtenerColumnasProductoDescuento(pool);
+  const descuentoSelect = [
+    columnasDescuento.hasDescuentoPorcentaje ? 'p.descuento_porcentaje' : 'NULL AS descuento_porcentaje',
+    columnasDescuento.hasDescuentoInicio ? 'p.descuento_inicio' : 'NULL AS descuento_inicio',
+    columnasDescuento.hasDescuentoFin ? 'p.descuento_fin' : 'NULL AS descuento_fin'
+  ].join(',\n      ');
+
   const [rows] = await pool.query<ProductoRow[]>(
     `
     SELECT
       p.*,
-      c.nombre AS categoria_nombre
+      c.nombre AS categoria_nombre,
+      ${descuentoSelect}
     FROM producto p
     JOIN categoria c ON c.id = p.categoria_id
     WHERE p.id = :id
@@ -627,7 +743,29 @@ export const obtenerProductoPorId = async (id: number) => {
   const row = rows[0];
   if (!row) return null;
 
-  const tamanos = await obtenerTamanosPorProducto(row.id);
+  const precioOriginal = Number(row.precio);
+  const descuentoPorcentaje = Number(row.descuento_porcentaje ?? 0);
+  const descuentoInicio = row.descuento_inicio ?? null;
+  const descuentoFin = row.descuento_fin ?? null;
+  const descuento = calcularDescuentoActivo({
+    precioBase: precioOriginal,
+    descuentoPorcentaje,
+    descuentoInicio,
+    descuentoFin
+  });
+
+  const tamanosRaw = await obtenerTamanosPorProducto(row.id);
+  const tamanos = tamanosRaw.map((t) => {
+    const base = Number(t.precio);
+    const final = descuento.descuentoActivo
+      ? Math.max(0, Number((base * (1 - (descuentoPorcentaje / 100))).toFixed(2)))
+      : base;
+    return {
+      ...t,
+      precioOriginal: base,
+      precio: final
+    };
+  });
   const ingredientes = await obtenerIngredientesPorProducto(row.id);
 
   return {
@@ -636,7 +774,13 @@ export const obtenerProductoPorId = async (id: number) => {
     categoriaNombre: row.categoria_nombre,
     nombre: row.nombre,
     descripcion: row.descripcion,
-    precio: Number(row.precio),
+    precio: descuento.precioFinal,
+    precioOriginal,
+    precioFinal: descuento.precioFinal,
+    descuentoPorcentaje,
+    descuentoActivo: descuento.descuentoActivo,
+    descuentoInicio: descuentoInicio ? utcToMxISO(descuentoInicio) : null,
+    descuentoFin: descuentoFin ? utcToMxISO(descuentoFin) : null,
     disponible: Boolean(row.disponible),
     sku: row.sku,
     inventariable: Boolean(row.inventariable),
@@ -655,6 +799,9 @@ export const crearProducto = async ({
   disponible,
   sku,
   inventariable,
+  descuentoPorcentaje,
+  descuentoInicio,
+  descuentoFin,
   tamanos,
   ingredientes
 }: {
@@ -665,6 +812,9 @@ export const crearProducto = async ({
   disponible: boolean;
   sku?: string | null;
   inventariable: boolean;
+  descuentoPorcentaje?: number;
+  descuentoInicio?: Date | null;
+  descuentoFin?: Date | null;
   tamanos?: Array<{ nombre: string; precio: number }>;
   ingredientes?: Array<{
     inventarioItemId?: number | null;
@@ -678,6 +828,12 @@ export const crearProducto = async ({
   }>;
 }) => {
   return withTransaction(async (conn) => {
+    const columnasDescuento = await obtenerColumnasProductoDescuento(conn);
+    const includeDescuentoCols =
+      columnasDescuento.hasDescuentoPorcentaje &&
+      columnasDescuento.hasDescuentoInicio &&
+      columnasDescuento.hasDescuentoFin;
+
     const [result] = await conn.execute<ResultSetHeader>(
       `
       INSERT INTO producto (
@@ -688,8 +844,18 @@ export const crearProducto = async ({
         disponible,
         sku,
         inventariable
+        ${includeDescuentoCols ? ', descuento_porcentaje, descuento_inicio, descuento_fin' : ''}
       )
-      VALUES (:categoriaId, :nombre, :descripcion, :precio, :disponible, :sku, :inventariable)
+      VALUES (
+        :categoriaId,
+        :nombre,
+        :descripcion,
+        :precio,
+        :disponible,
+        :sku,
+        :inventariable
+        ${includeDescuentoCols ? ', :descuentoPorcentaje, :descuentoInicio, :descuentoFin' : ''}
+      )
       `,
       {
         categoriaId,
@@ -698,7 +864,10 @@ export const crearProducto = async ({
         precio,
         disponible: disponible ? 1 : 0,
         sku: sku ?? null,
-        inventariable: inventariable ? 1 : 0
+        inventariable: inventariable ? 1 : 0,
+        descuentoPorcentaje: Number(descuentoPorcentaje ?? 0),
+        descuentoInicio: descuentoInicio ?? null,
+        descuentoFin: descuentoFin ?? null
       }
     );
 
@@ -726,6 +895,9 @@ export const actualizarProducto = async (
     disponible,
     sku,
     inventariable,
+    descuentoPorcentaje,
+    descuentoInicio,
+    descuentoFin,
     tamanos,
     ingredientes
   }: {
@@ -736,6 +908,9 @@ export const actualizarProducto = async (
     disponible?: boolean;
     sku?: string | null;
     inventariable?: boolean;
+    descuentoPorcentaje?: number;
+    descuentoInicio?: Date | null;
+    descuentoFin?: Date | null;
     tamanos?: Array<{ nombre: string; precio: number }>;
     ingredientes?: Array<{
       inventarioItemId?: number | null;
@@ -781,11 +956,32 @@ export const actualizarProducto = async (
     params.inventariable = inventariable ? 1 : 0;
   }
 
-  if (fields.length === 0 && tamanos === undefined && ingredientes === undefined) {
+  if (
+    fields.length === 0 &&
+    descuentoPorcentaje === undefined &&
+    descuentoInicio === undefined &&
+    descuentoFin === undefined &&
+    tamanos === undefined &&
+    ingredientes === undefined
+  ) {
     return;
   }
 
   await withTransaction(async (conn) => {
+    const columnasDescuento = await obtenerColumnasProductoDescuento(conn);
+    if (columnasDescuento.hasDescuentoPorcentaje && descuentoPorcentaje !== undefined) {
+      fields.push('descuento_porcentaje = :descuentoPorcentaje');
+      params.descuentoPorcentaje = Number(descuentoPorcentaje);
+    }
+    if (columnasDescuento.hasDescuentoInicio && descuentoInicio !== undefined) {
+      fields.push('descuento_inicio = :descuentoInicio');
+      params.descuentoInicio = descuentoInicio ?? null;
+    }
+    if (columnasDescuento.hasDescuentoFin && descuentoFin !== undefined) {
+      fields.push('descuento_fin = :descuentoFin');
+      params.descuentoFin = descuentoFin ?? null;
+    }
+
     if (fields.length > 0) {
       await conn.execute(
         `

@@ -2994,6 +2994,19 @@ class AdminApp extends StatelessWidget {
                     ),
                     SizedBox(width: AppTheme.spacingXS),
                     IconButton(
+                      icon: Icon(Icons.discount, size: isTablet ? 20 : 18),
+                      color: Colors.deepOrange,
+                      tooltip: 'Configurar descuento',
+                      onPressed: () => _showDiscountModal(
+                        context,
+                        product,
+                        controller,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    SizedBox(width: AppTheme.spacingXS),
+                    IconButton(
                       icon: Icon(Icons.edit, size: isTablet ? 20 : 18),
                       color: AppColors.primary,
                       onPressed: () => _showEditProductModal(
@@ -3068,6 +3081,28 @@ class AdminApp extends StatelessWidget {
                     vertical: AppTheme.spacingXS,
                   ),
                 ),
+                if (product.descuentoActivo && product.descuentoPorcentaje > 0)
+                  Chip(
+                    avatar: const Icon(
+                      Icons.discount,
+                      size: 16,
+                      color: Colors.white,
+                    ),
+                    label: Text(
+                      '-${product.descuentoPorcentaje.toStringAsFixed(0)}%',
+                      style: TextStyle(
+                        fontSize: isTablet
+                            ? AppTheme.fontSizeSM
+                            : AppTheme.fontSizeXS,
+                        color: Colors.white,
+                      ),
+                    ),
+                    backgroundColor: Colors.deepOrange,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppTheme.spacingSM,
+                      vertical: AppTheme.spacingXS,
+                    ),
+                  ),
                 if (product.serveHot)
                   Chip(
                     avatar: const Icon(
@@ -3126,6 +3161,16 @@ class AdminApp extends StatelessWidget {
                 ),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: AppTheme.spacingSM),
+            ],
+            if (product.descuentoActivo && product.descuentoFin != null) ...[
+              Text(
+                'Descuento activo hasta: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(product.descuentoFin!)}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.deepOrange,
+                      fontWeight: AppTheme.fontWeightSemibold,
+                    ),
               ),
               SizedBox(height: AppTheme.spacingSM),
             ],
@@ -3285,6 +3330,154 @@ class AdminApp extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  void _showDiscountModal(
+    BuildContext context,
+    MenuItem product,
+    AdminController controller,
+  ) {
+    final descuentoController = TextEditingController(
+      text: product.descuentoPorcentaje > 0
+          ? product.descuentoPorcentaje.toStringAsFixed(0)
+          : '',
+    );
+    String selectedDuration = product.duracionDescuento ?? '1h';
+
+    final durations = const [
+      '1h',
+      '1 día',
+      '2 días',
+      '3 días',
+      '1 semana',
+      '1 mes',
+      '1 año',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateModal) {
+            return AlertDialog(
+              title: Text('Descuento: ${product.name}'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextFormField(
+                      controller: descuentoController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Ingresa descuento (%)',
+                        hintText: 'Ej. 10',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedDuration,
+                      decoration: const InputDecoration(
+                        labelText: 'Duración de descuento',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: durations
+                          .map((d) => DropdownMenuItem<String>(
+                                value: d,
+                                child: Text(d),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setStateModal(() => selectedDuration = value);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    try {
+                      final updated = product.copyWith(
+                        descuentoPorcentaje: 0,
+                        descuentoActivo: false,
+                        descuentoInicio: null,
+                        descuentoFin: null,
+                        duracionDescuento: null,
+                      );
+                      await controller.updateMenuItem(updated);
+                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Descuento eliminado'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error al eliminar descuento: ${_extractErrorMessage(e)}'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Eliminar descuento'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    try {
+                      final pct = double.tryParse(descuentoController.text.trim()) ?? 0;
+                      if (pct <= 0 || pct > 100) {
+                        throw Exception('Ingresa un descuento válido entre 1 y 100');
+                      }
+                      final updated = product.copyWith(
+                        descuentoPorcentaje: pct,
+                        descuentoActivo: true,
+                        duracionDescuento: selectedDuration,
+                      );
+                      await controller.updateMenuItem(updated);
+                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Descuento ${pct.toStringAsFixed(0)}% aplicado por $selectedDuration',
+                            ),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error al guardar descuento: ${_extractErrorMessage(e)}'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Guardar descuento'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -7319,6 +7512,7 @@ class AdminApp extends StatelessWidget {
                       UserRole.capitan,
                       UserRole.cajero,
                       UserRole.admin,
+                      UserRole.gerente,
                     ].map((role) {
                       return DropdownMenuItem(
                         value: role,
@@ -13222,15 +13416,14 @@ class AdminApp extends StatelessWidget {
                   controller.setSelectedStation(value);
                 }
               },
-              items: [
-                DropdownMenuItem(
-                  value: 'todas',
-                  child: Text('Todas las Estaciones'),
-                ),
-                DropdownMenuItem(value: 'tacos', child: Text('Tacos')),
-                DropdownMenuItem(value: 'consomes', child: Text('Consomes')),
-                DropdownMenuItem(value: 'bebidas', child: Text('Bebidas')),
-              ],
+              items: controller.stationOptions.entries
+                  .map(
+                    (entry) => DropdownMenuItem(
+                      value: entry.key,
+                      child: Text(entry.value),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
         ),
@@ -13869,7 +14062,7 @@ class AdminApp extends StatelessWidget {
                         Text(
                           order.isTakeaway
                               ? 'Para llevar'
-                              : 'Mesa ${order.tableNumber}',
+                              : order.displayTableLabel,
                           style: TextStyle(
                             fontSize: isTablet ? 18.0 : 16.0,
                             fontWeight: FontWeight.bold,

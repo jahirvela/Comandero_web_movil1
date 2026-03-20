@@ -3,6 +3,7 @@ import '../utils/date_utils.dart' as date_utils;
 class OrderModel {
   final String id;
   final int? tableNumber;
+  final String? mesaCodigo;
   final List<OrderItem> items;
   final String status;
   final DateTime orderTime;
@@ -17,6 +18,7 @@ class OrderModel {
   OrderModel({
     required this.id,
     this.tableNumber,
+    this.mesaCodigo,
     required this.items,
     required this.status,
     required this.orderTime,
@@ -33,6 +35,7 @@ class OrderModel {
     return OrderModel(
       id: json['id'],
       tableNumber: json['tableNumber'],
+      mesaCodigo: json['mesaCodigo'] as String?,
       items: (json['items'] as List)
           .map((item) => OrderItem.fromJson(item))
           .toList(),
@@ -52,6 +55,7 @@ class OrderModel {
     return {
       'id': id,
       'tableNumber': tableNumber,
+      'mesaCodigo': mesaCodigo,
       'items': items.map((item) => item.toJson()).toList(),
       'status': status,
       'orderTime': orderTime.toIso8601String(),
@@ -68,6 +72,7 @@ class OrderModel {
   OrderModel copyWith({
     String? id,
     int? tableNumber,
+    String? mesaCodigo,
     List<OrderItem>? items,
     String? status,
     DateTime? orderTime,
@@ -82,6 +87,7 @@ class OrderModel {
     return OrderModel(
       id: id ?? this.id,
       tableNumber: tableNumber ?? this.tableNumber,
+      mesaCodigo: mesaCodigo ?? this.mesaCodigo,
       items: items ?? this.items,
       status: status ?? this.status,
       orderTime: orderTime ?? this.orderTime,
@@ -93,6 +99,19 @@ class OrderModel {
       customerPhone: customerPhone ?? this.customerPhone,
       pickupTime: pickupTime ?? this.pickupTime,
     );
+  }
+
+  /// Etiqueta de mesa para UI: usa código/nombre real si existe.
+  String get displayTableLabel {
+    final c = mesaCodigo?.trim();
+    if (c != null && c.isNotEmpty) {
+      final numeric = int.tryParse(c);
+      return numeric != null ? 'Mesa $c' : c;
+    }
+    if (tableNumber != null) {
+      return 'Mesa $tableNumber';
+    }
+    return 'Sin mesa';
   }
 }
 

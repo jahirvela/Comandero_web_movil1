@@ -75,6 +75,9 @@ class _MenuViewState extends State<MenuView> {
         'id': product.id,
         'name': product.name,
         'price': product.price,
+        'originalPrice': product.precioOriginal ?? product.price,
+        'discountPercent': product.descuentoPorcentaje,
+        'discountActive': product.descuentoActivo,
         'description': product.description,
         'category': product.displayCategoryName,
         'image': product.image,
@@ -403,16 +406,42 @@ class _MenuViewState extends State<MenuView> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  '\$${item['price']}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 18.0 : 16.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if ((item['discountActive'] as bool? ?? false) &&
+                        ((item['discountPercent'] as num?)?.toDouble() ?? 0) > 0)
+                      Text(
+                        '\$${(item['originalPrice'] as num).toStringAsFixed(0)}',
+                        style: TextStyle(
+                          fontSize: isTablet ? 12.0 : 11.0,
+                          color: AppColors.textSecondary,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
+                    Text(
+                      '\$${(item['price'] as num).toStringAsFixed(0)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 18.0 : 16.0,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
+            if ((item['discountActive'] as bool? ?? false) &&
+                ((item['discountPercent'] as num?)?.toDouble() ?? 0) > 0) ...[
+              const SizedBox(height: 6),
+              _buildChip(
+                label:
+                    'Descuento ${((item['discountPercent'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}%',
+                color: Colors.deepOrange,
+                icon: Icons.discount,
+                isTablet: isTablet,
+              ),
+            ],
             const SizedBox(height: 8),
             Text(
               item['description'],
@@ -540,6 +569,8 @@ class _MenuViewState extends State<MenuView> {
         'kitchenNotes': result['kitchenNotes'] as String? ?? '',
         'extras': result['extras'] as List<dynamic>? ?? [],
         'extraPrices': result['extraPrices'] as List<dynamic>? ?? [],
+        'discountPercent': (item['discountPercent'] as num?)?.toDouble() ?? 0.0,
+        'discountActive': item['discountActive'] as bool? ?? false,
       };
 
       // Agregar al carrito

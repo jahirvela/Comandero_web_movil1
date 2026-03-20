@@ -19,7 +19,14 @@ import 'staff_management_view.dart';
 // que es List<OldKitchenAlert>, así que el tipo se infiere automáticamente
 
 class CocineroApp extends StatelessWidget {
-  const CocineroApp({super.key});
+  final VoidCallback? onLogoutPressed;
+  final String roleLabel;
+
+  const CocineroApp({
+    super.key,
+    this.onLogoutPressed,
+    this.roleLabel = 'Cocinero',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -104,7 +111,7 @@ class CocineroApp extends StatelessWidget {
                 ),
               ),
               Text(
-                '${authController.userName} • Cocinero',
+                '${authController.userName} • $roleLabel',
                 style: TextStyle(
                   fontSize: isTablet ? 14.0 : 12.0,
                   color: Colors.white.withValues(alpha: 0.8),
@@ -137,6 +144,10 @@ class CocineroApp extends StatelessWidget {
           child: LogoutButton(
             isTablet: isTablet,
             onPressed: () async {
+              if (onLogoutPressed != null) {
+                onLogoutPressed!.call();
+                return;
+              }
               await authController.logout();
               if (context.mounted) {
                 // Usar go_router en lugar de Navigator.pushReplacementNamed
@@ -324,68 +335,27 @@ class CocineroApp extends StatelessWidget {
                   controller.setSelectedStation(value);
                 }
               },
-              items: [
-                DropdownMenuItem(
-                  value: 'todas',
+              items: controller.stationOptions.entries.map((entry) {
+                final isAll = entry.key == 'todas';
+                final icon = isAll
+                    ? Icons.restaurant_menu
+                    : Icons.restaurant;
+                return DropdownMenuItem(
+                  value: entry.key,
                   child: Row(
                     children: [
-                      Icon(Icons.restaurant_menu, size: isTablet ? 16.0 : 14.0),
+                      Icon(icon, size: isTablet ? 16.0 : 14.0),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Todas las Estaciones',
+                          entry.value,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
                   ),
-                ),
-                DropdownMenuItem(
-                  value: KitchenStation.tacos,
-                  child: Row(
-                    children: [
-                      Icon(Icons.restaurant, size: isTablet ? 16.0 : 14.0),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Tacos',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: KitchenStation.consomes,
-                  child: Row(
-                    children: [
-                      Icon(Icons.soup_kitchen, size: isTablet ? 16.0 : 14.0),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Consomes',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: KitchenStation.bebidas,
-                  child: Row(
-                    children: [
-                      Icon(Icons.local_drink, size: isTablet ? 16.0 : 14.0),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Bebidas',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                );
+              }).toList(),
             ),
           ),
         ),
@@ -856,82 +826,118 @@ class CocineroApp extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 6),
-                Row(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      Icons.table_restaurant,
-                      size: isTablet ? 12.0 : 11.0,
-                      color: AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      alert.tableNumber == 'Para llevar'
-                          ? 'Para llevar'
-                          : 'Mesa: ${alert.tableNumber}',
-                      style: TextStyle(
-                        fontSize: isTablet ? 11.0 : 10.0,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Icon(
-                      Icons.receipt_long,
-                      size: isTablet ? 12.0 : 11.0,
-                      color: AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      alert.orderId,
-                      style: TextStyle(
-                        fontSize: isTablet ? 11.0 : 10.0,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    if (alert.sentBy != null) ...[
-                      const SizedBox(width: 10),
-                      Icon(
-                        alert.sentByRole == 'capitan' ? Icons.shield : Icons.person,
-                        size: isTablet ? 12.0 : 11.0,
-                        color: AppColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        alert.sentBy!,
-                        style: TextStyle(
-                          fontSize: isTablet ? 11.0 : 10.0,
-                          color: AppColors.textSecondary,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                      if (alert.sentByRole != null) ...[
-                        const SizedBox(width: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: alert.sentByRole == 'capitan' 
-                                ? Colors.purple.withValues(alpha: 0.1)
-                                : Colors.blue.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                          child: Text(
-                            alert.sentByRole == 'capitan' ? 'Capitán' : 'Mesero',
-                            style: TextStyle(
-                              fontSize: isTablet ? 9.0 : 8.0,
-                              color: alert.sentByRole == 'capitan' 
-                                  ? Colors.purple
-                                  : Colors.blue,
-                              fontWeight: FontWeight.w600,
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.table_restaurant,
+                              size: isTablet ? 12.0 : 11.0,
+                              color: AppColors.textSecondary,
                             ),
-                          ),
+                            const SizedBox(width: 4),
+                            Text(
+                              alert.tableNumber == 'Para llevar'
+                                  ? 'Para llevar'
+                                  : 'Mesa: ${alert.tableNumber}',
+                              style: TextStyle(
+                                fontSize: isTablet ? 11.0 : 10.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
                         ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.receipt_long,
+                              size: isTablet ? 12.0 : 11.0,
+                              color: AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              alert.orderId,
+                              style: TextStyle(
+                                fontSize: isTablet ? 11.0 : 10.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (alert.sentBy != null)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                alert.sentByRole == 'capitan'
+                                    ? Icons.shield
+                                    : Icons.person,
+                                size: isTablet ? 12.0 : 11.0,
+                                color: AppColors.textSecondary,
+                              ),
+                              const SizedBox(width: 4),
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: isTablet ? 180 : 120,
+                                ),
+                                child: Text(
+                                  alert.sentBy!,
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 11.0 : 10.0,
+                                    color: AppColors.textSecondary,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (alert.sentByRole != null) ...[
+                                const SizedBox(width: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: alert.sentByRole == 'capitan'
+                                        ? Colors.purple.withValues(alpha: 0.1)
+                                        : Colors.blue.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  child: Text(
+                                    alert.sentByRole == 'capitan'
+                                        ? 'Capitán'
+                                        : 'Mesero',
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 9.0 : 8.0,
+                                      color: alert.sentByRole == 'capitan'
+                                          ? Colors.purple
+                                          : Colors.blue,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                       ],
-                    ],
-                    const Spacer(),
-                    Text(
-                      _formatAlertTime(alert.timestamp),
-                      style: TextStyle(
-                        fontSize: isTablet ? 10.0 : 9.0,
-                        color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        _formatAlertTime(alert.timestamp),
+                        style: TextStyle(
+                          fontSize: isTablet ? 10.0 : 9.0,
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
                   ],
@@ -1520,7 +1526,7 @@ class CocineroApp extends StatelessWidget {
                           Text(
                             order.isTakeaway
                                 ? 'Para llevar'
-                                : 'Mesa ${order.tableNumber}',
+                                : order.displayTableLabel,
                             style: TextStyle(
                               fontSize: isTablet ? 16.0 : 14.0,
                               fontWeight: FontWeight.w600,
@@ -2258,7 +2264,7 @@ class CocineroApp extends StatelessWidget {
                       ] else ...[
                         _buildDetailItem(
                           'Mesa',
-                          '${order.tableNumber}',
+                          order.displayTableLabel,
                           AppColors.textPrimary,
                           isTablet,
                         ),

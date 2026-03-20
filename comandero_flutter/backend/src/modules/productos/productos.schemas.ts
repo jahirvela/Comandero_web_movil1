@@ -5,6 +5,11 @@ const productoTamanoSchema = z.object({
   precio: z.coerce.number().positive('El precio debe ser mayor a 0')
 });
 
+const descuentoPorcentajeSchema = z.coerce
+  .number()
+  .min(0, 'El descuento no puede ser negativo')
+  .max(100, 'El descuento no puede ser mayor a 100');
+
 const productoIngredienteSchema = z.object({
   inventarioItemId: z.number().int().positive().optional().nullable(),
   categoria: z.string().min(2).max(64).optional().nullable(),
@@ -27,7 +32,9 @@ export const crearProductoSchema = z
     ingredientes: z.array(productoIngredienteSchema).optional(),
     disponible: z.boolean().optional().default(true),
     sku: z.string().max(64).optional().nullable(),
-    inventariable: z.boolean().optional().default(false)
+    inventariable: z.boolean().optional().default(false),
+    descuentoPorcentaje: descuentoPorcentajeSchema.optional(),
+    duracionDescuento: z.string().min(1).max(32).optional().nullable()
   })
   .refine(
     (value) => {
@@ -47,7 +54,9 @@ export const actualizarProductoSchema = z
     ingredientes: z.array(productoIngredienteSchema).optional(),
     disponible: z.boolean().optional(),
     sku: z.string().max(64).optional().nullable(),
-    inventariable: z.boolean().optional()
+    inventariable: z.boolean().optional(),
+    descuentoPorcentaje: descuentoPorcentajeSchema.optional().nullable(),
+    duracionDescuento: z.string().min(1).max(32).optional().nullable()
   })
   .refine(
     (value) =>
@@ -58,7 +67,9 @@ export const actualizarProductoSchema = z
       value.tamanos !== undefined ||
       value.disponible !== undefined ||
       value.sku !== undefined ||
-      value.inventariable !== undefined,
+      value.inventariable !== undefined ||
+      value.descuentoPorcentaje !== undefined ||
+      value.duracionDescuento !== undefined,
     { message: 'Debe proporcionar al menos un campo para actualizar' }
   );
 
