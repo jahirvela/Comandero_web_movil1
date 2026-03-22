@@ -35,7 +35,24 @@ const parseDuracionDescuento = (raw?: string | null): Date | null => {
   };
 
   const mapped = map[normalized];
-  if (mapped) return ahora.plus(mapped).toJSDate();
+  if (mapped) {
+    const { amount, unit } = mapped;
+    // Luxon plus() espera DurationLike ({ hours }, { days }, …), no { amount, unit }.
+    switch (unit) {
+      case 'hours':
+        return ahora.plus({ hours: amount }).toJSDate();
+      case 'days':
+        return ahora.plus({ days: amount }).toJSDate();
+      case 'weeks':
+        return ahora.plus({ weeks: amount }).toJSDate();
+      case 'months':
+        return ahora.plus({ months: amount }).toJSDate();
+      case 'years':
+        return ahora.plus({ years: amount }).toJSDate();
+      default:
+        return null;
+    }
+  }
 
   const compact = normalized.match(/^(\d+)\s*(h|hora|horas|d|dia|día|dias|días|semana|semanas|mes|meses|año|ano|años|anos)$/);
   if (compact) {

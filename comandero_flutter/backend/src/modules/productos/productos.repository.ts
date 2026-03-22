@@ -79,11 +79,16 @@ type ProductoDiscountColumns = {
   hasDescuentoFin: boolean;
 };
 
+interface InformationSchemaColumnRow extends RowDataPacket {
+  COLUMN_NAME: string;
+}
+
 const obtenerColumnasProductoDescuento = async (
   conn: Pick<typeof pool, 'query'> | PoolConnection
 ): Promise<ProductoDiscountColumns> => {
   try {
-    const [rows] = await conn.query<RowDataPacket[]>(
+    // Sin genérico en query: Pool vs PoolConnection tienen firmas distintas y TS falla al unirlos.
+    const [result] = await conn.query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.columns
@@ -92,6 +97,7 @@ const obtenerColumnasProductoDescuento = async (
         AND COLUMN_NAME IN ('descuento_porcentaje', 'descuento_inicio', 'descuento_fin')
       `
     );
+    const rows = result as InformationSchemaColumnRow[];
     const columnas = new Set(rows.map((r) => String(r.COLUMN_NAME).toLowerCase()));
     return {
       hasDescuentoPorcentaje: columnas.has('descuento_porcentaje'),
