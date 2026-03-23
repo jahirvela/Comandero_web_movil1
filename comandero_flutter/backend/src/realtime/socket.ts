@@ -1,5 +1,6 @@
 import type { Server as IOServer, Socket } from 'socket.io';
 import { verifyAccessToken } from '../utils/jwt.js';
+import { normalizeRoleString } from '../utils/roleExpansion.js';
 import { logger } from '../config/logger.js';
 import { nowMxISO } from '../config/time.js';
 import { registerKitchenAlertsHandlers, joinKitchenRooms } from '../sockets/kitchenAlertsSocket.js';
@@ -87,6 +88,15 @@ const handleConnection = (socket: Socket) => {
 
   // Rooms por rol
   if (Array.isArray(user.roles)) {
+    const normalizedList = user.roles.map((role) =>
+      normalizeRoleString(typeof role === 'string' ? role : String(role))
+    );
+    // Gerente: recibir los mismos eventos que mesero/cajero/cocinero (cuentas, pedidos, tickets, etc.)
+    if (normalizedList.includes('gerente')) {
+      socket.join(`${SOCKET_ROOM_ROLE_PREFIX}mesero`);
+      socket.join(`${SOCKET_ROOM_ROLE_PREFIX}cajero`);
+      socket.join(`${SOCKET_ROOM_ROLE_PREFIX}cocinero`);
+    }
     for (const role of user.roles) {
       const normalizedRole = typeof role === 'string' ? role.toLowerCase() : String(role);
       socket.join(`${SOCKET_ROOM_ROLE_PREFIX}${normalizedRole}`);

@@ -176,8 +176,9 @@ export function formatMxLocale(
 ): string {
   const converted = utcToMx(date);
   if (!converted) return '';
-  // Luxon's toLocaleString acepta locale como parámetro opcional en el objeto options
-  return converted.toJSDate().toLocaleString('es-MX', options);
+  // IMPORTANTE: no usar toJSDate().toLocaleString() — en el servidor suele aplicar la TZ del
+  // proceso (p. ej. UTC) y desplaza ~6 h respecto a CDMX. Luxon respeta la zona del DateTime.
+  return converted.setLocale('es-MX').toLocaleString(options);
 }
 
 /**

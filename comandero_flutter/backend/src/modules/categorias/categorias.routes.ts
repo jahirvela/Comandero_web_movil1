@@ -13,7 +13,7 @@ const categoriasRouter = Router();
 
 categoriasRouter.use(authenticate);
 
-const lecturaRoles = requireRoles('administrador', 'capitan', 'mesero', 'cocinero');
+const lecturaRoles = requireRoles('administrador', 'capitan', 'mesero', 'cocinero', 'gerente');
 
 categoriasRouter.get('/', lecturaRoles, listarCategoriasController);
 categoriasRouter.get('/:id', lecturaRoles, obtenerCategoriaController);

@@ -13,7 +13,7 @@ const productosRouter = Router();
 
 productosRouter.use(authenticate);
 
-const lecturaRoles = requireRoles('administrador', 'capitan', 'mesero', 'cocinero', 'cajero');
+const lecturaRoles = requireRoles('administrador', 'capitan', 'mesero', 'cocinero', 'cajero', 'gerente');
 const gestionRoles = requireRoles('administrador', 'capitan');
 
 productosRouter.get('/', lecturaRoles, listarProductosController);
