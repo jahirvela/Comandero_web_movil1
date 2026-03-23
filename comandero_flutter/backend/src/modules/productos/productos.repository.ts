@@ -88,7 +88,7 @@ const obtenerColumnasProductoDescuento = async (
 ): Promise<ProductoDiscountColumns> => {
   try {
     // Sin genérico en query: Pool vs PoolConnection tienen firmas distintas y TS falla al unirlos.
-    const [result] = await conn.query(
+    const [result] = await (conn as any).query(
       `
       SELECT COLUMN_NAME
       FROM information_schema.columns
