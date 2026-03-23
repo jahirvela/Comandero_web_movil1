@@ -12,7 +12,7 @@ const router = Router();
 router.post(
   '/reimprimir',
   authenticate,
-  requireRoles('mesero', 'administrador', 'capitan'),
+  requireRoles('mesero', 'administrador', 'capitan', 'gerente'),
   reimprimirComandaHandler
 );
 

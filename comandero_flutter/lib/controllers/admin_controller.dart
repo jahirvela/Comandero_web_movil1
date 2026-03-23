@@ -1081,13 +1081,13 @@ class AdminController extends ChangeNotifier {
     print('📡 Admin: URL de Socket.IO: ${ApiConfig.socketUrl}');
 
     // Escuchar nuevas órdenes creadas
-    socketService.onOrderCreated((dynamic data) {
+    socketService.onOrderCreated((dynamic data) async {
       try {
         print(
           'Admin: Nueva orden creada - ID: ${data['id']}, Mesa: ${data['mesaCodigo'] ?? data['mesaId']}',
         );
-        // Recargar consumo del día para reflejar la nueva orden
-        loadDailyConsumption();
+        // Recargar consumo del día para reflejar la nueva orden (await: cocina/alertas al instante)
+        await loadDailyConsumption();
         // Recargar tickets por si se crea una cuenta asociada (con debounce)
         _loadTicketsDebounced();
         // No recargar menú ya que no cambia con nuevas órdenes
@@ -1097,12 +1097,10 @@ class AdminController extends ChangeNotifier {
     });
 
     // Escuchar actualizaciones de órdenes
-    socketService.onOrderUpdated((dynamic data) {
+    socketService.onOrderUpdated((dynamic data) async {
       try {
         print('Admin: Orden actualizada - ID: ${data['id']}');
-        // Actualizar consumo del día con la orden modificada
-        loadDailyConsumption();
-        // Recargar tickets por si cambió el estado de pago (con debounce)
+        await loadDailyConsumption();
         _loadTicketsDebounced();
       } catch (e) {
         print('Error al procesar actualización de orden en admin: $e');
@@ -1110,12 +1108,10 @@ class AdminController extends ChangeNotifier {
     });
 
     // Escuchar cancelaciones de órdenes
-    socketService.onOrderCancelled((dynamic data) {
+    socketService.onOrderCancelled((dynamic data) async {
       try {
         print('Admin: Orden cancelada - ID: ${data['id']}');
-        // Actualizar consumo del día para reflejar la cancelación
-        loadDailyConsumption();
-        // Recargar tickets por si se canceló una cuenta (con debounce)
+        await loadDailyConsumption();
         _loadTicketsDebounced();
       } catch (e) {
         print('Error al procesar cancelación de orden en admin: $e');

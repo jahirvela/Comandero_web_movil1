@@ -22,12 +22,17 @@ const lecturaRoles = requireRoles(
   'capitan',
   'mesero',
   'cocinero',
-  'cajero'
+  'cajero',
+  'gerente'
 );
-const gestionOrdenRoles = requireRoles('administrador', 'capitan', 'mesero');
+const gestionOrdenRoles = requireRoles('administrador', 'capitan', 'mesero', 'gerente');
 
 ordenesRouter.get('/', lecturaRoles, listarOrdenesController);
-ordenesRouter.get('/cocina', requireRoles('administrador', 'cocinero'), listarOrdenesCocinaController);
+ordenesRouter.get(
+  '/cocina',
+  requireRoles('administrador', 'cocinero', 'gerente'),
+  listarOrdenesCocinaController
+);
 ordenesRouter.get('/estados', lecturaRoles, listarEstadosOrdenController);
 ordenesRouter.get('/:id', lecturaRoles, obtenerOrdenController);
 ordenesRouter.post('/', gestionOrdenRoles, crearOrdenController);
@@ -35,12 +40,12 @@ ordenesRouter.put('/:id', gestionOrdenRoles, actualizarOrdenController);
 ordenesRouter.post('/:id/items', gestionOrdenRoles, agregarItemsOrdenController);
 ordenesRouter.patch(
   '/:id/estado',
-  requireRoles('administrador', 'capitan', 'mesero', 'cocinero', 'cajero'),
+  requireRoles('administrador', 'capitan', 'mesero', 'cocinero', 'cajero', 'gerente'),
   actualizarEstadoOrdenController
 );
 ordenesRouter.patch(
   '/:id/tiempo-estimado',
-  requireRoles('administrador', 'cocinero'),
+  requireRoles('administrador', 'cocinero', 'gerente'),
   actualizarTiempoEstimadoController
 );
 

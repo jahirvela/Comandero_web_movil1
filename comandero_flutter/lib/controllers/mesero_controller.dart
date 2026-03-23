@@ -802,6 +802,21 @@ class MeseroController extends ChangeNotifier {
         final estadoNombre = data['estadoNombre'] as String?;
         final mesaId = data['mesaId'] as int?;
         final mesaCodigo = data['mesaCodigo'] as String?;
+        final tiempoEstimadoNuevo =
+            data['tiempoEstimadoPreparacion'] ?? data['estimatedTime'];
+
+        // CRÍTICO: capturar tiempo anterior ANTES de mutar el historial (si no, la notificación nunca sale)
+        int? tiempoEstimadoAnterior;
+        if (ordenId != null && tiempoEstimadoNuevo != null) {
+          for (final orders in _tableOrderHistory.values) {
+            for (final o in orders) {
+              if (o['ordenId'] == ordenId) {
+                tiempoEstimadoAnterior = o['estimatedTime'] as int?;
+                break;
+              }
+            }
+          }
+        }
 
         if (ordenId != null && estadoNombre != null) {
           final estadoLower = estadoNombre.toLowerCase();
@@ -882,30 +897,20 @@ class MeseroController extends ChangeNotifier {
 
           notifyListeners();
 
-          // Verificar si el tiempo estimado cambió y mostrar notificación
-          final tiempoEstimadoNuevo =
-              data['tiempoEstimadoPreparacion'] ??
-              data['estimatedTime'];
+          // Tiempo estimado: comparar con valor capturado antes de mutar órdenes
           if (tiempoEstimadoNuevo != null) {
-            // Buscar el tiempo anterior en el historial
-            int? tiempoAnterior;
-            for (var orders in _tableOrderHistory.values) {
-              final orderFound = orders.firstWhere(
-                (o) => o['ordenId'] == ordenId,
-                orElse: () => <String, dynamic>{},
-              );
-              if (orderFound.isNotEmpty) {
-                tiempoAnterior = orderFound['estimatedTime'] as int?;
-                break;
-              }
-            }
-            
-            // Si el tiempo cambió, mostrar notificación
-            if (tiempoAnterior != null && tiempoAnterior != tiempoEstimadoNuevo) {
-              final mesaInfo = mesaCodigo != null && mesaCodigo.isNotEmpty ? TableModel.displayLabelFromCodigo(mesaCodigo) : 'Para llevar';
+            final cambioTiempo = tiempoEstimadoAnterior == null ||
+                tiempoEstimadoAnterior != tiempoEstimadoNuevo;
+            if (cambioTiempo) {
+              final mesaInfo = mesaCodigo != null && mesaCodigo.isNotEmpty
+                  ? TableModel.displayLabelFromCodigo(mesaCodigo)
+                  : 'Para llevar';
+              final deTxt = tiempoEstimadoAnterior != null
+                  ? '${tiempoEstimadoAnterior} min → ${tiempoEstimadoNuevo} min'
+                  : '${tiempoEstimadoNuevo} min';
               addNotification(
                 '⏱️ Tiempo estimado actualizado',
-                'Orden $ordenId ($mesaInfo): ${tiempoAnterior} min → ${tiempoEstimadoNuevo} min',
+                'Orden $ordenId ($mesaInfo): $deTxt',
                 ordenId: ordenId,
                 tipo: 'info',
               );

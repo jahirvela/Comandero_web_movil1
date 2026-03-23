@@ -10,7 +10,7 @@ const ticketsRouter = Router();
 ticketsRouter.get(
   '/',
   authenticate,
-  requireRoles('administrador', 'cajero', 'capitan', 'mesero'),
+  requireRoles('administrador', 'cajero', 'capitan', 'mesero', 'gerente'),
   listarTicketsHandler
 );
 
@@ -19,7 +19,7 @@ ticketsRouter.get(
 ticketsRouter.post(
   '/imprimir',
   authenticate,
-  requireRoles('administrador', 'cajero', 'capitan', 'mesero'),
+  requireRoles('administrador', 'cajero', 'capitan', 'mesero', 'gerente'),
   imprimirTicketHandler
 );
 

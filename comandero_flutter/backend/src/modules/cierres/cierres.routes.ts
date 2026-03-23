@@ -10,7 +10,7 @@ const cierresRouter = Router();
 cierresRouter.get(
   '/',
   authenticate,
-  requireRoles('administrador', 'cajero', 'capitan'),
+  requireRoles('administrador', 'cajero', 'capitan', 'gerente'),
   listarCierresCajaHandler
 );
 
@@ -19,7 +19,7 @@ cierresRouter.get(
 cierresRouter.post(
   '/',
   authenticate,
-  requireRoles('administrador', 'cajero', 'capitan'),
+  requireRoles('administrador', 'cajero', 'capitan', 'gerente'),
   crearCierreCajaHandler
 );
 
@@ -30,7 +30,7 @@ cierresRouter.post(
 cierresRouter.patch(
   '/:id/estado',
   authenticate,
-  requireRoles('administrador', 'cajero'),
+  requireRoles('administrador', 'cajero', 'gerente'),
   actualizarEstadoCierreHandler
 );
 

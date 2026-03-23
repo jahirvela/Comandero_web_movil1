@@ -15,7 +15,7 @@ const pagosRouter = Router();
 pagosRouter.use(authenticate);
 
 // Permitir lectura a todos los roles principales
-const lecturaRoles = requireRoles('administrador', 'cajero', 'capitan', 'mesero');
+const lecturaRoles = requireRoles('administrador', 'cajero', 'capitan', 'mesero', 'gerente');
 
 pagosRouter.get('/', lecturaRoles, listarPagosController);
 pagosRouter.get('/formas', lecturaRoles, listarFormasPagoController);
@@ -23,8 +23,16 @@ pagosRouter.get('/propinas', lecturaRoles, listarPropinasController);
 pagosRouter.get('/:id', lecturaRoles, obtenerPagoController);
 
 // Permitir crear pagos a cajero, admin, capitan y mesero (para flujos completos)
-pagosRouter.post('/', requireRoles('administrador', 'cajero', 'capitan', 'mesero'), crearPagoController);
-pagosRouter.post('/propinas', requireRoles('administrador', 'cajero', 'capitan', 'mesero'), registrarPropinaController);
+pagosRouter.post(
+  '/',
+  requireRoles('administrador', 'cajero', 'capitan', 'mesero', 'gerente'),
+  crearPagoController
+);
+pagosRouter.post(
+  '/propinas',
+  requireRoles('administrador', 'cajero', 'capitan', 'mesero', 'gerente'),
+  registrarPropinaController
+);
 
 export default pagosRouter;
 

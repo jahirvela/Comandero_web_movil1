@@ -18,7 +18,7 @@ const inventarioRouter = Router();
 
 inventarioRouter.use(authenticate);
 
-const lecturaRoles = requireRoles('administrador', 'capitan', 'cocinero');
+const lecturaRoles = requireRoles('administrador', 'capitan', 'cocinero', 'gerente');
 const gestionRoles = requireRoles('administrador', 'capitan');
 
 inventarioRouter.get('/items', lecturaRoles, listarInsumosController);
