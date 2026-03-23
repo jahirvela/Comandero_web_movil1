@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { forbidden, unauthorized } from '../utils/http-error.js';
+import { expandGerenteRoles, normalizeRoleString } from '../utils/roleExpansion.js';
 
 export const requireRoles = (...roles: string[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
@@ -30,12 +31,9 @@ export const requireRoles = (...roles: string[]) => {
     }
     
     // Comparar en minúsculas para evitar problemas de case sensitivity
-    const userRolesLower = userRoles.map(r => String(r).toLowerCase().trim());
-    // "gerente" hereda permisos operativos de mesero/cajero/cocinero sin duplicar roles en BD.
-    const effectiveRoles = userRolesLower.includes('gerente')
-      ? [...new Set([...userRolesLower, 'mesero', 'cajero', 'cocinero'])]
-      : userRolesLower;
-    const requiredRolesLower = roles.map(r => String(r).toLowerCase().trim());
+    const userRolesLower = userRoles.map((r) => String(r).toLowerCase().trim());
+    const effectiveRoles = expandGerenteRoles(userRolesLower);
+    const requiredRolesLower = roles.map((r) => normalizeRoleString(String(r)));
     
     const hasRole = effectiveRoles.some((role) => requiredRolesLower.includes(role));
 

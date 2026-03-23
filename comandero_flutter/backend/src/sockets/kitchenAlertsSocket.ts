@@ -19,6 +19,7 @@ import type { KitchenAlertPayload, AlertType, StationType } from '../types/kitch
 import { obtenerOrdenBasePorId } from '../modules/ordenes/ordenes.repository.js';
 import { obtenerItemsOrden } from '../modules/ordenes/ordenes.repository.js';
 import { crearAlerta } from '../modules/alertas/alertas.repository.js';
+import { expandGerenteRoles, normalizeRoleString } from '../utils/roleExpansion.js';
 
 interface SocketUser {
   id: number;
@@ -408,7 +409,8 @@ export function registerKitchenAlertsHandlers(io: Server, socket: Socket) {
   socket.on('kitchen:alert:ack', (data: { alertId?: number; orderId: number }) => {
     try {
       // Validar que el usuario es cocinero
-      if (!user.roles.includes('cocinero')) {
+      const eff = expandGerenteRoles(user.roles.map((r) => normalizeRoleString(String(r))));
+      if (!eff.includes('cocinero')) {
         return;
       }
 
@@ -440,14 +442,12 @@ export function joinKitchenRooms(socket: Socket) {
     return;
   }
 
-  // Si el usuario es cocinero o administrador, unirlo a la room general de cocina
-  const normalizedRoles = user.roles.map((role) =>
-    role
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-  );
-  if (normalizedRoles.includes('cocinero') || normalizedRoles.includes('administrador')) {
+  // Normalizar roles y expandir reglas del gerente (socket no pasa por requireRoles)
+  const normalizedRoles = user.roles.map((role) => normalizeRoleString(String(role)));
+  const effectiveRoles = expandGerenteRoles(normalizedRoles);
+
+  // Si el usuario es cocinero, administrador o gerente (en modo cocina), unirlo a la room general de cocina
+  if (effectiveRoles.includes('cocinero') || effectiveRoles.includes('administrador')) {
     socket.join('room:kitchen:all');
     
     // Verificar que se unió correctamente
@@ -464,8 +464,8 @@ export function joinKitchenRooms(socket: Socket) {
       'KitchenAlerts: Usuario unido a room:kitchen:all'
     );
 
-    // Solo cocineros pueden unirse a estaciones específicas
-    if (normalizedRoles.includes('cocinero')) {
+    // Cocineros (y gerente en modo cocina) pueden unirse a estaciones específicas
+    if (effectiveRoles.includes('cocinero')) {
       const station = socket.handshake.auth?.station as string | undefined;
       if (station && ['tacos', 'consomes', 'bebidas'].includes(station)) {
         socket.join(`room:kitchen:${station}`);
