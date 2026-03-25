@@ -1440,6 +1440,35 @@ class MeseroController extends ChangeNotifier {
     }
   }
 
+  /// Recarga datos clave cuando el usuario regresa a la pestaña/pantalla
+  /// (desbloqueo del celular, cambio de app, etc.).
+  ///
+  /// Evita que se quede la UI con listas vacías si el socket/token se cayó
+  /// mientras la app estuvo en segundo plano.
+  Future<void> refreshAfterResume() async {
+    try {
+      await loadTables();
+      await Future.wait([
+        loadProducts(),
+        loadCategories(),
+        loadTakeawayOrderHistory(),
+      ]);
+
+      // Recargar historial de mesas activas (fuente de verdad: backend)
+      await _loadAllTablesHistory();
+
+      // Después de recargar por API (para que si expiró el token, se refresque),
+      // intenta reconectar el socket si sigue desconectado.
+      final socketService = SocketService();
+      if (!socketService.isConnected) {
+        await socketService.connect();
+      }
+      notifyListeners();
+    } catch (e) {
+      print('⚠️ Mesero: refreshAfterResume falló: $e');
+    }
+  }
+
   // Helper para mapear datos del backend a TableModel
   TableModel _mapBackendToTableModel(Map<String, dynamic> data) {
     final codigo = (data['codigo'] as String?)?.trim() ?? data['id']?.toString() ?? '0';
@@ -1466,13 +1495,22 @@ class MeseroController extends ChangeNotifier {
     final x = ((numero - 1) % 3) + 1;
     final y = ((numero - 1) ~/ 3) + 1;
 
+    final comRaw = data['comensales'];
+    int? customers;
+    if (comRaw is int) {
+      customers = comRaw > 0 ? comRaw : null;
+    } else if (comRaw is num) {
+      final c = comRaw.toInt();
+      customers = c > 0 ? c : null;
+    }
+
     return TableModel(
       id: tableId,
       codigo: codigo,
       number: numero,
       status: status,
       seats: data['capacidad'] as int? ?? 4,
-      customers: null,
+      customers: customers,
       orderValue: null,
       reservation: null,
       position: TablePosition(x: x, y: y),
@@ -2301,8 +2339,8 @@ class MeseroController extends ChangeNotifier {
     return rate.isNaN || rate.isInfinite ? 0.0 : rate;
   }
 
-  // Actualizar número de comensales en una mesa
-  void updateTableCustomers(int tableId, int customers) {
+  /// Actualiza comensales en UI y en el servidor (persiste al salir y volver a la mesa).
+  Future<void> updateTableCustomers(int tableId, int customers) async {
     final updatedCustomers = customers > 0 ? customers : null;
 
     _tables = _tables.map((table) {
@@ -2317,6 +2355,13 @@ class MeseroController extends ChangeNotifier {
     }
 
     notifyListeners();
+
+    try {
+      await _mesasService.updateMesa(tableId, {'comensales': updatedCustomers});
+    } catch (e) {
+      print('❌ Mesero: no se pudo guardar comensales en servidor: $e');
+      rethrow;
+    }
   }
 
   // Obtener historial de pedidos de una mesa
@@ -2332,23 +2377,17 @@ class MeseroController extends ChangeNotifier {
     // Estados válidos: abierta, en_preparacion, listo, pendiente
     // Estados EXCLUIDOS: pagada, cancelada, cerrada, cobrada
     final historialFiltrado = historial.where((order) {
-      final ordenId = order['ordenId'] as int?;
-
-      // Excluir órdenes ya enviadas al cajero (registro local)
-      if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
-        return false;
-      }
-
       final status = (order['status'] as String?)?.toLowerCase() ?? '';
 
-      // Lista de estados FINALIZADOS que NO deben aparecer
+      // Lista de estados FINALIZADOS que NO deben aparecer (no usar "enviada": coincide con textos de cocina)
       final estadosFinalizados = [
         'pagada',
         'cancelada',
         'cerrada',
         'cobrada',
         'entregada',
-        'enviada',
+        'completada',
+        'finalizada',
       ];
 
       // Verificar si el estado está finalizado
@@ -2373,7 +2412,7 @@ class MeseroController extends ChangeNotifier {
   }
 
   // Obtener historial de órdenes "para llevar"
-  // FILTRADO ESTRICTO: Solo órdenes con estados activos y NO enviadas al cajero
+  // FILTRADO ESTRICTO: Solo órdenes con estados activos (no filtrar por cajero: el estado en BD decide)
   List<Map<String, dynamic>> getTakeawayOrderHistory() {
     // Buscar en todas las claves de takeaway
     final allTakeawayOrders = <Map<String, dynamic>>[];
@@ -2390,20 +2429,12 @@ class MeseroController extends ChangeNotifier {
       'cerrada',
       'cobrada',
       'entregada',
-      'enviada',
+      'completada',
+      'finalizada',
       'pending',
     ];
 
-    // Filtrar órdenes ACTIVAS y NO enviadas al cajero
     final historialFiltrado = allTakeawayOrders.where((order) {
-      final ordenId = order['ordenId'] as int?;
-
-      // Excluir órdenes ya enviadas al cajero (registro local)
-      if (ordenId != null && _sentToCashierOrders.contains(ordenId)) {
-        return false;
-      }
-
-      // Excluir órdenes con estados finalizados
       final status = (order['status'] as String?)?.toLowerCase() ?? '';
       for (final estadoFinal in estadosFinalizados) {
         if (status.contains(estadoFinal)) {
@@ -2956,27 +2987,19 @@ class MeseroController extends ChangeNotifier {
         'entregada',
         'completada',
         'finalizada',
-        'enviada',
       ];
 
       final ordenesActivas = ordenesEstaMesa.where((o) {
         final ordenData = o as Map<String, dynamic>;
-        final ordenId = ordenData['id'] as int? ?? 0;
-
-        // Excluir órdenes ya enviadas al cajero (registro local)
-        if (ordenId != 0 && _sentToCashierOrders.contains(ordenId)) {
-          print('🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)');
-          return false;
-        }
-
         final estadoNombre =
             (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
 
         // SOLO verificar si está en estados finalizados (cerradas por mesero/cajero)
         for (final estadoFinal in estadosFinalizados) {
           if (estadoNombre.contains(estadoFinal)) {
+            final oid = ordenData['id'];
             print(
-              '🚫 Orden $ordenId EXCLUIDA (estado finalizado: $estadoNombre)',
+              '🚫 Orden $oid EXCLUIDA (estado finalizado: $estadoNombre)',
             );
             return false;
           }
@@ -2996,12 +3019,6 @@ class MeseroController extends ChangeNotifier {
         final ordenId = ordenData['id'] as int?;
 
         if (ordenId == null) continue;
-
-        // Excluir órdenes ya enviadas al cajero (registro local)
-        if (_sentToCashierOrders.contains(ordenId)) {
-          print('🚫 Orden $ordenId EXCLUIDA (ya enviada al cajero)');
-          continue;
-        }
 
         // Obtener detalle completo
         final ordenDetalle = await _ordenesService.getOrden(ordenId);
@@ -3078,11 +3095,6 @@ class MeseroController extends ChangeNotifier {
       for (final ordenLocal in historialLocal) {
         final ordenIdLocal = ordenLocal['ordenId'] as int?;
         if (ordenIdLocal == null) continue;
-
-        // Excluir órdenes ya enviadas al cajero (registro local)
-        if (_sentToCashierOrders.contains(ordenIdLocal)) {
-          continue;
-        }
 
         // Si ya está en el backend, no duplicar
         if (ordenIdsBackend.contains(ordenIdLocal)) continue;

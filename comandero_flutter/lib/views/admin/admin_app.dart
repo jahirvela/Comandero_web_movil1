@@ -12,6 +12,7 @@ import '../../services/payment_repository.dart';
 import '../../services/socket_service.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
+import '../../widgets/refresh_on_resume.dart';
 import '../../utils/app_theme.dart';
 import '../../config/api_config.dart';
 import '../../utils/date_utils.dart' as date_utils;
@@ -19,6 +20,38 @@ import '../../utils/closure_utils.dart' as closure_utils;
 import '../cocinero/order_detail_modal.dart';
 import '../../services/ordenes_service.dart';
 import 'web/configuracion_web_view.dart';
+
+/// Al abrir [AdminApp] en modo inventario embebido, fuerza la vista y recarga datos.
+class _AdminEmbeddedInventoryInitializer extends StatefulWidget {
+  const _AdminEmbeddedInventoryInitializer({
+    required this.enabled,
+    required this.child,
+  });
+
+  final bool enabled;
+  final Widget child;
+
+  @override
+  State<_AdminEmbeddedInventoryInitializer> createState() =>
+      _AdminEmbeddedInventoryInitializerState();
+}
+
+class _AdminEmbeddedInventoryInitializerState
+    extends State<_AdminEmbeddedInventoryInitializer> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.enabled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<AdminController>().setCurrentView('inventory');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 class _NavItemData {
   const _NavItemData(this.label, this.icon, this.viewId);
@@ -28,7 +61,15 @@ class _NavItemData {
 }
 
 class AdminApp extends StatelessWidget {
-  const AdminApp({super.key});
+  const AdminApp({
+    super.key,
+    this.embeddedInventoryOnly = false,
+    this.onEmbeddedBack,
+  });
+
+  /// Si es true: vista solo inventario, sin barra inferior; pensado para abrir desde el panel gerente.
+  final bool embeddedInventoryOnly;
+  final VoidCallback? onEmbeddedBack;
 
   /// Helper para extraer mensajes de error más claros
   static String _extractErrorMessage(dynamic e) {
@@ -99,41 +140,57 @@ class AdminApp extends StatelessWidget {
               cocineroController,
               child,
             ) {
-              return LayoutBuilder(
-                builder: (context, constraints) {
-                  final isTablet = constraints.maxWidth > 600;
-                  final isDesktop = constraints.maxWidth > 900;
+              return _AdminEmbeddedInventoryInitializer(
+                enabled: embeddedInventoryOnly,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isTablet = constraints.maxWidth > 600;
+                    final isDesktop = constraints.maxWidth > 900;
 
-                  return Scaffold(
-                    backgroundColor: AppColors.background,
-                    appBar: _buildAppBar(
-                      context,
-                      adminController,
-                      authController,
-                      isTablet,
-                    ),
-                    body: Stack(
-                      children: [
-                        _buildBody(
-                          context,
-                          adminController,
-                          cocineroController,
-                          isTablet,
-                          isDesktop,
+                    return Scaffold(
+                      backgroundColor: AppColors.background,
+                      appBar: _buildAppBar(
+                        context,
+                        adminController,
+                        authController,
+                        isTablet,
+                      ),
+                      body: RefreshOnResume(
+                        minPause: const Duration(seconds: 45),
+                        onResume: () async {
+                          await adminController.loadAllData();
+
+                          final socketService = SocketService();
+                          if (!socketService.isConnected) {
+                            await socketService.connect();
+                          }
+                        },
+                        child: Stack(
+                          children: [
+                            _buildBody(
+                              context,
+                              adminController,
+                              cocineroController,
+                              isTablet,
+                              isDesktop,
+                            ),
+                            _InventoryAlertSnackBarListener(
+                              controller: adminController,
+                            ),
+                          ],
                         ),
-                        _InventoryAlertSnackBarListener(
-                          controller: adminController,
-                        ),
-                      ],
-                    ),
-                    bottomNavigationBar: _buildBottomNavigationBar(
-                      context,
-                      adminController,
-                      isTablet,
-                      isDesktop,
-                    ),
-                  );
-                },
+                      ),
+                      bottomNavigationBar: embeddedInventoryOnly
+                          ? null
+                          : _buildBottomNavigationBar(
+                              context,
+                              adminController,
+                              isTablet,
+                              isDesktop,
+                            ),
+                    );
+                  },
+                ),
               );
             },
       ),
@@ -146,6 +203,69 @@ class AdminApp extends StatelessWidget {
     AuthController authController,
     bool isTablet,
   ) {
+    if (embeddedInventoryOnly) {
+      return AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: onEmbeddedBack ?? () => Navigator.of(context).maybePop(),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Gestión de Inventario',
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              '${authController.userName} • Gerente',
+              style: TextStyle(
+                fontSize: isTablet ? 13.0 : 11.0,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              'Acceso Total',
+              style: TextStyle(
+                fontSize: isTablet ? 12.0 : 10.0,
+                fontWeight: FontWeight.w600,
+                color: Colors.red,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: LogoutButton(
+              isTablet: isTablet,
+              onPressed: () async {
+                await authController.logout();
+                if (context.mounted) {
+                  context.go('/login');
+                }
+              },
+            ),
+          ),
+        ],
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 2,
+      );
+    }
+
     return AppBar(
       title: Row(
         children: [
@@ -3917,6 +4037,23 @@ class AdminApp extends StatelessWidget {
                       );
                       return;
                     }
+                    final seen = <String>{};
+                    for (final s in sizes) {
+                      final key = s.name.trim().toLowerCase();
+                      if (key.isEmpty) continue;
+                      if (seen.contains(key)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No puede haber dos tamaños con el mismo nombre',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+                      seen.add(key);
+                    }
                   }
                   // El ID se asignará desde el backend
                   // Limpiar y validar el precio antes de parsear
@@ -4420,6 +4557,55 @@ class AdminApp extends StatelessWidget {
                       ),
                     );
                     return;
+                  }
+                  if (hasSizes &&
+                      sizePriceControllers.length == sizes.length &&
+                      sizeNameControllers.length == sizes.length) {
+                    for (var i = 0; i < sizes.length; i++) {
+                      final name = sizeNameControllers[i].text.trim();
+                      final price = _parsePrice(sizePriceControllers[i].text);
+                      sizes[i] = MenuSize(name: name, price: price);
+                    }
+                  }
+                  if (hasSizes) {
+                    final invalidName = sizes.any((s) => s.name.isEmpty);
+                    final invalidPrice = sizes.any((s) => s.price <= 0);
+                    if (invalidName) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Cada tamaño debe tener un nombre'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                    if (invalidPrice) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Cada tamaño debe tener un precio mayor a 0',
+                          ),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                    final seen = <String>{};
+                    for (final s in sizes) {
+                      final key = s.name.trim().toLowerCase();
+                      if (seen.contains(key)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No puede haber dos tamaños con el mismo nombre',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+                      seen.add(key);
+                    }
                   }
                   final updatedProduct = product.copyWith(
                     name: nameController.text,
@@ -5483,6 +5669,11 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
     bool isDesktop,
   ) {
+    final tileShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+      side: BorderSide(color: AppColors.primary.withValues(alpha: 0.25)),
+    );
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(
         isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
@@ -5490,20 +5681,41 @@ class AdminApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Título y botón agregar
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Gestión de Inventario',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: AppTheme.fontWeightBold,
-                  color: AppColors.textPrimary,
+              Expanded(
+                child: Text(
+                  'Gestión de Inventario',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: AppTheme.fontWeightBold,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  PopupMenuButton<String>(
+                    tooltip: 'Exportar inventario',
+                    icon: const Icon(Icons.file_download_outlined),
+                    onSelected: (value) => _showInventoryExportDialog(
+                      context,
+                      controller,
+                      value,
+                    ),
+                    itemBuilder: (ctx) => const [
+                      PopupMenuItem(
+                        value: 'csv',
+                        child: Text('Exportar CSV'),
+                      ),
+                      PopupMenuItem(
+                        value: 'pdf',
+                        child: Text('Exportar PDF'),
+                      ),
+                    ],
+                  ),
+                  SizedBox(width: AppTheme.spacingSM),
                   OutlinedButton(
                     onPressed: () => _showBuscarPorCodigoBarrasDialog(
                       context,
@@ -5527,18 +5739,578 @@ class AdminApp extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: AppTheme.spacingXL),
-
-          // Alertas de stock
-          _buildInventoryAlerts(context, controller, isTablet),
           SizedBox(height: AppTheme.spacingLG),
+          Theme(
+            data: Theme.of(context).copyWith(
+              dividerColor: Colors.transparent,
+              splashColor: AppColors.primary.withValues(alpha: 0.06),
+            ),
+            child: Column(
+              children: [
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 0,
+                  shape: tileShape,
+                  child: ExpansionTile(
+                    initiallyExpanded: true,
+                    leading: Icon(Icons.inventory_2, color: AppColors.primary),
+                    title: Text(
+                      'Catálogo de insumos',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Productos, categorías y ajustes de stock',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    childrenPadding: EdgeInsets.fromLTRB(
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      0,
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      AppTheme.spacingMD,
+                    ),
+                    children: [
+                      _buildInventoryAlerts(context, controller, isTablet),
+                      SizedBox(height: AppTheme.spacingMD),
+                      _buildInventorySearchAndFilters(
+                        context,
+                        controller,
+                        isTablet,
+                      ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      _buildInventoryItemsList(
+                        context,
+                        controller,
+                        isTablet,
+                        isDesktop,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 0,
+                  shape: tileShape,
+                  child: ExpansionTile(
+                    leading: Icon(Icons.swap_vert, color: AppColors.primary),
+                    title: Text(
+                      'Movimientos (kárdex)',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Entradas, salidas y ajustes recientes',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    onExpansionChanged: (expanded) {
+                      if (expanded) {
+                        controller.loadInventoryMovimientos();
+                      }
+                    },
+                    childrenPadding: EdgeInsets.fromLTRB(
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      0,
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      AppTheme.spacingMD,
+                    ),
+                    children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => controller.loadInventoryMovimientos(),
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Actualizar movimientos'),
+                        ),
+                      ),
+                      _buildInventoryMovimientosSection(
+                        context,
+                        controller,
+                        isTablet,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 0,
+                  shape: tileShape,
+                  child: ExpansionTile(
+                    leading: Icon(Icons.analytics_outlined, color: AppColors.primary),
+                    title: Text(
+                      'Resumen',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Totales y alertas rápidas',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    childrenPadding: EdgeInsets.fromLTRB(
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      0,
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      AppTheme.spacingMD,
+                    ),
+                    children: [
+                      _buildInventoryResumenSection(
+                        context,
+                        controller,
+                        isTablet,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 0,
+                  shape: tileShape,
+                  child: ExpansionTile(
+                    leading: Icon(Icons.auto_awesome, color: AppColors.primary),
+                    title: Text(
+                      'Descuento automático y recetas',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Cómo se conecta el menú con el inventario',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    childrenPadding: EdgeInsets.fromLTRB(
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      0,
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      AppTheme.spacingMD,
+                    ),
+                    children: [
+                      _buildInventoryDescuentoInfoSection(
+                        context,
+                        isTablet,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-          // Búsqueda y filtros
-          _buildInventorySearchAndFilters(context, controller, isTablet),
-          SizedBox(height: AppTheme.spacingLG),
+  Widget _buildInventoryMovimientosSection(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final movs = controller.inventoryMovimientos;
+    if (movs.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
+        child: Text(
+          'No hay movimientos registrados o aún no se han cargado. Pulsa actualizar o expande de nuevo.',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+      );
+    }
 
-          // Lista de productos
-          _buildInventoryItemsList(context, controller, isTablet, isDesktop),
+    String tipoLabel(String? t) {
+      switch (t) {
+        case 'entrada':
+          return 'Entrada';
+        case 'salida':
+          return 'Salida';
+        case 'ajuste':
+          return 'Ajuste';
+        default:
+          return t ?? '—';
+      }
+    }
+
+    return Column(
+      children: [
+        for (final m in movs.take(50))
+          Padding(
+            padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
+            child: Material(
+              color: AppColors.inputBackground,
+              borderRadius: BorderRadius.circular(AppTheme.radiusSM),
+              child: Padding(
+                padding: EdgeInsets.all(
+                  isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            m['inventarioItemNombre']?.toString() ?? 'Ítem',
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: AppTheme.fontWeightSemibold),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            tipoLabel(m['tipo']?.toString()),
+                            style: TextStyle(
+                              fontSize: isTablet ? 12 : 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: AppTheme.spacingXS),
+                    Text(
+                      '${m['cantidad'] ?? ''} ${m['unidad'] ?? ''} · ${m['motivo'] ?? 'Sin motivo'}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    if (m['referenciaOrdenId'] != null)
+                      Text(
+                        'Ref. orden #${m['referenciaOrdenId']}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    if (m['creadoEn'] != null)
+                      Text(
+                        DateFormat('dd/MM/yyyy HH:mm', 'es_MX').format(
+                          DateTime.tryParse(m['creadoEn'].toString())?.toLocal() ??
+                              DateTime.now(),
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildInventoryResumenSection(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final inv = controller.inventory;
+    final criticos = inv
+        .where((i) => i.status == InventoryStatus.outOfStock)
+        .length;
+    final bajos = inv.where((i) => i.status == InventoryStatus.lowStock).length;
+    double valor = 0;
+    for (final i in inv) {
+      valor += i.currentStock * i.cost;
+    }
+    final fmt = NumberFormat.currency(locale: 'es_MX', symbol: r'$');
+
+    Widget line(String label, String value) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: AppTheme.fontWeightSemibold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        line('Productos activos en catálogo', '${inv.length}'),
+        line('Sin stock (crítico)', '$criticos'),
+        line('Stock bajo', '$bajos'),
+        line('Valor aproximado (stock × costo)', fmt.format(valor)),
+        SizedBox(height: AppTheme.spacingXS),
+        Text(
+          'El valor es orientativo según costo unitario registrado por producto.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: AppColors.textSecondary,
+            fontSize: 11,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInventoryDescuentoInfoSection(
+    BuildContext context,
+    bool isTablet,
+  ) {
+    final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      height: 1.45,
+      color: AppColors.textPrimary,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '• Las recetas del menú enlazan cada platillo con insumos de inventario.\n'
+          '• Al marcar la orden como lista para servir, se valida stock y se registran salidas por receta (una sola vez por orden).\n'
+          '• Si la orden se cobra o cierra sin pasar por “listo”, el sistema intenta el mismo descuento al cambiar al estado de pago o cierre (también una vez por orden).\n'
+          '• Los movimientos aparecen en “Movimientos (kárdex)” con referencia de orden cuando aplica.',
+          style: style?.copyWith(fontSize: isTablet ? 14 : 13),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickExportDateTime(
+    BuildContext context,
+    DateTime initial,
+    void Function(DateTime) onPicked,
+  ) async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: DateTime(initial.year, initial.month, initial.day),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (!context.mounted || d == null) return;
+    final t = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (!context.mounted || t == null) return;
+    onPicked(DateTime(d.year, d.month, d.day, t.hour, t.minute));
+  }
+
+  void _showInventoryCustomRangeExportDialog(
+    BuildContext context,
+    AdminController controller,
+    String format,
+  ) {
+    final now = DateTime.now();
+    final ayer = now.subtract(const Duration(days: 1));
+    var start = DateTime(ayer.year, ayer.month, ayer.day, 0, 0);
+    var end = now;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: Text('Rango personalizado (${format.toUpperCase()})'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Elija fecha y hora de inicio y fin. El reporte usa los movimientos del servidor en ese intervalo.',
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  title: const Text('Desde'),
+                  subtitle: Text(
+                    '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')} '
+                    '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}',
+                  ),
+                  trailing: const Icon(Icons.edit_calendar),
+                  onTap: () async {
+                    await _pickExportDateTime(context, start, (dt) {
+                      setLocalState(() => start = dt);
+                    });
+                  },
+                ),
+                ListTile(
+                  title: const Text('Hasta'),
+                  subtitle: Text(
+                    '${end.year}-${end.month.toString().padLeft(2, '0')}-${end.day.toString().padLeft(2, '0')} '
+                    '${end.hour.toString().padLeft(2, '0')}:${end.minute.toString().padLeft(2, '0')}',
+                  ),
+                  trailing: const Icon(Icons.edit_calendar),
+                  onTap: () async {
+                    await _pickExportDateTime(context, end, (dt) {
+                      setLocalState(() => end = dt);
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                var a = start;
+                var b = end;
+                if (b.isBefore(a)) {
+                  final t = a;
+                  a = b;
+                  b = t;
+                }
+                controller.setInventoryExportDateRange(a, b);
+                Navigator.of(dialogContext).pop();
+                try {
+                  if (format == 'csv') {
+                    await controller.exportInventoryReportToCSV('personalizado');
+                  } else {
+                    await controller.exportInventoryReportToPDF('personalizado');
+                  }
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Exportación lista'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Error al exportar: ${_extractErrorMessage(e)}',
+                        ),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Exportar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showInventoryExportDialog(
+    BuildContext context,
+    AdminController controller,
+    String format,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Exportar inventario (${format.toUpperCase()})'),
+        content: const Text('Selecciona el periodo del reporte'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _showInventoryCustomRangeExportDialog(context, controller, format);
+            },
+            child: const Text('Personalizado…'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              try {
+                if (format == 'csv') {
+                  await controller.exportInventoryReportToCSV('day');
+                } else {
+                  await controller.exportInventoryReportToPDF('day');
+                }
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error al exportar: ${_extractErrorMessage(e)}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Día'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              try {
+                if (format == 'csv') {
+                  await controller.exportInventoryReportToCSV('week');
+                } else {
+                  await controller.exportInventoryReportToPDF('week');
+                }
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error al exportar: ${_extractErrorMessage(e)}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Semana'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              try {
+                if (format == 'csv') {
+                  await controller.exportInventoryReportToCSV('month');
+                } else {
+                  await controller.exportInventoryReportToPDF('month');
+                }
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error al exportar: ${_extractErrorMessage(e)}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Mes'),
+          ),
         ],
       ),
     );
@@ -10046,21 +10818,18 @@ class AdminApp extends StatelessWidget {
                           constraints: const BoxConstraints(),
                         ),
                         SizedBox(width: AppTheme.spacingXS),
-                        if (ticket.status !=
-                                payment_models.BillStatus.printed &&
-                            ticket.status !=
-                                payment_models.BillStatus.delivered)
-                          IconButton(
-                            icon: const Icon(Icons.print, size: 18),
-                            color: AppColors.primary,
-                            onPressed: () => _showPrintTicketDialog(
-                              context,
-                              ticket,
-                              controller,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
+                        IconButton(
+                          icon: const Icon(Icons.print, size: 18),
+                          color: AppColors.primary,
+                          tooltip: ticket.isPrinted ? 'Reimprimir ticket' : 'Imprimir ticket',
+                          onPressed: () => _showPrintTicketDialog(
+                            context,
+                            ticket,
+                            controller,
                           ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
                         SizedBox(width: AppTheme.spacingXS),
                         // Botón de palomita para tickets pendientes (aceptar/entregar)
                         if (ticket.status == payment_models.BillStatus.pending)
@@ -10235,15 +11004,13 @@ class AdminApp extends StatelessWidget {
                   onPressed: () =>
                       _showTicketDetailsModal(context, ticket, isTablet, controller),
                 ),
-                if (ticket.status != payment_models.BillStatus.printed &&
-                    ticket.status != payment_models.BillStatus.delivered) ...[
-                  IconButton(
-                    icon: const Icon(Icons.print),
-                    color: AppColors.primary,
-                    onPressed: () =>
-                        _showPrintTicketDialog(context, ticket, controller),
-                  ),
-                ],
+                IconButton(
+                  icon: const Icon(Icons.print),
+                  color: AppColors.primary,
+                  tooltip: ticket.isPrinted ? 'Reimprimir ticket' : 'Imprimir ticket',
+                  onPressed: () =>
+                      _showPrintTicketDialog(context, ticket, controller),
+                ),
                 // Botón de palomita para tickets pendientes (aceptar/entregar)
                 if (ticket.status == payment_models.BillStatus.pending) ...[
                   IconButton(
@@ -10294,12 +11061,13 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
   ) {
     final tableText = ticket.tableDisplayLabel;
+    final accion = ticket.isPrinted ? 'Reimprimir' : 'Imprimir';
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Imprimir Ticket'),
-        content: Text('¿Imprimir ticket para $tableText?'),
+        title: Text('$accion ticket'),
+        content: Text('¿$accion ticket para $tableText?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -10313,7 +11081,7 @@ class AdminApp extends StatelessWidget {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
-                      'Ticket impreso: $tableText. Notificación enviada al mesero.',
+                      'Ticket enviado a impresión: $tableText.',
                     ),
                     backgroundColor: Colors.green,
                   ),
@@ -14325,9 +15093,6 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     String category,
   ) async {
-    final isCustom = controller.isCustomCategory(category);
-    final hasProducts = controller.categoryHasProducts(category);
-    
     String message;
     Color backgroundColor;
 
@@ -14338,15 +15103,7 @@ class AdminApp extends StatelessWidget {
         message = 'Categoría "$category" eliminada.';
         backgroundColor = AppColors.success;
       } else {
-        if (!isCustom) {
-          message =
-              'La categoría "$category" es predeterminada y no se puede eliminar.';
-        } else if (hasProducts) {
-          message =
-              'No puedes eliminar la categoría "$category" porque tiene productos asociados.';
-        } else {
-          message = 'No fue posible eliminar la categoría "$category".';
-        }
+        message = 'No fue posible eliminar la categoría "$category".';
         backgroundColor = AppColors.error;
       }
     } catch (e) {
@@ -14370,13 +15127,44 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     String category,
   ) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eliminar categoría'),
         content: Text(
-          'Por ahora la categoría "$category" es predeterminada y no se puede eliminar.',
+          'Se eliminará "$category" y los productos de inventario de esa categoría pasarán a "Otros".\n\n¿Deseas continuar?',
         ),
-        backgroundColor: AppColors.error,
-        duration: const Duration(seconds: 2),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              try {
+                await controller.deleteInventoryCategory(category);
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Categoría "$category" eliminada'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error al eliminar categoría: ${_extractErrorMessage(e)}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Eliminar'),
+          ),
+        ],
       ),
     );
   }
@@ -16350,24 +17138,3 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
   }
 }
 
-// Painter para línea punteada estilo ticket
-class _DashedLinePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.grey.shade400
-      ..strokeWidth = 1;
-
-    const dashWidth = 5.0;
-    const dashSpace = 5.0;
-    double startX = 0;
-
-    while (startX < size.width) {
-      canvas.drawLine(Offset(startX, 0), Offset(startX + dashWidth, 0), paint);
-      startX += dashWidth + dashSpace;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}

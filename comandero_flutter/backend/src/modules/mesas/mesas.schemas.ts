@@ -15,6 +15,7 @@ export const actualizarMesaSchema = z
     nombre: z.string().max(120).optional().nullable(),
     capacidad: z.number().int().positive().max(500).optional().nullable(),
     ubicacion: z.string().max(120).optional().nullable(),
+    comensales: z.number().int().min(0).max(500).optional().nullable(),
     estadoMesaId: z.number().int().positive().optional().nullable(),
     activo: z.boolean().optional()
   })
@@ -24,6 +25,7 @@ export const actualizarMesaSchema = z
       value.nombre !== undefined ||
       value.capacidad !== undefined ||
       value.ubicacion !== undefined ||
+      value.comensales !== undefined ||
       value.estadoMesaId !== undefined ||
       value.activo !== undefined,
     { message: 'Debe proporcionar al menos un campo para actualizar' }

@@ -92,6 +92,10 @@ class AdminController extends ChangeNotifier {
   // Estado de inventario
   List<InventoryItem> _inventory = [];
   List<String> _inventoryCategories = ['todos'];
+  List<Map<String, dynamic>> _inventoryMovimientos = [];
+  /// Rango para exportación CSV/PDF con periodo `personalizado` (fecha y hora).
+  DateTime? _inventoryExportStart;
+  DateTime? _inventoryExportEnd;
 
   // Estado de cierres de caja
   List<CashCloseModel> _cashClosures = [];
@@ -153,7 +157,8 @@ class AdminController extends ChangeNotifier {
   String _selectedTableStatus = 'todos';
   String _selectedTableArea =
       'todos'; // 'todos', 'area_principal', 'area_lateral'
-  List<String> _tableAreas = ['todos', 'Área Principal', 'Área Lateral'];
+  /// Solo incluye áreas reales: [todos] + secciones únicas de las mesas + áreas añadidas en sesión sin mesa aún.
+  List<String> _tableAreas = ['todos'];
   String _selectedConsumptionFilter =
       'todos'; // 'todos', 'para_llevar', 'mesas'
   String _searchQuery = '';
@@ -232,6 +237,10 @@ class AdminController extends ChangeNotifier {
   List<Permiso> get permisos => _permisos;
   List<InventoryItem> get inventory => _inventory;
   List<InventoryItem> get inventoryItems => _inventory;
+
+  /// Últimos movimientos de inventario (kárdex), desde el backend.
+  List<Map<String, dynamic>> get inventoryMovimientos =>
+      List.unmodifiable(_inventoryMovimientos);
   List<CashCloseModel> get cashClosures => _cashClosures;
   bool get isLoadingCashClosures => _isLoadingCashClosures;
   List<MenuItem> get menuItems => _menuItems;
@@ -318,6 +327,7 @@ class AdminController extends ChangeNotifier {
       final searchMatch =
           _inventorySearchQuery.trim().isEmpty ||
           item.name.toLowerCase().contains(_inventorySearchQuery.toLowerCase()) ||
+          item.category.toLowerCase().contains(_inventorySearchQuery.toLowerCase()) ||
           (item.supplier != null &&
               item.supplier!.toLowerCase().contains(
                 _inventorySearchQuery.toLowerCase(),
@@ -339,7 +349,8 @@ class AdminController extends ChangeNotifier {
           item.category.toLowerCase() == _selectedMenuCategory.toLowerCase();
       final searchMatch =
           _menuSearchQuery.trim().isEmpty ||
-          item.name.toLowerCase().contains(_menuSearchQuery.toLowerCase());
+          item.name.toLowerCase().contains(_menuSearchQuery.toLowerCase()) ||
+          item.category.toLowerCase().contains(_menuSearchQuery.toLowerCase());
       return categoryMatch && searchMatch;
     }).toList();
   }
@@ -350,8 +361,15 @@ class AdminController extends ChangeNotifier {
       final statusMatch =
           _selectedTableStatus == 'todos' ||
           table.status == _selectedTableStatus;
+      // Misma lógica que mesa (floor): sin ubicación se considera "Área Principal" para el filtro
+      const defaultArea = 'Área Principal';
+      final effectiveSection =
+          (table.section != null && table.section!.trim().isNotEmpty)
+              ? table.section!.trim()
+              : defaultArea;
       final areaMatch =
-          _selectedTableArea == 'todos' || table.section == _selectedTableArea;
+          _selectedTableArea == 'todos' ||
+          effectiveSection == _selectedTableArea;
       return statusMatch && areaMatch;
     }).toList();
   }
@@ -599,6 +617,25 @@ class AdminController extends ChangeNotifier {
       _inventory = [];
       notifyListeners();
     }
+  }
+
+  Future<void> loadInventoryMovimientos() async {
+    try {
+      final raw = await _inventarioService.getMovimientos();
+      _inventoryMovimientos = raw
+          .map((e) => Map<String, dynamic>.from(e as Map<String, dynamic>))
+          .toList();
+      notifyListeners();
+    } catch (e) {
+      print('Error al cargar movimientos de inventario: $e');
+      _inventoryMovimientos = [];
+      notifyListeners();
+    }
+  }
+
+  /// Catálogo + kárdex al unísono (tras crear/editar/ajustar o eventos en tiempo real).
+  Future<void> _refreshInventoryAndMovimientos() async {
+    await Future.wait([loadInventory(), loadInventoryMovimientos()]);
   }
 
   Future<void> loadInventoryCategories() async {
@@ -1158,9 +1195,13 @@ class AdminController extends ChangeNotifier {
           _pendingInventoryAlerts.add(Map<String, dynamic>.from(data));
           notifyListeners();
           // Recargar inventario para que el recuadro Stock crítico se actualice al instante
-          loadInventory();
+          _refreshInventoryAndMovimientos().catchError((e) {
+            print('⚠️ Error al refrescar inventario (alerta): $e');
+          });
         } else if (tipo.contains('inventario') || tipo.contains('stock')) {
-          loadInventory();
+          _refreshInventoryAndMovimientos().catchError((e) {
+            print('⚠️ Error al refrescar inventario (alerta): $e');
+          });
         }
       } catch (e) {
         print('Error al procesar alerta en admin: $e');
@@ -1701,19 +1742,21 @@ class AdminController extends ChangeNotifier {
         '🔄 AdminController: Iniciando carga de tickets... (force: $force)',
       );
 
-      // Agregar timeout para evitar que la carga se quede colgada
+      final ticketsAnteriores = List<payment_models.BillModel>.from(_tickets);
       _tickets = await _ticketsService.listarTickets().timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 20),
         onTimeout: () {
-          print('⏰ AdminController: Timeout al cargar tickets');
-          return <payment_models.BillModel>[];
+          print(
+            '⏰ AdminController: Timeout al cargar tickets — se conserva la lista anterior',
+          );
+          return ticketsAnteriores;
         },
       );
       print('✅ AdminController: ${_tickets.length} tickets cargados');
     } catch (e, stackTrace) {
       print('❌ AdminController: Error al cargar tickets: $e');
       print('Stack trace: $stackTrace');
-      _tickets = [];
+      // No vaciar la lista: evita pantalla en blanco por fallo puntual de red/servidor
     } finally {
       _isLoadingTickets = false;
       // Siempre notificar al final para mostrar los datos cargados
@@ -2949,6 +2992,11 @@ class AdminController extends ChangeNotifier {
         print('⚠️ Error al recargar inventario en Panel de control: $e');
         return null;
       });
+    } else if (view == 'inventory') {
+      _refreshInventoryAndMovimientos().catchError((e) {
+        print('⚠️ Error al recargar inventario y movimientos: $e');
+        return null;
+      });
     } else if (view == 'tickets') {
       print(
         '🔄 AdminController: Cambiando a vista tickets, forzando recarga...',
@@ -3243,8 +3291,8 @@ class AdminController extends ChangeNotifier {
           },
       };
       await _inventarioService.createItem(data);
-      // Recargar inventario y categorías desde el backend para asegurar sincronización
-      await loadInventory();
+      // Recargar inventario, movimientos y categorías desde el backend
+      await _refreshInventoryAndMovimientos();
       // Si la categoría no estaba en la lista, agregarla
       final normalizedCategory = _normalizeInventoryCategory(item.category);
       if (!_inventoryCategories.contains(normalizedCategory) &&
@@ -3292,8 +3340,7 @@ class AdminController extends ChangeNotifier {
         throw Exception('ID de inventario inválido: $itemId');
       }
       await _inventarioService.eliminarItem(id);
-      // Recargar inventario desde el backend para asegurar sincronización
-      await loadInventory();
+      await _refreshInventoryAndMovimientos();
       // También recargar productos para actualizar las recetas que usaban este item
       await loadMenuItems();
     } catch (e) {
@@ -3487,7 +3534,7 @@ class AdminController extends ChangeNotifier {
       await _productosService.updateProducto(itemId, data);
       // Recargar productos e inventario desde el backend para asegurar sincronización
       // Los ingredientes personalizados se crearán automáticamente en el inventario
-      await Future.wait([loadMenuItems(), loadInventory()]);
+      await Future.wait([loadMenuItems(), _refreshInventoryAndMovimientos()]);
     } catch (e) {
       rethrow;
     }
@@ -4056,18 +4103,18 @@ class AdminController extends ChangeNotifier {
     }
   }
 
-  // Cargar áreas únicas desde las mesas existentes
+  /// Reconstruye la lista de áreas desde las mesas (fuente de verdad) y conserva áreas nuevas aún sin mesas.
   void _loadAreasFromTables() {
-    final areasFromTables = _tables
-        .where((t) => t.section != null && t.section!.isNotEmpty)
-        .map((t) => t.section!)
-        .toSet();
-
-    for (final area in areasFromTables) {
-      if (!_tableAreas.contains(area)) {
-        _tableAreas.add(area);
-      }
-    }
+    final fromTables = _tables
+        .where((t) => t.section != null && t.section!.trim().isNotEmpty)
+        .map((t) => t.section!.trim())
+        .toSet()
+        .toList()
+      ..sort();
+    final extras = _tableAreas
+        .where((a) => a != 'todos' && !fromTables.contains(a))
+        .toList();
+    _tableAreas = ['todos', ...fromTables, ...extras];
   }
 
   // Agregar nueva categoría de inventario (solo en memoria, para compatibilidad)
@@ -4091,6 +4138,160 @@ class AdminController extends ChangeNotifier {
     final categorias = await _inventarioService.createCategory(trimmed);
     _inventoryCategories = ['todos', ...categorias];
     notifyListeners();
+  }
+
+  Future<void> deleteInventoryCategory(String categoryName) async {
+    final trimmed = categoryName.trim();
+    if (trimmed.isEmpty || trimmed.toLowerCase() == 'todos') return;
+    final categorias = await _inventarioService.deleteCategory(trimmed);
+    _inventoryCategories = ['todos', ...categorias];
+    if (_selectedInventoryCategory.toLowerCase() == trimmed.toLowerCase()) {
+      _selectedInventoryCategory = 'todos';
+    }
+    await _refreshInventoryAndMovimientos();
+    notifyListeners();
+  }
+
+  void setInventoryExportDateRange(DateTime start, DateTime end) {
+    _inventoryExportStart = start;
+    _inventoryExportEnd = end.isBefore(start) ? start : end;
+    notifyListeners();
+  }
+
+  ({DateTime start, DateTime end, String slug}) _inventoryPeriodRange(String period) {
+    final now = date_utils.AppDateUtils.nowCdmx();
+    final endDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    switch (period) {
+      case 'personalizado':
+        final s = _inventoryExportStart ?? DateTime(now.year, now.month, now.day);
+        var e = _inventoryExportEnd ?? endDay;
+        if (e.isBefore(s)) e = s;
+        return (start: s, end: e, slug: 'personalizado');
+      case 'week':
+        final start = endDay.subtract(const Duration(days: 6));
+        return (start: DateTime(start.year, start.month, start.day), end: endDay, slug: 'semana');
+      case 'month':
+        final start = DateTime(now.year, now.month, 1);
+        return (start: start, end: endDay, slug: 'mes');
+      case 'day':
+      default:
+        final start = DateTime(now.year, now.month, now.day);
+        return (start: start, end: endDay, slug: 'dia');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchMovimientosForExportRange(
+    DateTime start,
+    DateTime end,
+  ) async {
+    final raw = await _inventarioService.getMovimientos(
+      desde: start.toUtc(),
+      hasta: end.toUtc(),
+      limit: 50000,
+    );
+    return raw
+        .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+        .toList();
+  }
+
+  Future<void> exportInventoryReportToCSV(String period) async {
+    final range = _inventoryPeriodRange(period);
+    final rows = await _fetchMovimientosForExportRange(range.start, range.end);
+    final buffer = StringBuffer();
+    buffer.writeln('Reporte de inventario (${range.slug})');
+    buffer.writeln('Desde,${range.start.toIso8601String()}');
+    buffer.writeln('Hasta,${range.end.toIso8601String()}');
+    buffer.writeln(
+      'IdMov,IdItem,Item,Tipo,Cantidad,Unidad,CostoUnit,Motivo,Origen,RefOrden,UsuarioId,Fecha',
+    );
+    String esc(String v) => v.replaceAll(',', ' ');
+    for (final m in rows) {
+      buffer.writeln([
+        m['id'],
+        m['inventarioItemId'],
+        esc('${m['inventarioItemNombre'] ?? ''}'),
+        m['tipo'],
+        m['cantidad'],
+        m['unidad'],
+        m['costoUnitario'],
+        esc('${m['motivo'] ?? ''}'),
+        m['origen'],
+        m['referenciaOrdenId'],
+        m['creadoPorUsuarioId'],
+        m['creadoEn'],
+      ].join(','));
+    }
+    final file = 'inventario_${range.slug}_${DateTime.now().millisecondsSinceEpoch}.csv';
+    await FileDownloadHelper.downloadCSV(buffer.toString(), file);
+  }
+
+  Future<void> exportInventoryReportToPDF(String period) async {
+    final range = _inventoryPeriodRange(period);
+    final rows = await _fetchMovimientosForExportRange(range.start, range.end);
+    final pdfDoc = pdf_widgets.Document();
+    pdfDoc.addPage(
+      pdf_widgets.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pdf_widgets.EdgeInsets.all(24),
+        build: (context) {
+          return [
+            pdf_widgets.Text(
+              'Reporte de inventario (${range.slug})',
+              style: pdf_widgets.TextStyle(
+                fontSize: 18,
+                fontWeight: pdf_widgets.FontWeight.bold,
+              ),
+            ),
+            pdf_widgets.SizedBox(height: 8),
+            pdf_widgets.Text('Desde: ${range.start.toIso8601String()}'),
+            pdf_widgets.Text('Hasta: ${range.end.toIso8601String()}'),
+            pdf_widgets.SizedBox(height: 12),
+            pdf_widgets.Table.fromTextArray(
+              headers: const [
+                'Id',
+                'Item',
+                'Tipo',
+                'Cant',
+                'Ud',
+                'Costo',
+                'Motivo',
+                'Origen',
+                'Ord',
+                'Usr',
+                'Fecha',
+              ],
+              data: rows
+                  .map(
+                    (m) => [
+                      '${m['id'] ?? ''}',
+                      (m['inventarioItemNombre'] ?? '').toString(),
+                      (m['tipo'] ?? '').toString(),
+                      (m['cantidad'] ?? '').toString(),
+                      (m['unidad'] ?? '').toString(),
+                      '${m['costoUnitario'] ?? ''}',
+                      (m['motivo'] ?? '').toString(),
+                      (m['origen'] ?? '').toString(),
+                      '${m['referenciaOrdenId'] ?? ''}',
+                      '${m['creadoPorUsuarioId'] ?? ''}',
+                      (m['creadoEn'] ?? '').toString(),
+                    ],
+                  )
+                  .toList(),
+              headerStyle: pdf_widgets.TextStyle(
+                fontWeight: pdf_widgets.FontWeight.bold,
+                fontSize: 7,
+              ),
+              cellStyle: const pdf_widgets.TextStyle(fontSize: 6),
+              cellAlignment: pdf_widgets.Alignment.centerLeft,
+            ),
+          ];
+        },
+      ),
+    );
+    await Printing.layoutPdf(
+      onLayout: (_) async => pdfDoc.save(),
+      name: 'inventario_${range.slug}_${DateTime.now().millisecondsSinceEpoch}.pdf',
+    );
   }
 
   // Cargar consumo del día desde el backend
@@ -4430,13 +4631,22 @@ class AdminController extends ChangeNotifier {
       );
     }
 
+    final comRaw = data['comensales'];
+    int? customers;
+    if (comRaw is int) {
+      customers = comRaw > 0 ? comRaw : null;
+    } else if (comRaw is num) {
+      final c = comRaw.toInt();
+      customers = c > 0 ? c : null;
+    }
+
     return TableModel(
       id: data['id'] as int,
       codigo: codigo,
       number: numero,
       status: status,
       seats: data['capacidad'] as int? ?? 4,
-      customers: null,
+      customers: customers,
       waiter: null,
       currentTotal: null,
       lastOrderTime: null,
@@ -4525,16 +4735,12 @@ class AdminController extends ChangeNotifier {
 
   Future<bool> deleteCustomCategory(String categoryName) async {
     try {
-      if (!canDeleteCategory(categoryName)) {
-        throw Exception(
-          'No se puede eliminar la categoría porque tiene productos asociados',
-        );
-      }
-
       // Obtener el ID de la categoría
       final categorias = await _categoriasService.getCategorias();
       final categoria = categorias.firstWhere(
-        (c) => (c['nombre'] as String) == categoryName,
+        (c) =>
+            ((c['nombre'] as String?) ?? '').trim().toLowerCase() ==
+            categoryName.trim().toLowerCase(),
         orElse: () => <String, dynamic>{},
       );
 
@@ -4547,8 +4753,8 @@ class AdminController extends ChangeNotifier {
       // Eliminar categoría en el backend
       await _categoriasService.eliminarCategoria(categoriaId);
 
-      // Recargar categorías desde el backend
-      await loadCategorias();
+      // Recargar categorías y menú para reflejar reasignación a "Otros"
+      await Future.wait([loadCategorias(), loadMenuItems()]);
 
       // Si la categoría eliminada estaba seleccionada, cambiar a 'todos'
       if (_selectedMenuCategory.toLowerCase() == categoryName.toLowerCase()) {

@@ -4,6 +4,7 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter/foundation.dart';
 import '../config/api_config.dart';
 import 'auth_storage.dart';
+import 'auth_service.dart';
 
 /// Estado de conexión de Socket.IO
 enum SocketConnectionState {
@@ -28,6 +29,7 @@ class SocketService {
 
   IO.Socket? _socket;
   final AuthStorage _storage = AuthStorage();
+  final AuthService _authService = AuthService();
 
   // Stream controller para el estado de conexión
   final _connectionStateController =
@@ -38,6 +40,11 @@ class SocketService {
 
   // Contador de listeners para evitar duplicados (se limpia al desconectar)
   final Map<String, int> _listenerCounts = {};
+
+  Timer? _healthCheckTimer;
+  DateTime? _lastDisconnectedAt;
+  bool _tokenRefreshInProgress = false;
+  DateTime? _lastTokenRefreshAt;
 
   /// Stream del estado de conexión
   Stream<SocketConnectionState> get connectionStateStream =>

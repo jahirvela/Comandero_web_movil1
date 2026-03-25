@@ -118,12 +118,26 @@ class InventarioService {
   }
 
   /// Obtener movimientos de inventario.
-  /// [itemId] opcional: si se pasa, solo se devuelven movimientos de ese ítem.
-  Future<List<dynamic>> getMovimientos({int? itemId}) async {
+  /// [itemId] opcional: filtra por ítem. [desde]/[hasta] en UTC. [limit] hasta 50000 en servidor.
+  Future<List<dynamic>> getMovimientos({
+    int? itemId,
+    DateTime? desde,
+    DateTime? hasta,
+    int? limit,
+  }) async {
     try {
-      final path = itemId != null
-          ? '/inventario/movimientos?itemId=$itemId'
-          : '/inventario/movimientos';
+      final qs = <String>[];
+      if (itemId != null) qs.add('itemId=$itemId');
+      if (desde != null) {
+        qs.add('desde=${Uri.encodeComponent(desde.toUtc().toIso8601String())}');
+      }
+      if (hasta != null) {
+        qs.add('hasta=${Uri.encodeComponent(hasta.toUtc().toIso8601String())}');
+      }
+      if (limit != null) qs.add('limit=$limit');
+      final path = qs.isEmpty
+          ? '/inventario/movimientos'
+          : '/inventario/movimientos?${qs.join('&')}';
       final response = await _api.get(path);
       if (response.statusCode == 200) {
         return response.data['data'] ?? [];
@@ -180,6 +194,27 @@ class InventarioService {
     } on DioException catch (e) {
       if (e.response != null) {
         final msg = e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error al crear categoría';
+        throw Exception(msg.toString());
+      }
+      rethrow;
+    }
+  }
+
+  /// Eliminar categoría de inventario por nombre (también reasigna ítems a "Otros" en backend).
+  Future<List<String>> deleteCategory(String nombre) async {
+    try {
+      final encoded = Uri.encodeComponent(nombre.trim());
+      final response = await _api.delete('/inventario/categorias/$encoded');
+      if (response.statusCode == 200) {
+        final data = response.data['data'];
+        if (data is List) {
+          return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+        }
+      }
+      throw Exception('El servidor no devolvió la lista de categorías');
+    } on DioException catch (e) {
+      if (e.response != null) {
+        final msg = e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error al eliminar categoría';
         throw Exception(msg.toString());
       }
       rethrow;

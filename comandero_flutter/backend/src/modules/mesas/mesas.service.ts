@@ -66,12 +66,13 @@ export const actualizarMesaExistente = async (id: number, input: ActualizarMesaI
     throw notFound('Mesa no encontrada');
   }
   await actualizarMesa(id, {
-    codigo: input.codigo,
-    nombre: input.nombre ?? null,
-    capacidad: input.capacidad ?? null,
-    ubicacion: input.ubicacion ?? null,
-    estadoMesaId: input.estadoMesaId ?? null,
-    activo: input.activo
+    ...(input.codigo !== undefined ? { codigo: input.codigo } : {}),
+    ...(input.nombre !== undefined ? { nombre: input.nombre } : {}),
+    ...(input.capacidad !== undefined ? { capacidad: input.capacidad } : {}),
+    ...(input.ubicacion !== undefined ? { ubicacion: input.ubicacion } : {}),
+    ...(input.comensales !== undefined ? { comensales: input.comensales } : {}),
+    ...(input.estadoMesaId !== undefined ? { estadoMesaId: input.estadoMesaId } : {}),
+    ...(input.activo !== undefined ? { activo: input.activo } : {})
   });
   const mesa = await obtenerMesa(id);
   emitTableUpdated(mesa);

@@ -7,6 +7,21 @@ import '../../../controllers/admin_controller.dart';
 import '../../../services/configuracion_service.dart';
 import '../../../services/impresoras_service.dart';
 import '../../../utils/app_colors.dart';
+import '../../../utils/plantilla_ticket_friendly.dart';
+
+void _insertAtCursorOrEnd(TextEditingController c, String snippet) {
+  final t = c.text;
+  var start = c.selection.start;
+  var end = c.selection.end;
+  if (start < 0 || start > t.length) start = t.length;
+  if (end < 0 || end > t.length) end = t.length;
+  final newText = t.replaceRange(start, end, snippet);
+  final off = start + snippet.length;
+  c.value = TextEditingValue(
+    text: newText,
+    selection: TextSelection.collapsed(offset: off),
+  );
+}
 
 /// Mensaje legible para errores al generar clave (red, CORS, servidor, etc.).
 String _mensajeErrorGenerarClave(Object e) {
@@ -1235,6 +1250,7 @@ class _PlantillaTicketsCardContentState
   late final TextEditingController _lineaItemController;
   bool _initialized = false;
   String _lastTipo = '';
+  String _lastPlantillaTipo = '';
 
   @override
   void initState() {
@@ -1252,10 +1268,17 @@ class _PlantillaTicketsCardContentState
       _initialized = false;
     }
     final p = c.plantillaTicket;
-    if (p != null && !c.isLoadingPlantillaTicket && !_initialized) {
+    if (p != null &&
+        !c.isLoadingPlantillaTicket &&
+        !_initialized &&
+        p.tipoDocumento == c.selectedTipoPlantilla) {
       _initialized = true;
-      _contenidoController.text = p.contenido;
-      _lineaItemController.text = p.plantillaLineaItem ?? '';
+      _lastPlantillaTipo = p.tipoDocumento;
+      _contenidoController.text =
+          PlantillaTicketFriendly.contenidoTecnicoAFriendly(p.contenido);
+      _lineaItemController.text = PlantillaTicketFriendly.lineaTecnicaAFriendly(
+        p.plantillaLineaItem,
+      );
     }
   }
 
@@ -1269,18 +1292,67 @@ class _PlantillaTicketsCardContentState
   void _syncFromPlantilla(PlantillaImpresionModel? p) {
     if (p == null || _initialized) return;
     _initialized = true;
-    _contenidoController.text = p.contenido;
-    _lineaItemController.text = p.plantillaLineaItem ?? '';
+    _lastPlantillaTipo = p.tipoDocumento;
+    _contenidoController.text =
+        PlantillaTicketFriendly.contenidoTecnicoAFriendly(p.contenido);
+    _lineaItemController.text = PlantillaTicketFriendly.lineaTecnicaAFriendly(
+      p.plantillaLineaItem,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
     final isDesktop = widget.isDesktop;
-    if (c.selectedTipoPlantilla != _lastTipo)
+    const camposContenido = <String>[
+      'campo nombre del restaurante',
+      'campo direccion',
+      'campo telefono',
+      'campo rfc',
+      'campo titulo',
+      'campo fecha y hora',
+      'campo folio',
+      'campo mesa',
+      'campo cliente',
+      'campo impreso por',
+      'campo metodo de pago',
+      'campo lista de productos',
+      'campo subtotal',
+      'campo descuento',
+      'campo iva',
+      'campo linea iva',
+      'campo total',
+      'campo gracias',
+      'campo vuelva pronto',
+      'campo linea separadora',
+      'campo linea guiones',
+      'campo moneda',
+    ];
+    const camposLineaItem = <String>[
+      'campo cantidad',
+      'campo descripcion producto',
+      'campo tamano',
+      'campo moneda',
+      'campo total',
+    ];
+    const camposFormato = <String>[
+      '(inicio centrado)',
+      '(fin centrado)',
+      '(inicio negrita)',
+      '(fin negrita)',
+    ];
+    if (c.selectedTipoPlantilla != _lastTipo) {
       _lastTipo = c.selectedTipoPlantilla;
+      _initialized = false;
+      _lastPlantillaTipo = '';
+    }
     final p = c.plantillaTicket;
-    if (p != null && !c.isLoadingPlantillaTicket) _syncFromPlantilla(p);
+    if (p != null &&
+        !c.isLoadingPlantillaTicket &&
+        p.tipoDocumento == c.selectedTipoPlantilla &&
+        _lastPlantillaTipo != p.tipoDocumento) {
+      _syncFromPlantilla(p);
+    }
     final labelActual =
         AdminController.tiposPlantilla.firstWhere(
           (e) => e['tipo'] == c.selectedTipoPlantilla,
@@ -1312,9 +1384,6 @@ class _PlantillaTicketsCardContentState
         ],
       );
     }
-    const placeholdersHelp =
-        'Placeholders del sistema: {{NOMBRE_RESTAURANTE}}, {{DIRECCION}}, {{TELEFONO}}, {{RFC}}, {{TITULO}}, {{FECHA}}, {{FOLIO}}, {{MESA}}, {{CLIENTE}}, {{IMPRESO_POR}}, {{METODO_PAGO}}, {{ITEMS}}, {{SEPARADOR}}, {{GUION}}, {{MONEDA}}, {{SUBTOTAL}}, {{DESCUENTO}}, {{IVA}}, {{IVA_LINE}}, {{TOTAL}}, {{GRACIAS}}, {{VUELVA}}. '
-        'También puede usar texto fijo desde la plantilla: escriba {{Su_Texto_Aquí}} (con guiones bajos) y se imprimirá como "Su Texto Aquí" (sin llaves, con espacios). Ejemplo: {{Cafecito_Caliente}} → Cafecito Caliente. Marcadores: [CENTRAR], [/CENTRAR], [NEGRITA], [/NEGRITA].';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1336,7 +1405,7 @@ class _PlantillaTicketsCardContentState
         ),
         const SizedBox(height: 8),
         Text(
-          'Elija el tipo: cobro (general), en mesa, para llevar, cuenta dividida o comanda. Al imprimir se usa la plantilla que corresponda; si no hay una guardada, se usa "Ticket de cobro (general)". Use los placeholders entre {{}}. El ancho de {{SEPARADOR}} y {{GUION}} se adapta al papel.',
+          'Elija el tipo de ticket (cobro general, mesa, para llevar, etc.). Si no hay plantilla guardada para ese tipo, se usa la de cobro general.',
           style: TextStyle(
             fontSize: isDesktop ? 14 : 13,
             color: AppColors.textSecondary,
@@ -1376,60 +1445,368 @@ class _PlantillaTicketsCardContentState
           minLines: 12,
           decoration: InputDecoration(
             labelText: 'Contenido: $labelActual',
-            hintText: 'Una línea por fila. Use {{FOLIO}}, {{ITEMS}}, etc.',
+            hintText: 'Escriba texto normal. Use palabras como campo nombre del restaurante o campo total para datos automáticos.',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             alignLabelWithHint: true,
           ),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          style: TextStyle(fontSize: isDesktop ? 14 : 13),
         ),
         const SizedBox(height: 8),
         TextField(
           controller: _lineaItemController,
-          maxLines: 1,
+          maxLines: 2,
+          minLines: 1,
           decoration: InputDecoration(
             labelText: 'Formato línea de ítem (opcional)',
-            hintText: 'Ej: {{CANT}}  {{DESCRIPCION}}  {{TOTAL}}',
+            hintText:
+                'Ejemplo: campo cantidad  campo descripcion producto  campo moneda campo total',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          style: TextStyle(fontSize: isDesktop ? 14 : 13),
         ),
         const SizedBox(height: 8),
-        Text(
-          placeholdersHelp,
-          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: Text(
+            'Ayuda breve',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          children: [
+            Text(
+              'Lo que escriba se imprime tal cual. Para datos automáticos use frases con campo, por ejemplo: campo nombre del restaurante, campo fecha y hora, campo total. '
+              'Para formato use (inicio centrado) y (fin centrado), o (inicio negrita) y (fin negrita). '
+              'Si necesita un campo personalizado: campo personalizado: Mi_Texto_Así.',
+              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Campos disponibles',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Puede copiar y pegar estos textos en la plantilla:',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tocar para insertar en Contenido:',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              LayoutBuilder(
+                builder: (ctx, constraints) {
+                  final columns = constraints.maxWidth < 420 ? 1 : 2;
+                  final spacingTotal = columns == 1 ? 0.0 : 6.0;
+                  final chipWidth = (constraints.maxWidth - spacingTotal) / columns;
+                  return Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final campo in camposContenido)
+                        SizedBox(
+                          width: chipWidth,
+                          child: ActionChip(
+                            label: Text(
+                              campo,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: () => _insertAtCursorOrEnd(
+                              _contenidoController,
+                              '$campo ',
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ejemplo rápido (contenido):',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SelectableText(
+                'campo nombre del restaurante\n'
+                'campo direccion\n'
+                'campo total',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 10),
+              SelectableText(
+                'campo nombre del restaurante\n'
+                'campo direccion\n'
+                'campo telefono\n'
+                'campo rfc\n'
+                'campo titulo\n'
+                'campo fecha y hora\n'
+                'campo folio\n'
+                'campo mesa\n'
+                'campo cliente\n'
+                'campo impreso por\n'
+                'campo metodo de pago\n'
+                'campo lista de productos\n'
+                'campo subtotal\n'
+                'campo descuento\n'
+                'campo iva\n'
+                'campo linea iva\n'
+                'campo total\n'
+                'campo gracias\n'
+                'campo vuelva pronto\n'
+                'campo linea separadora\n'
+                'campo linea guiones\n'
+                'campo moneda',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Campos para línea de ítem:',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              LayoutBuilder(
+                builder: (ctx, constraints) {
+                  final columns = constraints.maxWidth < 420 ? 1 : 2;
+                  final spacingTotal = columns == 1 ? 0.0 : 6.0;
+                  final chipWidth = (constraints.maxWidth - spacingTotal) / columns;
+                  return Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final campo in camposLineaItem)
+                        SizedBox(
+                          width: chipWidth,
+                          child: ActionChip(
+                            label: Text(
+                              campo,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: () => _insertAtCursorOrEnd(
+                              _lineaItemController,
+                              '$campo ',
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ejemplo rápido (línea de ítem):',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SelectableText(
+                'campo cantidad  campo descripcion producto  campo total',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 10),
+              SelectableText(
+                'campo cantidad\n'
+                'campo descripcion producto\n'
+                'campo tamano\n'
+                'campo moneda\n'
+                'campo total',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Formato de texto:',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              LayoutBuilder(
+                builder: (ctx, constraints) {
+                  final columns = constraints.maxWidth < 420 ? 1 : 2;
+                  final spacingTotal = columns == 1 ? 0.0 : 6.0;
+                  final chipWidth = (constraints.maxWidth - spacingTotal) / columns;
+                  return Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final campo in camposFormato)
+                        SizedBox(
+                          width: chipWidth,
+                          child: ActionChip(
+                            label: Text(
+                              campo,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: () => _insertAtCursorOrEnd(
+                              _contenidoController,
+                              '$campo ',
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Ejemplo rápido (formato):',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SelectableText(
+                '(inicio negrita) campo total (fin negrita)',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                '(inicio centrado)\n'
+                '(fin centrado)\n'
+                '(inicio negrita)\n'
+                '(fin negrita)',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Campo personalizado: campo personalizado: Mi_Texto_Así',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: c.isSavingPlantillaTicket
-              ? null
-              : () async {
-                  _initialized = true;
-                  final ok = await c.savePlantillaTicket(
-                    _contenidoController.text,
-                    _lineaItemController.text.trim().isEmpty
-                        ? null
-                        : _lineaItemController.text.trim(),
-                  );
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          ok ? 'Plantilla guardada' : 'Error al guardar',
-                        ),
-                      ),
-                    );
-                  }
-                },
-          icon: c.isSavingPlantillaTicket
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.save, size: 20),
-          label: Text(
-            c.isSavingPlantillaTicket ? 'Guardando...' : 'Guardar plantilla',
-          ),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: c.isSavingPlantillaTicket
+                  ? null
+                  : () {
+                      final tipo = c.selectedTipoPlantilla;
+                      _contenidoController.text =
+                          PlantillaTicketFriendly.contenidoBaseFriendlyPorTipo(
+                            tipo,
+                          );
+                      _lineaItemController.text =
+                          PlantillaTicketFriendly.lineaItemBaseFriendlyPorTipo(
+                            tipo,
+                          );
+                    },
+              icon: const Icon(Icons.auto_fix_high, size: 18),
+              label: const Text('Cargar base legible'),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: c.isSavingPlantillaTicket
+                    ? null
+                    : () async {
+                        _initialized = true;
+                        final ok = await c.savePlantillaTicket(
+                          PlantillaTicketFriendly.contenidoFriendlyATecnico(
+                            _contenidoController.text,
+                          ),
+                          PlantillaTicketFriendly.lineaFriendlyATecnica(
+                            _lineaItemController.text,
+                          ),
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                ok ? 'Plantilla guardada' : 'Error al guardar',
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                icon: c.isSavingPlantillaTicket
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save, size: 20),
+                label: Text(
+                  c.isSavingPlantillaTicket ? 'Guardando...' : 'Guardar plantilla',
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );

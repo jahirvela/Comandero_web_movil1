@@ -8,6 +8,7 @@ interface MesaRow extends RowDataPacket {
   nombre: string | null;
   capacidad: number | null;
   ubicacion: string | null;
+  comensales: number | null;
   estado_mesa_id: number | null;
   estado_nombre: string | null;
   activo: number;
@@ -49,6 +50,7 @@ export const listarMesas = async () => {
     nombre: row.nombre,
     capacidad: row.capacidad,
     ubicacion: row.ubicacion,
+    comensales: row.comensales != null ? Number(row.comensales) : null,
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
@@ -77,6 +79,7 @@ export const obtenerMesaPorId = async (id: number) => {
     nombre: row.nombre,
     capacidad: row.capacidad,
     ubicacion: row.ubicacion,
+    comensales: row.comensales != null ? Number(row.comensales) : null,
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
@@ -133,6 +136,7 @@ export const obtenerMesaPorCodigoIncluyendoInactivos = async (codigo: string) =>
     nombre: row.nombre,
     capacidad: row.capacidad,
     ubicacion: row.ubicacion,
+    comensales: row.comensales != null ? Number(row.comensales) : null,
     estadoMesaId: row.estado_mesa_id,
     estadoNombre: row.estado_nombre,
     activo: Boolean(row.activo),
@@ -146,6 +150,7 @@ export const crearMesa = async ({
   nombre,
   capacidad,
   ubicacion,
+  comensales,
   estadoMesaId,
   activo
 }: {
@@ -153,19 +158,21 @@ export const crearMesa = async ({
   nombre?: string | null;
   capacidad?: number | null;
   ubicacion?: string | null;
+  comensales?: number | null;
   estadoMesaId?: number | null;
   activo: boolean;
 }) => {
   const [result] = await pool.execute<ResultSetHeader>(
     `
-    INSERT INTO mesa (codigo, nombre, capacidad, ubicacion, estado_mesa_id, activo)
-    VALUES (:codigo, :nombre, :capacidad, :ubicacion, :estadoMesaId, :activo)
+    INSERT INTO mesa (codigo, nombre, capacidad, ubicacion, comensales, estado_mesa_id, activo)
+    VALUES (:codigo, :nombre, :capacidad, :ubicacion, :comensales, :estadoMesaId, :activo)
     `,
     {
       codigo,
       nombre: nombre ?? null,
       capacidad: capacidad ?? null,
       ubicacion: ubicacion ?? null,
+      comensales: comensales ?? null,
       estadoMesaId: estadoMesaId ?? null,
       activo: activo ? 1 : 0
     }
@@ -180,6 +187,7 @@ export const actualizarMesa = async (
     nombre,
     capacidad,
     ubicacion,
+    comensales,
     estadoMesaId,
     activo
   }: {
@@ -187,6 +195,7 @@ export const actualizarMesa = async (
     nombre?: string | null;
     capacidad?: number | null;
     ubicacion?: string | null;
+    comensales?: number | null;
     estadoMesaId?: number | null;
     activo?: boolean;
   }
@@ -209,6 +218,10 @@ export const actualizarMesa = async (
   if (ubicacion !== undefined) {
     fields.push('ubicacion = :ubicacion');
     params.ubicacion = ubicacion ?? null;
+  }
+  if (comensales !== undefined) {
+    fields.push('comensales = :comensales');
+    params.comensales = comensales ?? null;
   }
   if (estadoMesaId !== undefined) {
     fields.push('estado_mesa_id = :estadoMesaId');
@@ -257,7 +270,13 @@ export const cambiarEstadoMesa = async ({
     await conn.execute(
       `
       UPDATE mesa
-      SET estado_mesa_id = :estadoMesaId, actualizado_en = NOW()
+      SET estado_mesa_id = :estadoMesaId,
+          comensales = CASE
+            WHEN UPPER((SELECT nombre FROM estado_mesa WHERE id = :estadoMesaId LIMIT 1)) LIKE '%LIBRE%'
+            THEN NULL
+            ELSE comensales
+          END,
+          actualizado_en = NOW()
       WHERE id = :mesaId
       `,
       { mesaId, estadoMesaId }

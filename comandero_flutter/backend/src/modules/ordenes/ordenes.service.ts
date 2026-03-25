@@ -203,6 +203,14 @@ export const actualizarEstadoDeOrden = async (
     estadoNombreLower.includes('ready') ||
     estadoNombreLower === 'listo_para_recoger';
 
+  /** Cobro / cierre de cuenta: si la orden no pasó por "listo", el descuento se aplica aquí (idempotente por orden). */
+  const esEstadoCobroOCierre =
+    estadoNombreLower.includes('pagad') ||
+    estadoNombreLower.includes('cobrad') ||
+    estadoNombreLower.includes('liquid') ||
+    estadoNombreLower.includes('cerrad') ||
+    estadoNombreLower.includes('facturad');
+
   if (esEstadoListo && !input.forzarSinStock) {
     const { verificarStockDisponibleParaOrden } = await import('../inventario/inventario.service.js');
     const { ok, faltantes } = await verificarStockDisponibleParaOrden(id);
@@ -311,11 +319,10 @@ export const actualizarEstadoDeOrden = async (
     }, '⚠️ No se puede emitir alerta de preparación: faltan datos de usuario');
   }
   
-  // Descontar inventario automáticamente cuando se marca como "listo"
-  if (esEstadoListo) {
+  // Descontar inventario por recetas: al "listo" (tras validar stock) y/o al cobrar/cerrar (si no hubo listo; idempotente)
+  if (esEstadoListo || esEstadoCobroOCierre) {
     try {
       const { descontarInventarioPorReceta } = await import('../inventario/inventario.service.js');
-      // Ejecutar descuento automático en segundo plano (no bloquear la actualización del estado)
       descontarInventarioPorReceta(orden.id, usuarioId ?? undefined).catch((error) => {
         logger.error({ err: error, ordenId: orden.id }, '❌ Error en descuento automático de inventario');
       });

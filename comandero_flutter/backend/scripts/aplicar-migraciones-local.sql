@@ -250,6 +250,19 @@ PREPARE stmt8c FROM @sql8c;
 EXECUTE stmt8c;
 DEALLOCATE PREPARE stmt8c;
 
+-- -----------------------------------------------------------------------------
+-- 9) mesa: comensales (persistido para mesero; se limpia al pasar mesa a LIBRE)
+-- -----------------------------------------------------------------------------
+SET @sql9 = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mesa' AND COLUMN_NAME = 'comensales') = 0,
+  'ALTER TABLE mesa ADD COLUMN comensales SMALLINT UNSIGNED NULL DEFAULT NULL COMMENT ''Personas en la mesa (informativo)'' AFTER ubicacion',
+  'SELECT 1'
+);
+PREPARE stmt9 FROM @sql9;
+EXECUTE stmt9;
+DEALLOCATE PREPARE stmt9;
+
 -- =============================================================================
 -- Fin de migraciones. Reinicia el backend y prueba en local.
 -- =============================================================================
