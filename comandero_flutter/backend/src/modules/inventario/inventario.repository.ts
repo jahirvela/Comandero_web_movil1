@@ -671,7 +671,31 @@ export const existeMovimientoConReferenciaOrden = async (ordenId: number): Promi
   return Array.isArray(rows) && rows.length > 0;
 };
 
-export const listarMovimientos = async (inventarioItemId?: number) => {
+export type ListarMovimientosParams = {
+  inventarioItemId?: number;
+  desde?: Date;
+  hasta?: Date;
+  limit?: number;
+};
+
+export const listarMovimientos = async (params?: ListarMovimientosParams) => {
+  const limit = Math.min(Math.max(params?.limit ?? 200, 1), 50000);
+  const conditions: string[] = [];
+  const queryParams: Record<string, unknown> = {};
+  if (params?.inventarioItemId != null) {
+    conditions.push('m.inventario_item_id = :inventarioItemId');
+    queryParams.inventarioItemId = params.inventarioItemId;
+  }
+  if (params?.desde != null) {
+    conditions.push('m.creado_en >= :desde');
+    queryParams.desde = params.desde;
+  }
+  if (params?.hasta != null) {
+    conditions.push('m.creado_en <= :hasta');
+    queryParams.hasta = params.hasta;
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
   const [rows] = await pool.query<MovimientoRow[]>(
     `
     SELECT
@@ -680,11 +704,11 @@ export const listarMovimientos = async (inventarioItemId?: number) => {
       i.unidad
     FROM movimiento_inventario m
     JOIN inventario_item i ON i.id = m.inventario_item_id
-    ${inventarioItemId ? 'WHERE m.inventario_item_id = :inventarioItemId' : ''}
+    ${where}
     ORDER BY m.creado_en DESC
-    LIMIT 200
+    LIMIT ${limit}
     `,
-    inventarioItemId ? { inventarioItemId } : undefined
+    Object.keys(queryParams).length > 0 ? queryParams : undefined
   );
 
   return rows.map((row) => ({
@@ -734,6 +758,30 @@ export const crearCategoriaInventario = async (nombre: string): Promise<string[]
   } catch (error: any) {
     throw error;
   }
+  return obtenerCategoriasUnicas();
+};
+
+/** Elimina una categoría de inventario y reasigna ítems activos a "Otros". */
+export const eliminarCategoriaInventario = async (nombre: string): Promise<string[]> => {
+  await ensureInventarioCategoriaTableExists();
+  const n = nombre.trim();
+  if (!n) return obtenerCategoriasUnicas();
+
+  await withTransaction(async (conn) => {
+    await conn.execute(
+      `DELETE FROM inventario_categoria WHERE nombre = :nombre`,
+      { nombre: n }
+    );
+    await conn.execute(
+      `
+      UPDATE inventario_item
+      SET categoria = 'Otros', actualizado_en = NOW()
+      WHERE activo = 1 AND categoria = :nombre
+      `,
+      { nombre: n }
+    );
+  });
+
   return obtenerCategoriasUnicas();
 };
 

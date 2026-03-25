@@ -1493,8 +1493,7 @@ class TableView extends StatelessWidget {
               final customers = int.tryParse(customersController.text) ?? 0;
               if (customers >= 0) {
                 try {
-                  await controller.changeTableStatus(table.id, table.status);
-                  _updateTableCustomers(controller, table.id, customers);
+                  await controller.updateTableCustomers(table.id, customers);
                   if (dialogContext.mounted) Navigator.of(dialogContext).pop();
                 } catch (e) {
                   if (dialogContext.mounted) {
@@ -1527,15 +1526,6 @@ class TableView extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  void _updateTableCustomers(
-    MeseroController controller,
-    int tableId,
-    int customers,
-  ) {
-    // Actualizar comensales en la mesa
-    controller.updateTableCustomers(tableId, customers);
   }
 
   void _showClearHistoryDialog(

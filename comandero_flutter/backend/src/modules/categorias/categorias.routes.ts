@@ -18,9 +18,9 @@ const lecturaRoles = requireRoles('administrador', 'capitan', 'mesero', 'cociner
 categoriasRouter.get('/', lecturaRoles, listarCategoriasController);
 categoriasRouter.get('/:id', lecturaRoles, obtenerCategoriaController);
 
-categoriasRouter.post('/', requireRoles('administrador', 'capitan'), crearCategoriaController);
-categoriasRouter.put('/:id', requireRoles('administrador', 'capitan'), actualizarCategoriaController);
-categoriasRouter.delete('/:id', requireRoles('administrador'), eliminarCategoriaController);
+categoriasRouter.post('/', requireRoles('administrador', 'capitan', 'gerente'), crearCategoriaController);
+categoriasRouter.put('/:id', requireRoles('administrador', 'capitan', 'gerente'), actualizarCategoriaController);
+categoriasRouter.delete('/:id', requireRoles('administrador', 'capitan', 'gerente'), eliminarCategoriaController);
 
 export default categoriasRouter;
 

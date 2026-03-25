@@ -15,7 +15,8 @@ import {
   registrarMovimientoInventario,
   obtenerMovimientos,
   obtenerCategorias,
-  crearCategoriaInventario
+  crearCategoriaInventario,
+  eliminarCategoriaInventario
 } from './inventario.service.js';
 import {
   emitInventoryCreated,
@@ -129,8 +130,24 @@ export const listarMovimientosController = async (
   next: NextFunction
 ) => {
   try {
-    const itemId = req.query.itemId ? Number(req.query.itemId) : undefined;
-    const movimientos = await obtenerMovimientos(itemId);
+    const itemIdRaw = req.query.itemId ? Number(req.query.itemId) : undefined;
+    const limitRaw = req.query.limit != null ? Number(req.query.limit) : undefined;
+    let desde: Date | undefined;
+    let hasta: Date | undefined;
+    if (req.query.desde) {
+      const d = new Date(String(req.query.desde));
+      if (!Number.isNaN(d.getTime())) desde = d;
+    }
+    if (req.query.hasta) {
+      const d = new Date(String(req.query.hasta));
+      if (!Number.isNaN(d.getTime())) hasta = d;
+    }
+    const movimientos = await obtenerMovimientos({
+      inventarioItemId: itemIdRaw != null && Number.isFinite(itemIdRaw) ? itemIdRaw : undefined,
+      desde,
+      hasta,
+      limit: limitRaw != null && Number.isFinite(limitRaw) ? limitRaw : undefined
+    });
     res.json({ data: movimientos });
   } catch (error) {
     next(error);
@@ -156,6 +173,20 @@ export const crearCategoriaInventarioController = async (req: Request, res: Resp
     }
     const categorias = await crearCategoriaInventario(parsed.data.nombre);
     res.status(201).json({ data: categorias });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const eliminarCategoriaInventarioController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const nombre = decodeURIComponent(String(req.params.nombre ?? '')).trim();
+    if (!nombre) {
+      res.status(400).json({ message: 'Nombre de categoría inválido' });
+      return;
+    }
+    const categorias = await eliminarCategoriaInventario(nombre);
+    res.json({ data: categorias });
   } catch (error) {
     next(error);
   }

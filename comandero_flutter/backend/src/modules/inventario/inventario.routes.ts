@@ -11,7 +11,8 @@ import {
   registrarMovimientoController,
   listarMovimientosController,
   listarCategoriasController,
-  crearCategoriaInventarioController
+  crearCategoriaInventarioController,
+  eliminarCategoriaInventarioController
 } from './inventario.controller.js';
 
 const inventarioRouter = Router();
@@ -19,7 +20,7 @@ const inventarioRouter = Router();
 inventarioRouter.use(authenticate);
 
 const lecturaRoles = requireRoles('administrador', 'capitan', 'cocinero', 'gerente');
-const gestionRoles = requireRoles('administrador', 'capitan');
+const gestionRoles = requireRoles('administrador', 'capitan', 'gerente');
 
 inventarioRouter.get('/items', lecturaRoles, listarInsumosController);
 inventarioRouter.get('/items/por-codigo-barras', lecturaRoles, obtenerInsumoPorCodigoBarrasController);
@@ -30,6 +31,7 @@ inventarioRouter.delete('/items/:id', requireRoles('administrador'), eliminarIns
 
 inventarioRouter.get('/categorias', lecturaRoles, listarCategoriasController);
 inventarioRouter.post('/categorias', gestionRoles, crearCategoriaInventarioController);
+inventarioRouter.delete('/categorias/:nombre', gestionRoles, eliminarCategoriaInventarioController);
 
 inventarioRouter.get('/movimientos', lecturaRoles, listarMovimientosController);
 inventarioRouter.post('/movimientos', gestionRoles, registrarMovimientoController);

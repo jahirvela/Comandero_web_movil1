@@ -2,7 +2,7 @@ import { getEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { getCharsPerLine, type PaperWidth } from '../../config/printers.config.js';
 import { createPrinter, createPrinterFromConfig } from '../tickets/tickets.printer.js';
-import { formatMxLocale, nowMx } from '../../config/time.js';
+import { formatMxNowAmPm, nowMx } from '../../config/time.js';
 import type { OrdenDetalle } from '../../types/ordenes.js';
 
 /** Parte un texto en líneas por ancho máximo (corte por espacios cuando sea posible). */
@@ -56,7 +56,8 @@ export const generarContenidoComanda = (orden: OrdenDetalle, paperWidth: PaperWi
   contenido += izquierda;
   contenido += `${'='.repeat(w)}\n`;
   contenido += `Folio: ${folio}\n`;
-  contenido += `Fecha: ${formatMxLocale(nowMx(), { dateStyle: 'short', timeStyle: 'short' })}\n`;
+  // Misma hora que tickets (CDMX, AM/PM); evita desfaces de Intl en el servidor.
+  contenido += `Fecha: ${formatMxNowAmPm()}\n`;
 
   if (orden.mesaCodigo) {
     contenido += `Mesa: ${orden.mesaCodigo}\n`;

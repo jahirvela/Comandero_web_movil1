@@ -13,6 +13,7 @@ import 'ingredient_consumption_view.dart';
 import 'critical_notes_view.dart';
 import 'station_management_view.dart';
 import 'staff_management_view.dart';
+import '../../widgets/refresh_on_resume.dart';
 
 // El tipo de alerta (OldKitchenAlert) está definido en CocineroController
 // Como no podemos importarlo directamente, usamos el tipo que devuelve controller.alerts
@@ -48,21 +49,31 @@ class CocineroApp extends StatelessWidget {
               final isTablet = constraints.maxWidth > 600;
               final isDesktop = constraints.maxWidth > 900;
 
-              return Scaffold(
-                backgroundColor: AppColors.background,
-                appBar: _buildAppBar(
-                  context,
-                  cocineroController,
-                  authController,
-                  isTablet,
+              return RefreshOnResume(
+                minPause: const Duration(seconds: 45),
+                onResume: () async {
+                  await cocineroController.loadOrders();
+                  final socketService = SocketService();
+                  if (!socketService.isConnected) {
+                    await socketService.connect();
+                  }
+                },
+                child: Scaffold(
+                  backgroundColor: AppColors.background,
+                  appBar: _buildAppBar(
+                    context,
+                    cocineroController,
+                    authController,
+                    isTablet,
+                  ),
+                  body: _buildBody(
+                    context,
+                    cocineroController,
+                    isTablet,
+                    isDesktop,
+                  ),
+                  floatingActionButton: _buildFloatingStatusButton(isTablet),
                 ),
-                body: _buildBody(
-                  context,
-                  cocineroController,
-                  isTablet,
-                  isDesktop,
-                ),
-                floatingActionButton: _buildFloatingStatusButton(isTablet),
               );
             },
           );

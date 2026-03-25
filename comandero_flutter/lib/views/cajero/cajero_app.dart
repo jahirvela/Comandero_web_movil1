@@ -7,6 +7,7 @@ import '../../models/payment_model.dart';
 import '../../models/admin_model.dart';
 import '../../services/payment_repository.dart';
 import '../../services/bill_repository.dart';
+import '../../services/socket_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/date_utils.dart' as date_utils;
 import '../../widgets/logout_button.dart';
@@ -35,13 +36,58 @@ class _CajeroMainViewRefresher extends StatefulWidget {
   State<_CajeroMainViewRefresher> createState() => _CajeroMainViewRefresherState();
 }
 
-class _CajeroMainViewRefresherState extends State<_CajeroMainViewRefresher> {
+class _CajeroMainViewRefresherState extends State<_CajeroMainViewRefresher>
+    with WidgetsBindingObserver {
+  DateTime? _pausedAt;
+  bool _isRunning = false;
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshBills();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _pausedAt = DateTime.now();
+      return;
+    }
+    if (state != AppLifecycleState.resumed) return;
+    final pausedAt = _pausedAt;
+    final pauseDuration = pausedAt == null
+        ? const Duration(seconds: 999)
+        : DateTime.now().difference(pausedAt);
+    if (pauseDuration < const Duration(seconds: 45)) return;
+    _run();
+  }
+
+  Future<void> _run() async {
+    if (_isRunning) return;
+    _isRunning = true;
+    try {
+      await widget.controller.refreshBills();
+      await widget.controller.loadCashClosures();
+
+      final socketService = SocketService();
+      if (!socketService.isConnected) {
+        await socketService.connect();
+      }
+    } catch (_) {
+      // Sin surfacing: lo importante es que al volver se vea actualizado.
+    } finally {
+      _isRunning = false;
+    }
   }
 
   @override
