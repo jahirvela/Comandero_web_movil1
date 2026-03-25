@@ -11,6 +11,8 @@ import '../../models/payment_model.dart' as payment_models;
 import '../../services/payment_repository.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
+import '../../widgets/refresh_on_resume.dart';
+import '../../services/socket_service.dart';
 import 'web/inventory_web_view.dart';
 import 'web/cash_closures_web_view.dart';
 import 'web/real_time_sales_web_view.dart';
@@ -62,29 +64,40 @@ class _AdminWebAppState extends State<AdminWebApp> {
               final isDesktop = constraints.maxWidth > 1200;
               final isTablet = constraints.maxWidth > 800;
 
-              return Scaffold(
-                backgroundColor: AppColors.background,
-                body: Row(
-                  children: [
-                    // Sidebar
-                    _buildSidebar(
-                      context,
-                      adminController,
-                      authController,
-                      isTablet,
-                      isDesktop,
-                    ),
+              return RefreshOnResume(
+                minPause: const Duration(seconds: 45),
+                onResume: () async {
+                  await adminController.loadAllData();
 
-                    // Main content
-                    Expanded(
-                      child: _buildMainContent(
+                  final socketService = SocketService();
+                  if (!socketService.isConnected) {
+                    await socketService.connect();
+                  }
+                },
+                child: Scaffold(
+                  backgroundColor: AppColors.background,
+                  body: Row(
+                    children: [
+                      // Sidebar
+                      _buildSidebar(
                         context,
                         adminController,
+                        authController,
                         isTablet,
                         isDesktop,
                       ),
-                    ),
-                  ],
+
+                      // Main content
+                      Expanded(
+                        child: _buildMainContent(
+                          context,
+                          adminController,
+                          isTablet,
+                          isDesktop,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },

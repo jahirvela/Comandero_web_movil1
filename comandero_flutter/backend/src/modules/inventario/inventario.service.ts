@@ -9,7 +9,8 @@ import {
   listarMovimientos,
   obtenerCategoriasUnicas,
   existeMovimientoConReferenciaOrden,
-  crearCategoriaInventario as crearCategoriaInventarioRepo
+  crearCategoriaInventario as crearCategoriaInventarioRepo,
+  eliminarCategoriaInventario as eliminarCategoriaInventarioRepo
 } from './inventario.repository.js';
 import type {
   ActualizarInsumoInput,
@@ -126,8 +127,12 @@ export const registrarMovimientoInventario = async (
   return itemDespues!;
 };
 
-export const obtenerMovimientos = (inventarioItemId?: number) =>
-  listarMovimientos(inventarioItemId);
+export const obtenerMovimientos = (opts?: {
+  inventarioItemId?: number;
+  desde?: Date;
+  hasta?: Date;
+  limit?: number;
+}) => listarMovimientos(opts);
 
 export const obtenerCategorias = async () => {
   const categorias = await obtenerCategoriasUnicas();
@@ -139,6 +144,13 @@ export const crearCategoriaInventario = async (nombre: string): Promise<string[]
   const n = nombre.trim();
   if (!n) return obtenerCategorias();
   await crearCategoriaInventarioRepo(n);
+  return obtenerCategorias();
+};
+
+export const eliminarCategoriaInventario = async (nombre: string): Promise<string[]> => {
+  const n = nombre.trim();
+  if (!n) return obtenerCategorias();
+  await eliminarCategoriaInventarioRepo(n);
   return obtenerCategorias();
 };
 

@@ -14,6 +14,7 @@ import 'menu_view.dart';
 import 'cart_view.dart';
 import 'takeaway_view.dart';
 import 'divided_account_view.dart';
+import '../../widgets/refresh_on_resume.dart';
 
 class MeseroApp extends StatelessWidget {
   final VoidCallback? onLogoutPressed;
@@ -56,17 +57,21 @@ class MeseroApp extends StatelessWidget {
               final isTablet = constraints.maxWidth > 600;
               final isDesktop = constraints.maxWidth > 900;
 
-              return Scaffold(
-                backgroundColor: AppColors.background,
-                appBar: _buildAppBar(
-                  context,
-                  meseroController,
-                  authController,
-                  isTablet,
-                  isDesktop,
+              return RefreshOnResume(
+                minPause: const Duration(seconds: 45),
+                onResume: () => meseroController.refreshAfterResume(),
+                child: Scaffold(
+                  backgroundColor: AppColors.background,
+                  appBar: _buildAppBar(
+                    context,
+                    meseroController,
+                    authController,
+                    isTablet,
+                    isDesktop,
+                  ),
+                  body: _buildBody(context, meseroController),
+                  floatingActionButton: _buildFloatingStatusButton(isTablet),
                 ),
-                body: _buildBody(context, meseroController),
-                floatingActionButton: _buildFloatingStatusButton(isTablet),
               );
             },
           );

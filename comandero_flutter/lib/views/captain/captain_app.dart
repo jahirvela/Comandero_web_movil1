@@ -11,6 +11,8 @@ import '../../utils/app_colors.dart';
 import '../../widgets/logout_button.dart';
 import '../cocinero/order_detail_modal.dart';
 import 'alert_to_kitchen_modal.dart';
+import '../../widgets/refresh_on_resume.dart';
+import '../../services/socket_service.dart';
 
 class CaptainApp extends StatefulWidget {
   const CaptainApp({super.key});
@@ -36,6 +38,12 @@ class _CaptainAppState extends State<CaptainApp> {
     // Cargar órdenes del backend para el capitán
     await _cocineroController.loadOrders();
     await _captainController.loadTables();
+
+    // Conectar después de recargar (por si el token expiró en background)
+    final socketService = SocketService();
+    if (!socketService.isConnected) {
+      await socketService.connect();
+    }
     if (mounted) {
       setState(() {
         _initialized = true;
@@ -93,7 +101,10 @@ class _CaptainAppState extends State<CaptainApp> {
                   final isTablet = constraints.maxWidth > 600;
                   final isDesktop = constraints.maxWidth > 900;
 
-                  return Scaffold(
+                return RefreshOnResume(
+                  minPause: const Duration(seconds: 45),
+                  onResume: _initializeData,
+                  child: Scaffold(
                     backgroundColor: AppColors.background,
                     appBar: _buildAppBar(
                       context,
@@ -111,7 +122,8 @@ class _CaptainAppState extends State<CaptainApp> {
                         isDesktop,
                       ),
                     ),
-                  );
+                  ),
+                );
                 },
               );
             },

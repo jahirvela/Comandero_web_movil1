@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool } from '../../db/pool.js';
 import { utcToMxISO } from '../../config/time.js';
+import { withTransaction } from '../../db/pool.js';
 
 interface CategoriaRow extends RowDataPacket {
   id: number;
@@ -117,13 +118,73 @@ export const actualizarCategoria = async (
 };
 
 export const eliminarCategoria = async (id: number) => {
-  await pool.execute(
-    `
-    UPDATE categoria
-    SET activo = 0, actualizado_en = NOW()
-    WHERE id = :id
-    `,
-    { id }
-  );
+  await withTransaction(async (conn) => {
+    const [categoriaRows] = await conn.query<CategoriaRow[]>(
+      `
+      SELECT id, nombre, activo, descripcion, creado_en, actualizado_en
+      FROM categoria
+      WHERE id = :id
+      LIMIT 1
+      `,
+      { id }
+    );
+    const categoria = categoriaRows[0];
+    if (!categoria) return;
+
+    const nombreRespaldo = 'Otros';
+    let categoriaRespaldoId: number;
+    const [respaldoRows] = await conn.query<CategoriaRow[]>(
+      `
+      SELECT id, nombre, descripcion, activo, creado_en, actualizado_en
+      FROM categoria
+      WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(:nombreRespaldo))
+      LIMIT 1
+      `,
+      { nombreRespaldo }
+    );
+
+    if (respaldoRows.length > 0) {
+      categoriaRespaldoId = respaldoRows[0].id;
+      if (!respaldoRows[0].activo) {
+        await conn.execute(
+          `
+          UPDATE categoria
+          SET activo = 1, actualizado_en = NOW()
+          WHERE id = :id
+          `,
+          { id: categoriaRespaldoId }
+        );
+      }
+    } else {
+      const [insertRespaldo] = await conn.execute<ResultSetHeader>(
+        `
+        INSERT INTO categoria (nombre, descripcion, activo)
+        VALUES (:nombre, :descripcion, 1)
+        `,
+        { nombre: nombreRespaldo, descripcion: 'Categoría de respaldo automática' }
+      );
+      categoriaRespaldoId = insertRespaldo.insertId;
+    }
+
+    if (categoriaRespaldoId !== id) {
+      await conn.execute(
+        `
+        UPDATE producto
+        SET categoria_id = :categoriaRespaldoId, actualizado_en = NOW()
+        WHERE categoria_id = :id
+        `,
+        { categoriaRespaldoId, id }
+      );
+    }
+
+    await conn.execute(
+      `
+      UPDATE categoria
+      SET activo = 0, actualizado_en = NOW()
+      WHERE id = :id
+      `,
+      { id }
+    );
+  });
 };
 
