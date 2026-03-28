@@ -3,7 +3,8 @@ import {
   crearInsumoSchema,
   actualizarInsumoSchema,
   crearMovimientoSchema,
-  crearCategoriaInventarioSchema
+  crearCategoriaInventarioSchema,
+  renombrarCategoriaInventarioSchema
 } from './inventario.schemas.js';
 import {
   obtenerInsumos,
@@ -16,7 +17,8 @@ import {
   obtenerMovimientos,
   obtenerCategorias,
   crearCategoriaInventario,
-  eliminarCategoriaInventario
+  eliminarCategoriaInventario,
+  renombrarCategoriaInventario
 } from './inventario.service.js';
 import {
   emitInventoryCreated,
@@ -171,7 +173,14 @@ export const crearCategoriaInventarioController = async (req: Request, res: Resp
       res.status(400).json({ message: msg });
       return;
     }
-    const categorias = await crearCategoriaInventario(parsed.data.nombre);
+    const { categorias, created } = await crearCategoriaInventario(parsed.data.nombre);
+    if (!created) {
+      res.status(409).json({
+        message: 'Ya existe una categoría con ese nombre (se compara sin importar mayúsculas)',
+        data: categorias
+      });
+      return;
+    }
     res.status(201).json({ data: categorias });
   } catch (error) {
     next(error);
@@ -186,6 +195,30 @@ export const eliminarCategoriaInventarioController = async (req: Request, res: R
       return;
     }
     const categorias = await eliminarCategoriaInventario(nombre);
+    res.json({ data: categorias });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const renombrarCategoriaInventarioController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const nombre = decodeURIComponent(String(req.params.nombre ?? '')).trim();
+    if (!nombre) {
+      res.status(400).json({ message: 'Nombre de categoría inválido' });
+      return;
+    }
+    const parsed = renombrarCategoriaInventarioSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.errors.map((e) => e.message).join('; ') || 'Datos inválidos';
+      res.status(400).json({ message: msg });
+      return;
+    }
+    const categorias = await renombrarCategoriaInventario(nombre, parsed.data.nuevoNombre);
     res.json({ data: categorias });
   } catch (error) {
     next(error);

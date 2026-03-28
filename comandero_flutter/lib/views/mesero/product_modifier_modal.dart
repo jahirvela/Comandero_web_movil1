@@ -8,8 +8,13 @@ import '../../services/categorias_service.dart';
 /// Basado en las imágenes 12-13 y 19-26 proporcionadas
 class ProductModifierModal extends StatefulWidget {
   final Map<String, dynamic> product;
+  final Map<String, dynamic>? initialCustomizations;
 
-  const ProductModifierModal({super.key, required this.product});
+  const ProductModifierModal({
+    super.key,
+    required this.product,
+    this.initialCustomizations,
+  });
 
   @override
   State<ProductModifierModal> createState() => _ProductModifierModalState();
@@ -17,11 +22,15 @@ class ProductModifierModal extends StatefulWidget {
   static Future<Map<String, dynamic>?> show(
     BuildContext context,
     Map<String, dynamic> product,
+    Map<String, dynamic>? initialCustomizations,
   ) async {
     return await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: true,
-      builder: (context) => ProductModifierModal(product: product),
+      builder: (context) => ProductModifierModal(
+        product: product,
+        initialCustomizations: initialCustomizations,
+      ),
     );
   }
 }
@@ -189,6 +198,25 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
         if (nombre.isNotEmpty) {
           extraPrices[nombre] = precio;
         }
+      }
+    }
+
+    final initial = widget.initialCustomizations;
+    if (initial != null) {
+      quantity = ((initial['quantity'] as num?)?.toInt() ?? quantity).clamp(1, 99);
+      selectedSauce = initial['sauce'] as String?;
+      selectedSize = initial['size'] as String? ?? selectedSize;
+      selectedSizeId = (initial['sizeId'] as num?)?.toInt() ?? selectedSizeId;
+      selectedSizePrice =
+          (initial['sizePrice'] as num?)?.toDouble() ?? selectedSizePrice;
+      selectedTemperature = initial['temperature'] as String? ?? selectedTemperature;
+      kitchenNotes = (initial['kitchenNotes'] as String?) ?? '';
+
+      final extras = (initial['extras'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList();
+      for (final name in extras) {
+        selectedExtras[name] = true;
       }
     }
   }

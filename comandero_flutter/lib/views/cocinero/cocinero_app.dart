@@ -1467,6 +1467,9 @@ class CocineroApp extends StatelessWidget {
       stream: Stream.periodic(const Duration(seconds: 1), (_) => date_utils.AppDateUtils.nowCdmx()),
       builder: (context, snapshot) {
         final elapsedTime = controller.formatElapsedTime(order.orderTime);
+        final isCompleted =
+            order.status == OrderStatus.listo ||
+            order.status == OrderStatus.listoParaRecoger;
 
     // Obtener texto del estado
     String statusText = OrderStatus.getStatusText(order.status).toUpperCase();
@@ -1521,6 +1524,10 @@ class CocineroApp extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     _buildStatusBadge(statusText, statusColor, isTablet),
+                    if (isCompleted) ...[
+                      const SizedBox(width: 8),
+                      _buildStatusBadge('COMPLETADA', Colors.green, isTablet),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 12),

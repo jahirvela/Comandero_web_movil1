@@ -14,6 +14,7 @@ import '../services/socket_service.dart';
 import '../services/alertas_service.dart';
 import '../services/kitchen_alerts_service.dart';
 import '../services/configuracion_service.dart';
+import '../services/auth_service.dart';
 import '../models/kitchen_alert.dart';
 import '../utils/date_utils.dart' as date_utils;
 
@@ -25,6 +26,8 @@ class MeseroController extends ChangeNotifier {
   final CategoriasService _categoriasService = CategoriasService();
   final AlertasService _alertasService = AlertasService();
   final ConfiguracionService _configuracionService = ConfiguracionService();
+  KitchenAlertsService? _kitchenAlertsService;
+  bool _socketListenersConfigured = false;
 
   // Estado de las mesas
   List<TableModel> _tables = [];
@@ -261,6 +264,7 @@ class MeseroController extends ChangeNotifier {
   @override
   void dispose() {
     _billRepository.removeListener(_onBillsChanged);
+    _kitchenAlertsService?.dispose();
     super.dispose();
   }
 
@@ -757,7 +761,11 @@ class MeseroController extends ChangeNotifier {
 
   // Configurar listeners de Socket.IO
   // NUEVO SISTEMA SIMPLIFICADO: Backend es fuente de verdad
-  void _setupSocketListeners() {
+  Future<void> _setupSocketListeners() async {
+    if (_socketListenersConfigured) {
+      print('ℹ️ Mesero: Listeners de Socket ya estaban configurados, omitiendo');
+      return;
+    }
     final socketService = SocketService();
     
     // Verificar que Socket.IO esté conectado antes de configurar listeners
@@ -766,19 +774,23 @@ class MeseroController extends ChangeNotifier {
       // Esperar hasta 5 segundos para que se conecte
       int attempts = 0;
       while (attempts < 10 && !socketService.isConnected) {
-        Future.delayed(const Duration(milliseconds: 500), () {});
+        await Future.delayed(const Duration(milliseconds: 500));
         attempts++;
       }
       if (!socketService.isConnected) {
         print('❌ Mesero: Socket.IO no se conectó después de esperar, intentando reconectar...');
-        socketService.connect().catchError((e) {
+        try {
+          await socketService.connect();
+        } catch (e) {
           print('❌ Mesero: Error al reconectar Socket.IO: $e');
-        });
-        return; // Los listeners se configurarán cuando se conecte
+          return; // Los listeners se configurarán en el siguiente intento
+        }
+        if (!socketService.isConnected) return;
       }
     }
     
     print('✅ Mesero: Socket.IO está conectado, configurando listeners...');
+    _socketListenersConfigured = true;
 
     // Cuando admin habilita/deshabilita un producto (o lo edita), recargar menú para reflejar cambios
     socketService.onProductoActualizado((_) {
@@ -1387,12 +1399,27 @@ class MeseroController extends ChangeNotifier {
     });
 
     // Escuchar alertas nuevas de cocina (nuevo sistema) para mostrarlas al mesero
-    final kitchenAlertsService = KitchenAlertsService(socketService);
-    kitchenAlertsService.listenNewAlerts((KitchenAlert alert) {
+    _kitchenAlertsService?.dispose();
+    _kitchenAlertsService = KitchenAlertsService(socketService);
+    _kitchenAlertsService!.listenNewAlerts((KitchenAlert alert) {
       try {
-        final mesaCodigo = alert.mesaCodigo ?? alert.tableId?.toString();
-        final createdByRole = alert.createdByRole ?? 'mesero';
+        final createdByRole =
+            (alert.createdByRole ?? '').toLowerCase().trim();
         final createdByUsername = alert.createdByUsername;
+        final isFromKitchen =
+            createdByRole == 'cocinero' || createdByRole == 'cocina';
+        final isSameMesero = createdByUsername != null &&
+            _loggedUserName != null &&
+            createdByUsername.trim().toLowerCase() ==
+                _loggedUserName!.trim().toLowerCase();
+
+        // Evitar ruido: este evento se usa principalmente para cocina/capitán.
+        // En mesero solo mostrar cuando realmente venga de cocina.
+        if (!isFromKitchen || isSameMesero) {
+          return;
+        }
+
+        final mesaCodigo = alert.mesaCodigo ?? alert.tableId?.toString();
         final senderLabel = (createdByUsername != null &&
                 createdByUsername.isNotEmpty)
             ? '$createdByUsername ($createdByRole)'
@@ -2454,12 +2481,12 @@ class MeseroController extends ChangeNotifier {
       return true;
     }).toList();
 
-    // Ordenar por fecha (más recientes primero)
+    // Orden FIFO: más antiguas primero
     historialSinDuplicados.sort((a, b) {
       try {
         final fechaA = date_utils.AppDateUtils.parseToLocal(a['date']);
         final fechaB = date_utils.AppDateUtils.parseToLocal(b['date']);
-        return fechaB.compareTo(fechaA);
+        return fechaA.compareTo(fechaB);
       } catch (e) {
         return 0;
       }
@@ -2593,6 +2620,22 @@ class MeseroController extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  /// Cierra mesa en UI local y sincroniza estado en backend.
+  /// Si falla backend, conserva el cierre local para no bloquear operación,
+  /// pero relanza error para que la UI informe al usuario.
+  Future<void> closeTableAndSync(int tableId) async {
+    closeTable(tableId);
+    try {
+      await _mesasService.updateMesa(tableId, {
+        'estado': 'libre',
+        'comensales': null,
+      });
+    } catch (e) {
+      print('❌ Mesero: Error al sincronizar cierre de mesa $tableId: $e');
+      rethrow;
+    }
   }
 
   // Cargar historial de órdenes "para llevar" desde el backend
@@ -2783,12 +2826,12 @@ class MeseroController extends ChangeNotifier {
         });
       }
 
-      // Ordenar por fecha (más recientes primero)
+      // Orden FIFO: más antiguas primero
       history.sort((a, b) {
         try {
           final fechaA = date_utils.AppDateUtils.parseToLocal(a['date']);
           final fechaB = date_utils.AppDateUtils.parseToLocal(b['date']);
-          return fechaB.compareTo(fechaA);
+          return fechaA.compareTo(fechaB);
         } catch (e) {
           return 0;
         }
@@ -3145,12 +3188,12 @@ class MeseroController extends ChangeNotifier {
         print('✅ Orden local $ordenIdLocal agregada (no está en backend aún)');
       }
 
-      // Ordenar por fecha (más recientes primero)
+      // Orden FIFO: más antiguas primero
       history.sort((a, b) {
         try {
           final fechaA = date_utils.AppDateUtils.parseToLocal(a['date']);
           final fechaB = date_utils.AppDateUtils.parseToLocal(b['date']);
-          return fechaB.compareTo(fechaA);
+          return fechaA.compareTo(fechaB);
         } catch (e) {
           return 0;
         }
@@ -5079,7 +5122,7 @@ class MeseroController extends ChangeNotifier {
         'estimatedTime': estimatedTimeMinutes,
       };
 
-      ordenCreada = await _ordenesService.createOrden(ordenData);
+      ordenCreada = await _createOrderWithSessionRecovery(ordenData);
 
       if (ordenCreada == null) {
         throw Exception('No se pudo crear la orden en el backend');
@@ -5376,6 +5419,39 @@ class MeseroController extends ChangeNotifier {
       }
 
       rethrow;
+    }
+  }
+
+  bool _isAuthRelatedError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('401') ||
+        message.contains('unauthorized') ||
+        message.contains('no autorizado');
+  }
+
+  Future<Map<String, dynamic>?> _createOrderWithSessionRecovery(
+    Map<String, dynamic> ordenData,
+  ) async {
+    try {
+      return await _ordenesService.createOrden(ordenData);
+    } catch (e) {
+      if (!_isAuthRelatedError(e)) rethrow;
+
+      final refreshToken = await _storage.read('refreshToken');
+      if (refreshToken == null || refreshToken.isEmpty) {
+        throw Exception(
+          'Tu sesión expiró. Inicia sesión de nuevo para seguir enviando órdenes.',
+        );
+      }
+
+      final refreshed = await AuthService().refreshToken(refreshToken);
+      if (!refreshed) {
+        throw Exception(
+          'Tu sesión expiró. Inicia sesión de nuevo para seguir enviando órdenes.',
+        );
+      }
+
+      return await _ordenesService.createOrden(ordenData);
     }
   }
 

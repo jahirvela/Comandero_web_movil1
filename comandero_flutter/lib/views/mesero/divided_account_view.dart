@@ -4,7 +4,6 @@ import '../../controllers/mesero_controller.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/date_utils.dart' as date_utils;
 import '../../models/table_model.dart';
-import '../../models/payment_model.dart';
 import '../../services/comandas_service.dart';
 import 'alert_to_kitchen_modal.dart';
 
@@ -50,7 +49,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
             backgroundColor: AppColors.primary,
             foregroundColor: Colors.white,
             title: Text(
-              table != null ? 'Cuenta Dividida — ${table!.displayLabel}' : 'Cuenta Dividida',
+              table != null ? 'Cuenta Dividida — ${table.displayLabel}' : 'Cuenta Dividida',
               style: TextStyle(fontSize: isTablet ? 20.0 : 18.0),
             ),
             leading: IconButton(
@@ -228,7 +227,6 @@ class _DividedAccountViewState extends State<DividedAccountView> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isDesktop = constraints.maxWidth > 900;
         final isWide = constraints.maxWidth > 1200;
         
         // En pantallas grandes, mostrar dos columnas (pedido actual | historial)
@@ -1150,9 +1148,6 @@ class _DividedAccountViewState extends State<DividedAccountView> {
     if (confirm != true) return;
 
     try {
-      // Copiar los IDs de items antes de enviar (para evitar problemas con la lista modificada)
-      final itemIds = personItems.map((item) => item.id).toList();
-      
       // Enviar solo los items de esta persona específica con el nombre de la persona
       // NOTA: El controller NO debe limpiar el carrito automáticamente para cuenta dividida
       await controller.sendOrderToKitchen(
@@ -1597,7 +1592,6 @@ class _DividedAccountViewState extends State<DividedAccountView> {
           
           final personId = persons.keys.elementAt(index);
           final personName = persons[personId]!;
-          final personItems = controller.getItemsForPerson(personId);
           final isSelected = _selectedPersonId == personId;
           
           return Padding(
@@ -1649,12 +1643,23 @@ class _DividedAccountViewState extends State<DividedAccountView> {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.of(dialogContext).pop();
               // Resetear el modo dividido para esta mesa
               controller.resetDividedAccountModeForTable(table.id.toString());
-              // Cerrar la mesa
-              controller.closeTable(table.id);
+              // Cerrar la mesa y sincronizar
+              try {
+                await controller.closeTableAndSync(table.id);
+              } catch (_) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('La mesa se cerró localmente, pero no se pudo sincronizar con servidor.'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                }
+              }
               // Regresar al plano de mesas
               controller.setCurrentView('floor');
               if (context.mounted) {
@@ -2216,7 +2221,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
       try {
         final fechaA = date_utils.AppDateUtils.parseToLocal(a['date'] ?? '1970-01-01');
         final fechaB = date_utils.AppDateUtils.parseToLocal(b['date'] ?? '1970-01-01');
-        return fechaB.compareTo(fechaA);
+        return fechaA.compareTo(fechaB);
       } catch (e) {
         return 0;
       }

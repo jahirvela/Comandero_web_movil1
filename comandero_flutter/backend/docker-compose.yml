@@ -1,0 +1,31 @@
+# MySQL solo para desarrollo local.
+# Requisitos: Docker Desktop (Windows) instalado y en ejecución.
+#
+# 1) En esta carpeta (backend), el archivo .env debe tener DATABASE_PASSWORD y DATABASE_NAME.
+# 2) Levantar base de datos:
+#      npm run db:up
+#    o: docker compose up -d
+# 3) Primera vez: aplicar esquema si hace falta → npm run migrate:local
+# 4) Arrancar API → npm run dev
+#
+# Parar: npm run db:down
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: comandero-mysql-dev
+    restart: unless-stopped
+    ports:
+      - "${DATABASE_PORT:-3306}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DATABASE_PASSWORD}
+      MYSQL_DATABASE: ${DATABASE_NAME}
+    volumes:
+      - comandero_mysql_data:/var/lib/mysql
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  comandero_mysql_data:

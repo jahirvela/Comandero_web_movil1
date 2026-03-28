@@ -191,7 +191,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
             ),
           ),
           Text(
-            authController.userName,
+            '${authController.userName} • Administrador',
             style: TextStyle(
               fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
               color: AppColors.textSecondary,

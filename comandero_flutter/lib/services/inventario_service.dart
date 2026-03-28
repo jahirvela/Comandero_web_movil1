@@ -163,15 +163,26 @@ class InventarioService {
     }
   }
 
+  static List<String> _parseCategoryList(dynamic data) {
+    if (data is List) {
+      return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+    }
+    return [];
+  }
+
   /// Obtener categorías únicas del inventario (incluye las guardadas en backend)
   Future<List<String>> getCategories() async {
     try {
       final response = await _api.get('/inventario/categorias');
-      if (response.statusCode == 200) {
-        final data = response.data['data'];
-        if (data is List) {
-          return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-        }
+      final status = response.statusCode ?? 0;
+      if (status >= 400) {
+        print('Error al obtener categorías: HTTP $status');
+        return [];
+      }
+      if (status == 200) {
+        final raw = response.data;
+        final parsed = _parseCategoryList(raw is Map ? raw['data'] : null);
+        return parsed;
       }
       return [];
     } catch (e) {
@@ -180,20 +191,141 @@ class InventarioService {
     }
   }
 
-  /// Crear una categoría de inventario en el backend (persistida, no desaparece al recargar)
-  Future<List<String>> createCategory(String nombre) async {
+  /// Crea categoría. [duplicate] es true si ya existía (409); la lista refleja el servidor o un refetch.
+  Future<({List<String> categorias, bool duplicate})> createCategory(String nombre) async {
+    final trimmed = nombre.trim();
     try {
-      final response = await _api.post('/inventario/categorias', data: {'nombre': nombre.trim()});
-      if (response.statusCode == 201) {
-        final data = response.data['data'];
+      final response = await _api.post(
+        '/inventario/categorias',
+        data: {'nombre': trimmed},
+      );
+      final status = response.statusCode ?? 0;
+      final body = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : <String, dynamic>{};
+
+      // validateStatus del ApiService acepta 4xx como "respuesta" sin lanzar DioException
+      if (status >= 400 && status != 409) {
+        final msg = body['message'] ?? body['error'] ?? 'Error al crear categoría';
+        throw Exception(msg.toString());
+      }
+
+      final duplicate = status == 409;
+      var list = _parseCategoryList(body['data']);
+
+      if (list.isEmpty) {
+        list = await getCategories();
+      }
+
+      if (list.isEmpty && (status == 200 || status == 201) && trimmed.isNotEmpty) {
+        list = [trimmed];
+      }
+      if (list.isEmpty && duplicate && trimmed.isNotEmpty) {
+        list = [trimmed];
+      }
+
+      if (list.isEmpty) {
+        throw Exception(
+          duplicate
+              ? 'Ya existe una categoría con ese nombre'
+              : 'El servidor no devolvió la lista de categorías',
+        );
+      }
+
+      return (categorias: list, duplicate: duplicate);
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final body = e.response?.data;
+      final map = body is Map ? body as Map<String, dynamic> : <String, dynamic>{};
+      final list = _parseCategoryList(map['data']);
+      if (status == 409) {
+        if (list.isNotEmpty) {
+          return (categorias: list, duplicate: true);
+        }
+        final fallback = await getCategories();
+        if (fallback.isNotEmpty) {
+          return (categorias: fallback, duplicate: true);
+        }
+        if (trimmed.isNotEmpty) {
+          return (categorias: [trimmed], duplicate: true);
+        }
+      }
+      if (e.response != null) {
+        final msg = map['message'] ?? map['error'] ?? 'Error al crear categoría';
+        throw Exception(msg.toString());
+      }
+      rethrow;
+    }
+  }
+
+  /// Eliminar categoría de inventario por nombre (falla si hay ítems o si es «Todos»).
+  Future<List<String>> deleteCategory(String nombre) async {
+    try {
+      final encoded = Uri.encodeComponent(nombre.trim());
+      final response = await _api.delete('/inventario/categorias/$encoded');
+      final status = response.statusCode ?? 0;
+      final raw = response.data;
+      final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+
+      if (status == 200) {
+        final data = map['data'];
         if (data is List) {
           return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
         }
+        return [];
+      }
+      if (status == 403 || status == 409) {
+        final msg =
+            map['message']?.toString() ??
+            map['error']?.toString() ??
+            'No se puede eliminar la categoría';
+        throw Exception(msg);
+      }
+      if (status >= 400) {
+        final msg = map['message']?.toString() ?? 'Error al eliminar categoría';
+        throw Exception(msg);
       }
       throw Exception('El servidor no devolvió la lista de categorías');
     } on DioException catch (e) {
       if (e.response != null) {
-        final msg = e.response!.data?['message'] ?? e.response!.data?['error'] ?? 'Error al crear categoría';
+        final body = e.response!.data;
+        final map = body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{};
+        final msg = map['message'] ?? map['error'] ?? 'Error al eliminar categoría';
+        throw Exception(msg.toString());
+      }
+      rethrow;
+    }
+  }
+
+  /// Renombrar categoría (ítems + registro en catálogo).
+  Future<List<String>> renameCategory(String nombreActual, String nombreNuevo) async {
+    try {
+      final encoded = Uri.encodeComponent(nombreActual.trim());
+      final response = await _api.put(
+        '/inventario/categorias/$encoded',
+        data: {'nuevoNombre': nombreNuevo.trim()},
+      );
+      final status = response.statusCode ?? 0;
+      final raw = response.data;
+      final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+
+      if (status == 200) {
+        final data = map['data'];
+        if (data is List) {
+          return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+        }
+        return await getCategories();
+      }
+      if (status >= 400) {
+        final msg = map['message']?.toString() ?? map['error']?.toString() ?? 'Error al renombrar';
+        throw Exception(msg);
+      }
+      return await getCategories();
+    } on DioException catch (e) {
+      if (e.response != null) {
+        final body = e.response!.data;
+        final map = body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{};
+        final msg = map['message'] ?? map['error'] ?? 'Error al renombrar categoría';
         throw Exception(msg.toString());
       }
       rethrow;

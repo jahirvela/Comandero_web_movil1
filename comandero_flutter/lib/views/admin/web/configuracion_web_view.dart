@@ -9,20 +9,6 @@ import '../../../services/impresoras_service.dart';
 import '../../../utils/app_colors.dart';
 import '../../../utils/plantilla_ticket_friendly.dart';
 
-void _insertAtCursorOrEnd(TextEditingController c, String snippet) {
-  final t = c.text;
-  var start = c.selection.start;
-  var end = c.selection.end;
-  if (start < 0 || start > t.length) start = t.length;
-  if (end < 0 || end > t.length) end = t.length;
-  final newText = t.replaceRange(start, end, snippet);
-  final off = start + snippet.length;
-  c.value = TextEditingValue(
-    text: newText,
-    selection: TextSelection.collapsed(offset: off),
-  );
-}
-
 /// Mensaje legible para errores al generar clave (red, CORS, servidor, etc.).
 String _mensajeErrorGenerarClave(Object e) {
   final s = e.toString().toLowerCase();
@@ -1304,43 +1290,6 @@ class _PlantillaTicketsCardContentState
   Widget build(BuildContext context) {
     final c = widget.controller;
     final isDesktop = widget.isDesktop;
-    const camposContenido = <String>[
-      'campo nombre del restaurante',
-      'campo direccion',
-      'campo telefono',
-      'campo rfc',
-      'campo titulo',
-      'campo fecha y hora',
-      'campo folio',
-      'campo mesa',
-      'campo cliente',
-      'campo impreso por',
-      'campo metodo de pago',
-      'campo lista de productos',
-      'campo subtotal',
-      'campo descuento',
-      'campo iva',
-      'campo linea iva',
-      'campo total',
-      'campo gracias',
-      'campo vuelva pronto',
-      'campo linea separadora',
-      'campo linea guiones',
-      'campo moneda',
-    ];
-    const camposLineaItem = <String>[
-      'campo cantidad',
-      'campo descripcion producto',
-      'campo tamano',
-      'campo moneda',
-      'campo total',
-    ];
-    const camposFormato = <String>[
-      '(inicio centrado)',
-      '(fin centrado)',
-      '(inicio negrita)',
-      '(fin negrita)',
-    ];
     if (c.selectedTipoPlantilla != _lastTipo) {
       _lastTipo = c.selectedTipoPlantilla;
       _initialized = false;
@@ -1445,7 +1394,8 @@ class _PlantillaTicketsCardContentState
           minLines: 12,
           decoration: InputDecoration(
             labelText: 'Contenido: $labelActual',
-            hintText: 'Escriba texto normal. Use palabras como campo nombre del restaurante o campo total para datos automáticos.',
+            hintText:
+                'Escriba texto normal. Para datos del sistema use comillas: "Nombre del restaurante", "Total", etc.',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             alignLabelWithHint: true,
           ),
@@ -1459,38 +1409,17 @@ class _PlantillaTicketsCardContentState
           decoration: InputDecoration(
             labelText: 'Formato línea de ítem (opcional)',
             hintText:
-                'Ejemplo: campo cantidad  campo descripcion producto  campo moneda campo total',
+                'Ejemplo: "Cantidad"  "Descripción del producto"  "Moneda" "Total"',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
           style: TextStyle(fontSize: isDesktop ? 14 : 13),
-        ),
-        const SizedBox(height: 8),
-        ExpansionTile(
-          tilePadding: EdgeInsets.zero,
-          title: Text(
-            'Ayuda breve',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          childrenPadding: const EdgeInsets.only(bottom: 8),
-          children: [
-            Text(
-              'Lo que escriba se imprime tal cual. Para datos automáticos use frases con campo, por ejemplo: campo nombre del restaurante, campo fecha y hora, campo total. '
-              'Para formato use (inicio centrado) y (fin centrado), o (inicio negrita) y (fin negrita). '
-              'Si necesita un campo personalizado: campo personalizado: Mi_Texto_Así.',
-              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-            ),
-          ],
         ),
         const SizedBox(height: 10),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: Colors.grey.shade300),
           ),
@@ -1498,253 +1427,83 @@ class _PlantillaTicketsCardContentState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Campos disponibles',
+                'Cómo funciona',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.textSecondary,
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
-                'Puede copiar y pegar estos textos en la plantilla:',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textSecondary,
-                ),
+                'Lo que escriba fuera de comillas se imprime tal cual. '
+                'Entre comillas va un nombre reservado: el sistema lo sustituye por el dato real al imprimir. '
+                'Puede copiar los textos de las listas de abajo y pegarlos en la plantilla. '
+                'También se acepta el formato antiguo (campo nombre del restaurante, etc.).',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Text(
-                'Tocar para insertar en Contenido:',
+                'Marcadores del contenido del ticket',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: AppColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 6),
-              LayoutBuilder(
-                builder: (ctx, constraints) {
-                  final columns = constraints.maxWidth < 420 ? 1 : 2;
-                  final spacingTotal = columns == 1 ? 0.0 : 6.0;
-                  final chipWidth = (constraints.maxWidth - spacingTotal) / columns;
-                  return Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final campo in camposContenido)
-                        SizedBox(
-                          width: chipWidth,
-                          child: ActionChip(
-                            label: Text(
-                              campo,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onPressed: () => _insertAtCursorOrEnd(
-                              _contenidoController,
-                              '$campo ',
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Ejemplo rápido (contenido):',
+              SelectableText(
+                PlantillaTicketFriendly.ayudaListaMarcadoresContenido(),
                 style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  height: 1.4,
+                  fontFamily: 'monospace',
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Marcadores para la línea de cada producto',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                   color: AppColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 6),
               SelectableText(
-                'campo nombre del restaurante\n'
-                'campo direccion\n'
-                'campo total',
+                PlantillaTicketFriendly.ayudaListaMarcadoresLinea(),
                 style: TextStyle(
                   fontSize: 12,
-                  height: 1.35,
+                  height: 1.4,
+                  fontFamily: 'monospace',
                   color: AppColors.textPrimary,
                 ),
               ),
-              const SizedBox(height: 10),
-              SelectableText(
-                'campo nombre del restaurante\n'
-                'campo direccion\n'
-                'campo telefono\n'
-                'campo rfc\n'
-                'campo titulo\n'
-                'campo fecha y hora\n'
-                'campo folio\n'
-                'campo mesa\n'
-                'campo cliente\n'
-                'campo impreso por\n'
-                'campo metodo de pago\n'
-                'campo lista de productos\n'
-                'campo subtotal\n'
-                'campo descuento\n'
-                'campo iva\n'
-                'campo linea iva\n'
-                'campo total\n'
-                'campo gracias\n'
-                'campo vuelva pronto\n'
-                'campo linea separadora\n'
-                'campo linea guiones\n'
-                'campo moneda',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Text(
-                'Campos para línea de ítem:',
+                'Formato de texto (sin comillas)',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: AppColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 4),
-              LayoutBuilder(
-                builder: (ctx, constraints) {
-                  final columns = constraints.maxWidth < 420 ? 1 : 2;
-                  final spacingTotal = columns == 1 ? 0.0 : 6.0;
-                  final chipWidth = (constraints.maxWidth - spacingTotal) / columns;
-                  return Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final campo in camposLineaItem)
-                        SizedBox(
-                          width: chipWidth,
-                          child: ActionChip(
-                            label: Text(
-                              campo,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onPressed: () => _insertAtCursorOrEnd(
-                              _lineaItemController,
-                              '$campo ',
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Ejemplo rápido (línea de ítem):',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 6),
-              SelectableText(
-                'campo cantidad  campo descripcion producto  campo total',
+              const SelectableText(
+                '(inicio centrado)  …  (fin centrado)\n'
+                '(inicio negrita)  …  (fin negrita)',
                 style: TextStyle(
                   fontSize: 12,
-                  height: 1.35,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 10),
-              SelectableText(
-                'campo cantidad\n'
-                'campo descripcion producto\n'
-                'campo tamano\n'
-                'campo moneda\n'
-                'campo total',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
+                  height: 1.4,
                   color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                'Formato de texto:',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              LayoutBuilder(
-                builder: (ctx, constraints) {
-                  final columns = constraints.maxWidth < 420 ? 1 : 2;
-                  final spacingTotal = columns == 1 ? 0.0 : 6.0;
-                  final chipWidth = (constraints.maxWidth - spacingTotal) / columns;
-                  return Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final campo in camposFormato)
-                        SizedBox(
-                          width: chipWidth,
-                          child: ActionChip(
-                            label: Text(
-                              campo,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onPressed: () => _insertAtCursorOrEnd(
-                              _contenidoController,
-                              '$campo ',
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Ejemplo rápido (formato):',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 6),
-              SelectableText(
-                '(inicio negrita) campo total (fin negrita)',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SelectableText(
-                '(inicio centrado)\n'
-                '(fin centrado)\n'
-                '(inicio negrita)\n'
-                '(fin negrita)',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Campo personalizado: campo personalizado: Mi_Texto_Así',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textSecondary,
-                ),
+                'Campo personalizado del sistema: "Personalizado: NOMBRE_CLAVE" (se guarda como {{NOMBRE_CLAVE}}). '
+                'Formato antiguo: campo personalizado: NOMBRE_CLAVE.',
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary, height: 1.35),
               ),
             ],
           ),

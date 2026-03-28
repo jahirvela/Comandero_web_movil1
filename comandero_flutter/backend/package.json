@@ -6,6 +6,9 @@
   "scripts": {
     "optimizar-indices": "tsx scripts/aplicar-indices.js",
     "predev": "node scripts/liberar-puerto.cjs",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f mysql",
     "dev": "tsx watch src/server.ts",
     "dev:auto": "npm run predev && npm run dev",
     "build": "tsc -p tsconfig.json",
@@ -24,6 +27,7 @@
     "actualizar-password-usuarios": "tsx scripts/actualizar-password-usuarios-existentes.ts",
     "actualizar-password-reales": "tsx scripts/actualizar-password-reales.ts",
     "migrate:inventory-category": "tsx scripts/verificar-columna-categoria.ts",
+    "migrate:inventory-category:both": "tsx scripts/migrate-inventory-category-both.ts",
     "migrate:alert-metadata": "tsx scripts/agregar-metadata-alerta.ts",
     "migrate:comanda-impresion": "tsx scripts/run-migracion-comanda-impresion-columnas.ts",
     "migrate:local": "tsx scripts/aplicar-migraciones-local.ts",

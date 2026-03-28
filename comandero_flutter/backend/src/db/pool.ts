@@ -62,6 +62,8 @@ export const pool = {
       conn.release();
     }
   },
+  /** Cierra el pool (p. ej. scripts one-shot). */
+  end: () => rawPool.end()
 };
 
 // Intentar conectar con reintentos
@@ -103,12 +105,17 @@ const testConnection = async (retries = 3, delay = 2000) => {
         
         // Mensaje más específico según el tipo de error
         if (errorCode === 'ETIMEDOUT' || errorCode === 'ECONNREFUSED') {
+          const esLocal =
+            env.DATABASE_HOST === '127.0.0.1' ||
+            env.DATABASE_HOST === 'localhost';
           logger.error(
             {
               host: env.DATABASE_HOST,
               port: env.DATABASE_PORT,
             },
-            `No se pudo conectar a MySQL en ${env.DATABASE_HOST}:${env.DATABASE_PORT}. Verifica que MySQL esté corriendo y escuchando en ese puerto.`
+            esLocal
+              ? `No hay MySQL escuchando en ${env.DATABASE_HOST}:${env.DATABASE_PORT}. Inicia MySQL/XAMPP en esta PC, o en backend/.env usa los datos de tu servidor (p. ej. copia DATABASE_* desde .env.remote).`
+              : `No se pudo conectar a MySQL en ${env.DATABASE_HOST}:${env.DATABASE_PORT}. Comprueba red, firewall del servidor y que MySQL acepte conexiones remotas.`
           );
         } else if (errorCode === 'ER_ACCESS_DENIED_ERROR' || errorCode === 'ER_NOT_SUPPORTED_AUTH_MODE') {
           logger.error(
