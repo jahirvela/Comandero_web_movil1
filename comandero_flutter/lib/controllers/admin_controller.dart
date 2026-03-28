@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import '../models/admin_model.dart';
 import '../models/order_model.dart';
@@ -18,6 +20,7 @@ import '../services/configuracion_service.dart';
 import '../services/impresoras_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
+import '../utils/string_search_utils.dart';
 import '../utils/file_download_helper.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
@@ -317,25 +320,24 @@ class AdminController extends ChangeNotifier {
 
   // Obtener inventario filtrado
   List<InventoryItem> get filteredInventory {
+    final qNorm = normalizeForInsensitiveSearch(_inventorySearchQuery);
     return _inventory.where((item) {
       final categoryMatch =
           _selectedInventoryCategory == 'todos' ||
-          item.category == _selectedInventoryCategory;
+          item.category.trim().toLowerCase() ==
+              _selectedInventoryCategory.trim().toLowerCase();
       final statusMatch =
           _selectedInventoryStatus == 'todos' ||
           item.status == _selectedInventoryStatus;
-      final searchMatch =
-          _inventorySearchQuery.trim().isEmpty ||
-          item.name.toLowerCase().contains(_inventorySearchQuery.toLowerCase()) ||
-          item.category.toLowerCase().contains(_inventorySearchQuery.toLowerCase()) ||
+      final searchMatch = qNorm.isEmpty ||
+          normalizeForInsensitiveSearch(item.name).contains(qNorm) ||
+          normalizeForInsensitiveSearch(item.category).contains(qNorm) ||
           (item.supplier != null &&
-              item.supplier!.toLowerCase().contains(
-                _inventorySearchQuery.toLowerCase(),
-              )) ||
+              normalizeForInsensitiveSearch(item.supplier!).contains(qNorm)) ||
           (item.codigoBarras != null &&
-              item.codigoBarras!.toLowerCase().contains(
-                _inventorySearchQuery.toLowerCase(),
-              ));
+              normalizeForInsensitiveSearch(item.codigoBarras!).contains(qNorm)) ||
+          (item.description != null &&
+              normalizeForInsensitiveSearch(item.description!).contains(qNorm));
       return categoryMatch && statusMatch && searchMatch;
     }).toList();
   }
@@ -490,6 +492,16 @@ class AdminController extends ChangeNotifier {
   // Obtener tickets filtrados
   List<payment_models.BillModel> get filteredTickets {
     return _tickets.where((ticket) {
+      final query = _ticketsSearchQuery.trim().toLowerCase();
+      final mesaNumero = ticket.tableNumber?.toString() ?? '';
+      final mesaCodigo = (ticket.mesaCodigo ?? '').toLowerCase();
+      final customerName = (ticket.customerName ?? '').toLowerCase();
+      final customerPhone = (ticket.customerPhone ?? '').toLowerCase();
+      final waiterName = (ticket.waiterName ?? '').toLowerCase();
+      final printedBy = (ticket.printedBy ?? '').toLowerCase();
+      final paymentMethod = (ticket.paymentMethod ?? '').toLowerCase();
+      final ticketId = ticket.id.toLowerCase();
+
       // Filtro por estado
       final statusMatch =
           _selectedTicketStatus == 'todos' ||
@@ -497,18 +509,15 @@ class AdminController extends ChangeNotifier {
 
       // Filtro por búsqueda
       final searchMatch =
-          _ticketsSearchQuery.trim().isEmpty ||
-          ticket.id.toLowerCase().contains(_ticketsSearchQuery.toLowerCase()) ||
-          (ticket.tableNumber != null &&
-              ticket.tableNumber.toString().contains(_ticketsSearchQuery)) ||
-          (ticket.waiterName != null &&
-              ticket.waiterName!.toLowerCase().contains(
-                _ticketsSearchQuery.toLowerCase(),
-              )) ||
-          (ticket.printedBy != null &&
-              ticket.printedBy!.toLowerCase().contains(
-                _ticketsSearchQuery.toLowerCase(),
-              ));
+          query.isEmpty ||
+          ticketId.contains(query) ||
+          mesaNumero.contains(query) ||
+          mesaCodigo.contains(query) ||
+          customerName.contains(query) ||
+          customerPhone.contains(query) ||
+          waiterName.contains(query) ||
+          printedBy.contains(query) ||
+          paymentMethod.contains(query);
 
       // Filtro por período de fecha
       bool periodMatch = true;
@@ -641,16 +650,31 @@ class AdminController extends ChangeNotifier {
   Future<void> loadInventoryCategories() async {
     try {
       final categories = await _inventarioService.getCategories();
-      _inventoryCategories = ['todos', ...categories];
+      final merged = <String>{'todos', ...categories};
+      // Si el GET falla en silencio (lista vacía) pero ya había categorías en memoria, no perderlas.
+      if (categories.isEmpty && _inventoryCategories.length > 1) {
+        for (final c in _inventoryCategories) {
+          if (c != 'todos') merged.add(c);
+        }
+      }
+      final rest = merged.where((c) => c != 'todos').toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      _inventoryCategories = ['todos', ...rest];
       notifyListeners();
     } catch (e) {
       print('Error al cargar categorías: $e');
-      _inventoryCategories = ['todos'];
+      if (_inventoryCategories.length <= 1) {
+        _inventoryCategories = ['todos'];
+      }
       notifyListeners();
     }
   }
 
-  List<String> get inventoryCategories => _inventoryCategories;
+  /// Chips y listas: «Todos» + categorías del API y de los ítems ya cargados (si el GET va vacío, igual se ven las de los insumos).
+  List<String> get inventoryCategories {
+    final merged = getInventoryCategories();
+    return ['todos', ...merged];
+  }
 
   Future<void> loadTables() async {
     try {
@@ -1634,6 +1658,10 @@ class AdminController extends ChangeNotifier {
   @override
   void dispose() {
     _paymentRepository.removeListener(_handlePaymentsChanged);
+    _menuSearchController?.dispose();
+    _inventorySearchController?.dispose();
+    _usersSearchController?.dispose();
+    _ticketsSearchController?.dispose();
     super.dispose();
   }
 
@@ -2936,38 +2964,46 @@ class AdminController extends ChangeNotifier {
   }
 
   // Imprimir ticket (misma estructura backend: para llevar vs mesa según orden)
-  Future<void> printTicket(String ticketId, String printedBy) async {
+  Future<bool> printTicket(String ticketId, String printedBy) async {
     final index = _tickets.indexWhere((ticket) => ticket.id == ticketId);
-    if (index != -1) {
-      final ticket = _tickets[index];
-      final ordenId = ticket.ordenId;
+    if (index == -1) return false;
 
-      if (ordenId != null) {
-        try {
-          final ordenIds = ticket.ordenIds != null && ticket.ordenIds!.length > 1
-              ? ticket.ordenIds
-              : (ticket.ordenIdsFromBillIdInt.length > 1 ? ticket.ordenIdsFromBillIdInt : null);
-          final result = await _ticketsService.imprimirTicket(
-            ordenId: ordenId,
-            ordenIds: ordenIds,
-            incluirCodigoBarras: true,
-          );
+    final ticket = _tickets[index];
+    final ordenId = ticket.ordenId;
+    if (ordenId == null) return false;
 
-          if (!result['success']) {
-            print('Error al imprimir ticket: ${result['error']}');
-          }
-        } catch (e) {
-          print('Error al imprimir ticket: $e');
-        }
-      }
-
-      _tickets[index] = ticket.copyWith(
-        status: payment_models.BillStatus.printed,
-        isPrinted: true,
-        printedBy: printedBy,
+    bool ok = false;
+    try {
+      final ordenIds = ticket.ordenIds != null && ticket.ordenIds!.length > 1
+          ? ticket.ordenIds
+          : (ticket.ordenIdsFromBillIdInt.length > 1
+              ? ticket.ordenIdsFromBillIdInt
+              : null);
+      final result = await _ticketsService.imprimirTicket(
+        ordenId: ordenId,
+        ordenIds: ordenIds,
+        incluirCodigoBarras: true,
       );
-      notifyListeners();
+      ok = result['success'] == true;
+      if (!ok) {
+        print('Error al imprimir ticket: ${result['error']}');
+      }
+    } catch (e) {
+      print('Error al imprimir ticket: $e');
+      ok = false;
     }
+
+    if (!ok) return false;
+
+    _tickets[index] = ticket.copyWith(
+      status: payment_models.BillStatus.printed,
+      isPrinted: true,
+      printedBy: printedBy,
+    );
+    notifyListeners();
+    // Sincronizar contra backend para reflejar "impreso por"/timestamp real.
+    await loadTickets(silent: true, force: true);
+    return true;
   }
 
   // Marcar ticket como entregado
@@ -3291,8 +3327,8 @@ class AdminController extends ChangeNotifier {
           },
       };
       await _inventarioService.createItem(data);
-      // Recargar inventario, movimientos y categorías desde el backend
-      await _refreshInventoryAndMovimientos();
+      await loadInventory();
+      unawaited(loadInventoryMovimientos());
       // Si la categoría no estaba en la lista, agregarla
       final normalizedCategory = _normalizeInventoryCategory(item.category);
       if (!_inventoryCategories.contains(normalizedCategory) &&
@@ -3340,9 +3376,8 @@ class AdminController extends ChangeNotifier {
         throw Exception('ID de inventario inválido: $itemId');
       }
       await _inventarioService.eliminarItem(id);
-      await _refreshInventoryAndMovimientos();
-      // También recargar productos para actualizar las recetas que usaban este item
-      await loadMenuItems();
+      await Future.wait([loadInventory(), loadMenuItems()]);
+      unawaited(loadInventoryMovimientos());
     } catch (e) {
       rethrow;
     }
@@ -3916,20 +3951,17 @@ class AdminController extends ChangeNotifier {
     }
   }
 
-  // Obtener categorías de inventario
+  // Obtener categorías de inventario (ítems + catálogo del API, p. ej. categorías sin ítems aún)
   List<String> getInventoryCategories() {
-    final categories =
+    final fromApi =
+        _inventoryCategories.where((c) => c != 'todos').toList();
+    final fromItems =
         _inventory
             .map((item) => _normalizeInventoryCategory(item.category))
-            .toSet()
-            .toList()
-          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    final hasOtros = categories.any(
-      (category) => category.toLowerCase() == 'otros',
-    );
-    if (!hasOtros) {
-      categories.add('Otros');
-    }
+            .toList();
+    final merged = <String>{...fromApi, ...fromItems};
+    final categories = merged.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return categories;
   }
 
@@ -4132,12 +4164,17 @@ class AdminController extends ChangeNotifier {
   }
 
   /// Crea una categoría de inventario en el backend (persistida, no desaparece al recargar).
+  /// Lanza [StateError] con mensaje si la categoría ya existía (el listado local ya queda sincronizado).
   Future<void> createInventoryCategory(String categoryName) async {
     final trimmed = categoryName.trim();
     if (trimmed.isEmpty) return;
-    final categorias = await _inventarioService.createCategory(trimmed);
-    _inventoryCategories = ['todos', ...categorias];
+    final result = await _inventarioService.createCategory(trimmed);
+    _inventoryCategories = ['todos', ...result.categorias];
     notifyListeners();
+    if (result.duplicate) {
+      throw StateError('DUPLICATE_INVENTORY_CATEGORY');
+    }
+    // No llamar loadInventoryCategories() aquí: si el GET falla, dejaba solo «todos» y ocultaba categorías nuevas.
   }
 
   Future<void> deleteInventoryCategory(String categoryName) async {
@@ -4148,7 +4185,23 @@ class AdminController extends ChangeNotifier {
     if (_selectedInventoryCategory.toLowerCase() == trimmed.toLowerCase()) {
       _selectedInventoryCategory = 'todos';
     }
-    await _refreshInventoryAndMovimientos();
+    await loadInventory();
+    unawaited(loadInventoryMovimientos());
+    notifyListeners();
+  }
+
+  /// Renombra categoría de inventario en servidor (ítems + catálogo).
+  Future<void> renameInventoryCategory(String nombreActual, String nombreNuevo) async {
+    final a = nombreActual.trim();
+    final n = nombreNuevo.trim();
+    if (a.isEmpty || n.isEmpty || a.toLowerCase() == 'todos') return;
+    final categorias = await _inventarioService.renameCategory(a, n);
+    _inventoryCategories = ['todos', ...categorias];
+    if (_selectedInventoryCategory.toLowerCase() == a.toLowerCase()) {
+      _selectedInventoryCategory = n;
+    }
+    await loadInventory();
+    unawaited(loadInventoryMovimientos());
     notifyListeners();
   }
 
@@ -4750,10 +4803,9 @@ class AdminController extends ChangeNotifier {
 
       final categoriaId = categoria['id'] as int;
 
-      // Eliminar categoría en el backend
+      // Eliminar categoría en el backend (falla si hay productos o si es «Todos»)
       await _categoriasService.eliminarCategoria(categoriaId);
 
-      // Recargar categorías y menú para reflejar reasignación a "Otros"
       await Future.wait([loadCategorias(), loadMenuItems()]);
 
       // Si la categoría eliminada estaba seleccionada, cambiar a 'todos'
@@ -4771,8 +4823,10 @@ class AdminController extends ChangeNotifier {
   }
 
   bool canDeleteCategory(String categoryName) {
-    return _customCategories.contains(categoryName) &&
-        !_menuItems.any((item) => item.category == categoryName);
+    if (categoryName.trim().toLowerCase() == 'todos') return false;
+    return _customCategories.any(
+      (c) => c.toLowerCase() == categoryName.trim().toLowerCase(),
+    );
   }
 
   bool isCustomCategory(String categoryName) {

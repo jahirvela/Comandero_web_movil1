@@ -809,7 +809,8 @@ class _CaptainAppState extends State<CaptainApp> {
               o.status == OrderStatus.listo ||
               o.status == OrderStatus.listoParaRecoger,
         )
-        .toList();
+        .toList()
+      ..sort((a, b) => b.orderTime.compareTo(a.orderTime));
 
     return Card(
       elevation: 2,

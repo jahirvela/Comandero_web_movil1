@@ -1,7 +1,12 @@
 /// Convierte la plantilla técnica de la API (`{{CLAVE}}`, `[CENTRAR]`, etc.)
-/// a texto simple de edición y viceversa.
+/// a texto simple con marcadores entre comillas, y viceversa.
+///
+/// Formato editable: `"Nombre del restaurante"`, `"Total"`, etc.
+/// Compatibilidad: sigue aceptando el formato antiguo `campo nombre del restaurante`.
 abstract final class PlantillaTicketFriendly {
   PlantillaTicketFriendly._();
+
+  static String _q(String inner) => '"$inner"';
 
   static final List<(String technical, String friendly)> _formatToFriendly = () {
     const pairs = <(String, String)>[
@@ -16,57 +21,65 @@ abstract final class PlantillaTicketFriendly {
   }();
 
   static final List<(String friendly, String technical)> _formatToTechnical = () {
-    final out =
-        _formatToFriendly.map((e) => (e.$2, e.$1)).toList();
+    final out = _formatToFriendly.map((e) => (e.$2, e.$1)).toList();
     out.sort((a, b) => b.$1.length.compareTo(a.$1.length));
     return out;
   }();
 
-  /// Placeholders del cuerpo del ticket (orden: más largo primero al reemplazar).
+  /// Cuerpo: clave API → texto entre comillas (visible en el editor).
+  static final Map<String, String> _bodyKeyToQuotedInner = <String, String>{
+    'NOMBRE_RESTAURANTE': 'Nombre del restaurante',
+    'IVA_LINE': 'Línea IVA',
+    'IMPRESO_POR': 'Impreso por',
+    'METODO_PAGO': 'Método de pago',
+    'SEPARADOR': 'Línea separadora',
+    'DIRECCION': 'Dirección',
+    'DESCUENTO': 'Descuento',
+    'TELEFONO': 'Teléfono',
+    'SUBTOTAL': 'Subtotal',
+    'CLIENTE': 'Cliente',
+    'ITEMS': 'Lista de productos',
+    'GRACIAS': 'Gracias',
+    'VUELVA': 'Vuelva pronto',
+    'TITULO': 'Título del documento',
+    'FECHA': 'Fecha y hora',
+    'FOLIO': 'Folio',
+    'MONEDA': 'Moneda',
+    'GUION': 'Línea guiones',
+    'MESA': 'Mesa',
+    'RFC': 'RFC',
+    'IVA': 'IVA',
+    'TOTAL': 'Total',
+  };
+
   static final List<(String technical, String friendly)> _contenidoPlaceholders =
-      _sortedPlaceholderPairs(<String, String>{
-        'NOMBRE_RESTAURANTE': 'campo nombre del restaurante',
-        'IVA_LINE': 'campo linea iva',
-        'IMPRESO_POR': 'campo impreso por',
-        'METODO_PAGO': 'campo metodo de pago',
-        'SEPARADOR': 'campo linea separadora',
-        'DIRECCION': 'campo direccion',
-        'DESCUENTO': 'campo descuento',
-        'TELEFONO': 'campo telefono',
-        'SUBTOTAL': 'campo subtotal',
-        'CLIENTE': 'campo cliente',
-        'ITEMS': 'campo lista de productos',
-        'GRACIAS': 'campo gracias',
-        'VUELVA': 'campo vuelva pronto',
-        'TITULO': 'campo titulo',
-        'FECHA': 'campo fecha y hora',
-        'FOLIO': 'campo folio',
-        'MONEDA': 'campo moneda',
-        'GUION': 'campo linea guiones',
-        'MESA': 'campo mesa',
-        'RFC': 'campo rfc',
-        'IVA': 'campo iva',
-        'TOTAL': 'campo total',
-      });
+      _sortedBodyPairs();
 
-  static final List<(String technical, String friendly)> _lineaPlaceholders =
-      _sortedPlaceholderPairs(<String, String>{
-        'DESCRIPCION': 'campo descripcion producto',
-        'TAMANO': 'campo tamano',
-        'MONEDA': 'campo moneda',
-        'TOTAL': 'campo total',
-        'CANT': 'campo cantidad',
-      });
-
-  static List<(String technical, String friendly)> _sortedPlaceholderPairs(
-    Map<String, String> keysToLabel,
-  ) {
-    final out = keysToLabel.entries
-        .map((e) => ('{{${e.key}}}', e.value))
+  static List<(String technical, String friendly)> _sortedBodyPairs() {
+    final out = _bodyKeyToQuotedInner.entries
+        .map((e) => ('{{${e.key}}}', _q(e.value)))
         .toList();
     out.sort((a, b) => b.$1.length.compareTo(a.$1.length));
     return out;
   }
+
+  /// Línea de ítem.
+  static final Map<String, String> _lineaKeyToQuotedInner = <String, String>{
+    'DESCRIPCION': 'Descripción del producto',
+    'TAMANO': 'Tamaño',
+    'MONEDA': 'Moneda',
+    'TOTAL': 'Total',
+    'CANT': 'Cantidad',
+  };
+
+  static final List<(String technical, String friendly)> _lineaPlaceholders =
+      () {
+    final out = _lineaKeyToQuotedInner.entries
+        .map((e) => ('{{${e.key}}}', _q(e.value)))
+        .toList();
+    out.sort((a, b) => b.$1.length.compareTo(a.$1.length));
+    return out;
+  }();
 
   static List<(String friendly, String technical)> _invertPairs(
     List<(String technical, String friendly)> pairs,
@@ -77,18 +90,67 @@ abstract final class PlantillaTicketFriendly {
   }
 
   static final List<(String friendly, String technical)>
-      _contenidoPlaceholdersInverted = _invertPairs(_contenidoPlaceholders);
+      _contenidoQuotedInverted = _invertPairs(_contenidoPlaceholders);
 
   static final List<(String friendly, String technical)>
-      _lineaPlaceholdersInverted = _invertPairs(_lineaPlaceholders);
+      _lineaQuotedInverted = _invertPairs(_lineaPlaceholders);
+
+  /// Formato antiguo `campo ...` → `{{CLAVE}}` (orden: más largo primero).
+  static final List<(String legacyCampo, String technical)>
+      _legacyContenidoCampo = () {
+    const m = <String, String>{
+      'campo nombre del restaurante': '{{NOMBRE_RESTAURANTE}}',
+      'campo linea iva': '{{IVA_LINE}}',
+      'campo impreso por': '{{IMPRESO_POR}}',
+      'campo metodo de pago': '{{METODO_PAGO}}',
+      'campo linea separadora': '{{SEPARADOR}}',
+      'campo direccion': '{{DIRECCION}}',
+      'campo descuento': '{{DESCUENTO}}',
+      'campo telefono': '{{TELEFONO}}',
+      'campo subtotal': '{{SUBTOTAL}}',
+      'campo cliente': '{{CLIENTE}}',
+      'campo lista de productos': '{{ITEMS}}',
+      'campo gracias': '{{GRACIAS}}',
+      'campo vuelva pronto': '{{VUELVA}}',
+      'campo titulo': '{{TITULO}}',
+      'campo fecha y hora': '{{FECHA}}',
+      'campo folio': '{{FOLIO}}',
+      'campo moneda': '{{MONEDA}}',
+      'campo linea guiones': '{{GUION}}',
+      'campo mesa': '{{MESA}}',
+      'campo rfc': '{{RFC}}',
+      'campo iva': '{{IVA}}',
+      'campo total': '{{TOTAL}}',
+    };
+    final out = m.entries.map((e) => (e.key, e.value)).toList();
+    out.sort((a, b) => b.$1.length.compareTo(a.$1.length));
+    return out;
+  }();
+
+  static final List<(String legacyCampo, String technical)> _legacyLineaCampo =
+      () {
+    const m = <String, String>{
+      'campo descripcion producto': '{{DESCRIPCION}}',
+      'campo tamano': '{{TAMANO}}',
+      'campo cantidad': '{{CANT}}',
+      'campo moneda': '{{MONEDA}}',
+      'campo total': '{{TOTAL}}',
+    };
+    final out = m.entries.map((e) => (e.key, e.value)).toList();
+    out.sort((a, b) => b.$1.length.compareTo(a.$1.length));
+    return out;
+  }();
 
   static final RegExp _unknownTechnical = RegExp(r'\{\{([^}]+)\}\}');
   static final RegExp _unknownFriendly =
-      RegExp(r'campo personalizado:\s*(.+)$', caseSensitive: false);
+      RegExp(r'campo personalizado:\s*(.+)$', multiLine: true, caseSensitive: false);
   static final RegExp _legacyUnknownFriendly =
       RegExp(r'«etiqueta:\s*([^»]+)»');
   static final RegExp _oldFormatFriendly =
       RegExp(r'\b(inicio|fin)\s+(centrado|negrita)\b', caseSensitive: false);
+  /// `"Personalizado: CLAVE"` → `{{CLAVE}}` (CLAVE sin comillas internas).
+  static final RegExp _quotedPersonalizado =
+      RegExp(r'"Personalizado:\s*([^"]+)"');
 
   static const String _defaultTicketTechnical = '''
 [CENTRAR][NEGRITA]{{NOMBRE_RESTAURANTE}}[/NEGRITA][/CENTRAR]
@@ -147,10 +209,9 @@ Cliente: {{CLIENTE}}
     }
     s = s.replaceAllMapped(_unknownTechnical, (m) {
       final key = m.group(1)?.trim() ?? '';
-      return 'campo personalizado: $key';
+      return _q('Personalizado: $key');
     });
     s = s.replaceAll(')(', ') (');
-    s = s.replaceAll(')campo ', ') campo ');
     return s;
   }
 
@@ -158,9 +219,16 @@ Cliente: {{CLIENTE}}
   static String contenidoFriendlyATecnico(String friendly) {
     var s = friendly;
     s = s.replaceAllMapped(_oldFormatFriendly, (m) => '(${m.group(0)!.toLowerCase()})');
-    for (final e in _contenidoPlaceholdersInverted) {
+    for (final e in _legacyContenidoCampo) {
       s = s.replaceAll(e.$1, e.$2);
     }
+    for (final e in _contenidoQuotedInverted) {
+      s = s.replaceAll(e.$1, e.$2);
+    }
+    s = s.replaceAllMapped(_quotedPersonalizado, (m) {
+      final key = m.group(1)?.trim() ?? '';
+      return '{{$key}}';
+    });
     for (final e in _formatToTechnical) {
       s = s.replaceAll(e.$1, e.$2);
     }
@@ -187,10 +255,9 @@ Cliente: {{CLIENTE}}
     }
     s = s.replaceAllMapped(_unknownTechnical, (m) {
       final key = m.group(1)?.trim() ?? '';
-      return 'campo personalizado: $key';
+      return _q('Personalizado: $key');
     });
     s = s.replaceAll(')(', ') (');
-    s = s.replaceAll(')campo ', ') campo ');
     return s;
   }
 
@@ -200,9 +267,16 @@ Cliente: {{CLIENTE}}
     if (t.isEmpty) return null;
     var s = t;
     s = s.replaceAllMapped(_oldFormatFriendly, (m) => '(${m.group(0)!.toLowerCase()})');
-    for (final e in _lineaPlaceholdersInverted) {
+    for (final e in _legacyLineaCampo) {
       s = s.replaceAll(e.$1, e.$2);
     }
+    for (final e in _lineaQuotedInverted) {
+      s = s.replaceAll(e.$1, e.$2);
+    }
+    s = s.replaceAllMapped(_quotedPersonalizado, (m) {
+      final key = m.group(1)?.trim() ?? '';
+      return '{{$key}}';
+    });
     for (final e in _formatToTechnical) {
       s = s.replaceAll(e.$1, e.$2);
     }
@@ -219,18 +293,31 @@ Cliente: {{CLIENTE}}
 
   /// Devuelve una plantilla base legible para editar por tipo.
   static String contenidoBaseFriendlyPorTipo(String tipoDocumento) {
-    final technical =
-        tipoDocumento == 'comanda'
-            ? _defaultComandaTechnical
-            : _defaultTicketTechnical;
+    final technical = tipoDocumento == 'comanda'
+        ? _defaultComandaTechnical
+        : _defaultTicketTechnical;
     return contenidoTecnicoAFriendly(technical.trimRight());
   }
 
   /// Línea de ítem base legible (opcional).
   static String lineaItemBaseFriendlyPorTipo(String tipoDocumento) {
     if (tipoDocumento == 'comanda') {
-      return 'campo cantidad  campo descripcion producto  Nota: campo personalizado: NOTA';
+      return '${_q('Cantidad')}  ${_q('Descripción del producto')}  Nota: ${_q('Personalizado: NOTA')}';
     }
-    return 'campo cantidad  campo descripcion producto  campo moneda campo total';
+    return '${_q('Cantidad')}  ${_q('Descripción del producto')}  ${_q('Moneda')} ${_q('Total')}';
+  }
+
+  /// Texto de ayuda: lista de marcadores entre comillas (contenido).
+  static String ayudaListaMarcadoresContenido() {
+    final inners = _bodyKeyToQuotedInner.values.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return inners.map(_q).join('\n');
+  }
+
+  /// Texto de ayuda: marcadores línea de ítem.
+  static String ayudaListaMarcadoresLinea() {
+    final inners = _lineaKeyToQuotedInner.values.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return inners.map(_q).join('\n');
   }
 }

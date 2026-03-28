@@ -12,7 +12,8 @@ import {
   listarMovimientosController,
   listarCategoriasController,
   crearCategoriaInventarioController,
-  eliminarCategoriaInventarioController
+  eliminarCategoriaInventarioController,
+  renombrarCategoriaInventarioController
 } from './inventario.controller.js';
 
 const inventarioRouter = Router();
@@ -31,6 +32,7 @@ inventarioRouter.delete('/items/:id', requireRoles('administrador'), eliminarIns
 
 inventarioRouter.get('/categorias', lecturaRoles, listarCategoriasController);
 inventarioRouter.post('/categorias', gestionRoles, crearCategoriaInventarioController);
+inventarioRouter.put('/categorias/:nombre', gestionRoles, renombrarCategoriaInventarioController);
 inventarioRouter.delete('/categorias/:nombre', gestionRoles, eliminarCategoriaInventarioController);
 
 inventarioRouter.get('/movimientos', lecturaRoles, listarMovimientosController);

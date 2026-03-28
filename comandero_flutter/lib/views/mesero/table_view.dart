@@ -844,7 +844,18 @@ class TableView extends StatelessWidget {
 
     // Resetear el modo dividido si estaba activo
     controller.resetDividedAccountModeForTable(table.id.toString());
-    controller.closeTable(table.id);
+    try {
+      await controller.closeTableAndSync(table.id);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('La mesa se cerró localmente, pero no se pudo sincronizar con servidor.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    }
     controller.setCurrentView('floor');
 
     if (context.mounted) {
@@ -1652,7 +1663,7 @@ class TableView extends StatelessWidget {
       return !esFinalizada;
     }).toList();
 
-    // Ordenar por fecha (más reciente primero)
+    // Orden FIFO: más antiguas primero
     ordenesNoPagadas.sort((a, b) {
       try {
         final fechaA = date_utils.AppDateUtils.parseToLocal(
@@ -1661,7 +1672,7 @@ class TableView extends StatelessWidget {
         final fechaB = date_utils.AppDateUtils.parseToLocal(
           b['date'] ?? '1970-01-01',
         );
-        return fechaB.compareTo(fechaA);
+        return fechaA.compareTo(fechaB);
       } catch (e) {
         return 0;
       }

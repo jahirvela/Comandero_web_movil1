@@ -10,14 +10,16 @@ import {
   obtenerCategoriasUnicas,
   existeMovimientoConReferenciaOrden,
   crearCategoriaInventario as crearCategoriaInventarioRepo,
-  eliminarCategoriaInventario as eliminarCategoriaInventarioRepo
+  eliminarCategoriaInventario as eliminarCategoriaInventarioRepo,
+  contarItemsActivosPorCategoria,
+  renombrarCategoriaInventario as renombrarCategoriaInventarioRepo
 } from './inventario.repository.js';
 import type {
   ActualizarInsumoInput,
   CrearInsumoInput,
   CrearMovimientoInput
 } from './inventario.schemas.js';
-import { notFound } from '../../utils/http-error.js';
+import { notFound, forbidden, conflict, badRequest } from '../../utils/http-error.js';
 import { logger } from '../../config/logger.js';
 
 export const obtenerInsumos = () => listarInsumos();
@@ -139,18 +141,53 @@ export const obtenerCategorias = async () => {
   return categorias;
 };
 
-/** Crea una categoría de inventario (persistida) para que no desaparezca al recargar. */
-export const crearCategoriaInventario = async (nombre: string): Promise<string[]> => {
-  const n = nombre.trim();
-  if (!n) return obtenerCategorias();
-  await crearCategoriaInventarioRepo(n);
-  return obtenerCategorias();
+/** Crea una categoría de inventario (persistida). Si ya existe (misma escritura, sin importar mayúsculas), created=false. */
+export const crearCategoriaInventario = async (
+  nombre: string
+): Promise<{ categorias: string[]; created: boolean }> => {
+  return crearCategoriaInventarioRepo(nombre);
 };
 
 export const eliminarCategoriaInventario = async (nombre: string): Promise<string[]> => {
   const n = nombre.trim();
   if (!n) return obtenerCategorias();
+  if (n.toLowerCase() === 'todos') {
+    throw forbidden('No se puede eliminar la categoría «Todos».');
+  }
+  const numItems = await contarItemsActivosPorCategoria(n);
+  if (numItems > 0) {
+    throw conflict(
+      'No se puede eliminar la categoría porque tiene ítems de inventario asignados. Reasigne los ítems a otra categoría o elimínelos primero.'
+    );
+  }
   await eliminarCategoriaInventarioRepo(n);
+  return obtenerCategorias();
+};
+
+export const renombrarCategoriaInventario = async (nombreActual: string, nombreNuevo: string) => {
+  const v = nombreActual.trim();
+  const n = nombreNuevo.trim();
+  if (!v || !n) {
+    throw badRequest('Indica el nombre actual y el nuevo nombre.');
+  }
+  if (v.toLowerCase() === 'todos' || n.toLowerCase() === 'todos') {
+    throw forbidden('No se puede usar la categoría «Todos».');
+  }
+  try {
+    await renombrarCategoriaInventarioRepo(v, n);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '';
+    if (msg === 'CATEGORIA_NOT_FOUND') {
+      throw notFound('Categoría no encontrada');
+    }
+    if (msg === 'CATEGORIA_DUPLICATE') {
+      throw conflict('Ya existe una categoría con ese nombre');
+    }
+    if (msg === 'CATEGORIA_INVALID') {
+      throw badRequest('Nombre inválido');
+    }
+    throw e;
+  }
   return obtenerCategorias();
 };
 

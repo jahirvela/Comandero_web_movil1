@@ -4,6 +4,7 @@ import '../../controllers/mesero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/product_model.dart';
 import '../../utils/app_colors.dart';
+import 'product_modifier_modal.dart';
 
 class CartView extends StatefulWidget {
   const CartView({super.key});
@@ -439,6 +440,13 @@ class _CartViewState extends State<CartView> {
               ),
               const SizedBox(height: 8),
               IconButton(
+                onPressed: () => _editCartItem(context, item, controller),
+                icon: const Icon(Icons.edit_outlined),
+                color: AppColors.primary,
+                iconSize: isTablet ? 22.0 : 19.0,
+                tooltip: 'Editar detalle',
+              ),
+              IconButton(
                 onPressed: () {
                   context.read<MeseroController>().removeFromCart(item.id);
                 },
@@ -460,6 +468,38 @@ class _CartViewState extends State<CartView> {
       return customPrice.toDouble();
     }
     return item.product.price;
+  }
+
+  Future<void> _editCartItem(
+    BuildContext context,
+    CartItem item,
+    MeseroController controller,
+  ) async {
+    final productMap = item.product.toJson();
+    productMap['category'] = item.product.displayCategoryName;
+    productMap['hasSizes'] = item.product.hasSizes;
+    productMap['sizes'] = item.product.sizes.map((s) => s.toJson()).toList();
+
+    final result = await ProductModifierModal.show(
+      context,
+      productMap,
+      item.customizations,
+    );
+    if (result == null) return;
+
+    controller.updateCartItem(item.id, {
+      'quantity': result['quantity'] as int,
+      'sauce': result['sauce'] as String?,
+      'saucePrice': (result['saucePrice'] as num?)?.toDouble() ?? 0.0,
+      'size': result['size'] as String?,
+      'sizeId': result['sizeId'] as int?,
+      'sizePrice': (result['sizePrice'] as num?)?.toDouble(),
+      'unitPrice': (result['unitPrice'] as num?)?.toDouble(),
+      'temperature': result['temperature'] as String?,
+      'kitchenNotes': result['kitchenNotes'] as String? ?? '',
+      'extras': result['extras'] as List<dynamic>? ?? [],
+      'extraPrices': result['extraPrices'] as List<dynamic>? ?? [],
+    });
   }
 
   Widget _buildAddMoreProductsButton(
