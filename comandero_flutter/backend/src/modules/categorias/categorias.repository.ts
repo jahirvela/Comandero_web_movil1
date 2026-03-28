@@ -117,6 +117,19 @@ export const actualizarCategoria = async (
   );
 };
 
+export const contarProductosEnCategoria = async (categoriaId: number): Promise<number> => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `
+    SELECT COUNT(*) AS cnt
+    FROM producto
+    WHERE categoria_id = :categoriaId
+    `,
+    { categoriaId }
+  );
+  const row = rows[0] as { cnt: number };
+  return Number(row?.cnt ?? 0);
+};
+
 export const eliminarCategoria = async (id: number) => {
   await withTransaction(async (conn) => {
     const [categoriaRows] = await conn.query<CategoriaRow[]>(

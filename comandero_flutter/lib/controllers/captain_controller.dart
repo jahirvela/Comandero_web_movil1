@@ -59,11 +59,48 @@ class CaptainController extends ChangeNotifier {
   String get selectedPriority => _selectedPriority;
   List<BillModel> get pendingBills => _billRepository.pendingBills;
 
+  String _normalize(String value) {
+    return value
+        .toLowerCase()
+        .trim()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n')
+        .replaceAll(' ', '_');
+  }
+
+  bool _priorityMatch(String selected, String alertPriority) {
+    if (selected == 'todas') return true;
+    final s = _normalize(selected);
+    final p = _normalize(alertPriority);
+    if (s == p) return true;
+    // Compatibilidad entre valores legacy y nuevos
+    if ((s == 'alta' || s == 'urgente') && (p == 'high' || p == 'urgent')) {
+      return true;
+    }
+    if (s == 'normal' && (p == 'medium' || p == 'normal')) return true;
+    return false;
+  }
+
+  String _normalizeAlertPriority(String rawPriority) {
+    final p = _normalize(rawPriority);
+    if (p == 'urgente' || p == 'urgent' || p == 'alta' || p == 'high') {
+      return 'high';
+    }
+    if (p == 'normal' || p == 'media' || p == 'medium' || p == 'low') {
+      return 'medium';
+    }
+    return 'medium';
+  }
+
   // Obtener alertas filtradas: solo órdenes activas (enviadas a cocina, no pagadas/canceladas)
   List<CaptainAlert> get filteredAlerts {
     return _alerts.where((alert) {
-      final priorityMatch =
-          _selectedPriority == 'todas' || alert.priority == _selectedPriority;
+      final priorityMatch = _priorityMatch(_selectedPriority, alert.priority);
       final orderNumber = alert.orderNumber;
       final ordenSigueActiva = orderNumber == null ||
           _activeOrders.any((o) => o.id == orderNumber);
@@ -74,9 +111,10 @@ class CaptainController extends ChangeNotifier {
   // Obtener órdenes filtradas
   List<OrderModel> get filteredOrders {
     return _activeOrders.where((order) {
+      final selected = _normalize(_selectedOrderStatus);
+      final status = _normalize(order.status);
       final statusMatch =
-          _selectedOrderStatus == 'todas' ||
-          order.status.toLowerCase().contains(_selectedOrderStatus.toLowerCase());
+          selected == 'todas' || status == selected || status.contains(selected);
       return statusMatch;
     }).toList();
   }
@@ -248,13 +286,7 @@ class CaptainController extends ChangeNotifier {
         }
         
         // Mapear prioridad
-        String priority = 'medium';
-        final alertPriorityLower = alert.priority.toLowerCase();
-        if (alertPriorityLower == 'urgente' || alertPriorityLower == 'urgent') {
-          priority = 'high';
-        } else if (alertPriorityLower == 'high') {
-          priority = 'high';
-        }
+        final priority = _normalizeAlertPriority(alert.priority);
         
         // Mapear tipo de alerta
         String alertType = 'order_delayed';
@@ -822,7 +854,7 @@ class CaptainController extends ChangeNotifier {
   // Obtener órdenes urgentes
   List<OrderModel> getUrgentOrders() {
     return _activeOrders.where((order) {
-      final priority = (order.priority ?? '').toLowerCase();
+      final priority = order.priority.toLowerCase();
       return priority == 'alta' || priority == 'urgente' || priority == 'high';
     }).toList();
   }
@@ -944,9 +976,7 @@ class CaptainController extends ChangeNotifier {
     final now = date_utils.AppDateUtils.nowCdmx();
     
     return bills.map((bill) {
-      final elapsed = bill.createdAt != null 
-          ? now.difference(bill.createdAt!).inMinutes 
-          : 0;
+      final elapsed = now.difference(bill.createdAt).inMinutes;
       
       return {
         'id': bill.id,
@@ -955,7 +985,7 @@ class CaptainController extends ChangeNotifier {
         'tableDisplayLabel': bill.tableDisplayLabel,
         'total': bill.total,
         'waiter': bill.waiterName ?? 'Mesero',
-        'isTakeaway': bill.isTakeaway ?? false,
+        'isTakeaway': bill.isTakeaway,
         'customerName': bill.customerName,
         'elapsedMinutes': elapsed,
       };
@@ -1104,13 +1134,9 @@ class CaptainController extends ChangeNotifier {
               metadata = Map<String, dynamic>.from(metadataRaw);
             }
             
-            String priority = metadata['priority']?.toString() ?? 'Normal';
-            String priorityOldFormat = 'medium';
-            if (priority.toLowerCase() == 'urgente' || priority.toLowerCase() == 'urgent') {
-              priorityOldFormat = 'high';
-            } else if (priority.toLowerCase() == 'high') {
-              priorityOldFormat = 'high';
-            }
+            final priorityOldFormat = _normalizeAlertPriority(
+              metadata['priority']?.toString() ?? 'Normal',
+            );
             
             // Determinar tipo de alerta
             String alertType = 'order_delayed';

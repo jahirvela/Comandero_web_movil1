@@ -165,32 +165,50 @@ export const obtenerInsumoPorCodigoBarras = async (codigoBarras: string) => {
   };
 };
 
-// Función auxiliar para verificar y crear la columna categoria si no existe
+/** Requerida para listar/crear/borrar categorías de inventario que dependen de inventario_item.categoria */
 const ensureCategoriaColumnExists = async () => {
+  const [columns] = await pool.query(
+    `
+    SELECT COLUMN_NAME
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'inventario_item'
+      AND COLUMN_NAME = 'categoria'
+    `
+  );
+
+  if ((columns as Array<{ COLUMN_NAME: string }>).length > 0) {
+    return;
+  }
+
   try {
-    const [columns] = await pool.query(
+    await pool.execute(
       `
-      SELECT COLUMN_NAME
-      FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'inventario_item'
-        AND COLUMN_NAME = 'categoria'
+      ALTER TABLE inventario_item
+      ADD COLUMN categoria VARCHAR(64) NOT NULL DEFAULT 'Otros'
       `
     );
-
-    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
-      // La columna no existe, crearla
-      await pool.execute(
-        `
-        ALTER TABLE inventario_item
-        ADD COLUMN categoria VARCHAR(64) NOT NULL DEFAULT 'Otros'
-        `
-      );
-      console.log('✓ Columna categoria creada automáticamente en inventario_item');
-    }
+    console.log('✓ Columna categoria creada automáticamente en inventario_item');
   } catch (error: any) {
-    // Si falla la verificación/creación, solo loguear el error pero no fallar
-    console.warn('Advertencia: No se pudo verificar/crear la columna categoria:', error.message);
+    throw new Error(
+      `No se pudo crear la columna categoria en inventario_item (${error?.message ?? error}). ` +
+        `En el servidor ejecuta: npm run migrate:inventory-category`
+    );
+  }
+
+  const [again] = await pool.query(
+    `
+    SELECT COLUMN_NAME
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'inventario_item'
+      AND COLUMN_NAME = 'categoria'
+    `
+  );
+  if ((again as Array<{ COLUMN_NAME: string }>).length === 0) {
+    throw new Error(
+      'La columna categoria sigue ausente tras ALTER. Ejecuta en el backend: npm run migrate:inventory-category'
+    );
   }
 };
 
@@ -745,80 +763,163 @@ const ensureInventarioCategoriaTableExists = async () => {
   }
 };
 
-/** Inserta una categoría en inventario_categoria (si no existe ya). No lanza si el nombre ya existe. Devuelve la lista actualizada de categorías. */
-export const crearCategoriaInventario = async (nombre: string): Promise<string[]> => {
+/** Inserta una categoría en inventario_categoria. Devuelve lista actual y si hubo inserción (false = duplicado o ya existía en ítems). */
+export const crearCategoriaInventario = async (
+  nombre: string
+): Promise<{ categorias: string[]; created: boolean }> => {
   await ensureInventarioCategoriaTableExists();
   const n = nombre.trim();
-  if (!n) return obtenerCategoriasUnicas();
+  if (!n) {
+    const categorias = await obtenerCategoriasUnicas();
+    return { categorias, created: false };
+  }
+  const antes = await obtenerCategoriasUnicas();
+  if (antes.some((c) => c.toLowerCase() === n.toLowerCase())) {
+    return { categorias: antes, created: false };
+  }
   try {
-    await pool.execute(
-      `INSERT IGNORE INTO inventario_categoria (nombre) VALUES (:nombre)`,
+    const [result] = await pool.execute(
+      `INSERT INTO inventario_categoria (nombre) VALUES (:nombre)`,
       { nombre: n }
     );
-  } catch (error: any) {
+    const affected = (result as ResultSetHeader).affectedRows ?? 0;
+    const categorias = await obtenerCategoriasUnicas();
+    return { categorias, created: affected > 0 };
+  } catch (error: unknown) {
+    const err = error as { code?: string };
+    if (err.code === 'ER_DUP_ENTRY') {
+      const categorias = await obtenerCategoriasUnicas();
+      return { categorias, created: false };
+    }
     throw error;
   }
-  return obtenerCategoriasUnicas();
 };
 
-/** Elimina una categoría de inventario y reasigna ítems activos a "Otros". */
-export const eliminarCategoriaInventario = async (nombre: string): Promise<string[]> => {
+/** Cuenta ítems activos cuya categoría coincide (sin distinguir mayúsculas). */
+export const contarItemsActivosPorCategoria = async (nombre: string): Promise<number> => {
+  await ensureCategoriaColumnExists();
+  const n = nombre.trim();
+  if (!n) return 0;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `
+    SELECT COUNT(*) AS cnt
+    FROM inventario_item
+    WHERE activo = 1
+      AND LOWER(TRIM(categoria)) = LOWER(TRIM(:nombre))
+    `,
+    { nombre: n }
+  );
+  const row = rows[0] as { cnt: number };
+  return Number(row?.cnt ?? 0);
+};
+
+/** Quita la fila en inventario_categoria si existía (categoría vacía en el catálogo). No toca ítems. */
+export const eliminarCategoriaInventario = async (nombre: string): Promise<void> => {
   await ensureInventarioCategoriaTableExists();
   const n = nombre.trim();
-  if (!n) return obtenerCategoriasUnicas();
+  if (!n) return;
 
-  await withTransaction(async (conn) => {
-    await conn.execute(
-      `DELETE FROM inventario_categoria WHERE nombre = :nombre`,
-      { nombre: n }
-    );
-    await conn.execute(
-      `
-      UPDATE inventario_item
-      SET categoria = 'Otros', actualizado_en = NOW()
-      WHERE activo = 1 AND categoria = :nombre
-      `,
-      { nombre: n }
-    );
-  });
-
-  return obtenerCategoriasUnicas();
+  await pool.execute(
+    `
+    DELETE FROM inventario_categoria
+    WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(:nombre))
+    `,
+    { nombre: n }
+  );
 };
 
-export const obtenerCategoriasUnicas = async () => {
-  await ensureInventarioCategoriaTableExists();
+const categoriasDesdeInventarioItems = async (): Promise<string[]> => {
   try {
     const [rows] = await pool.query(
       `
-      (
-        SELECT DISTINCT categoria AS nombre
-        FROM inventario_item
-        WHERE activo = 1 AND categoria IS NOT NULL AND TRIM(categoria) != ''
-      )
-      UNION
-      (
-        SELECT nombre FROM inventario_categoria
-      )
-      ORDER BY nombre
+      SELECT DISTINCT categoria AS nombre
+      FROM inventario_item
+      WHERE activo = 1 AND categoria IS NOT NULL AND TRIM(categoria) != ''
+      ORDER BY categoria
       `
     );
-
-    return (rows as Array<{ nombre: string }>).map((row) => (row.nombre ?? '').trim()).filter(cat => cat !== '');
+    return (rows as Array<{ nombre: string }>)
+      .map((row) => (row.nombre ?? '').trim())
+      .filter((cat) => cat !== '');
   } catch (error: any) {
     if (error.code === 'ER_BAD_FIELD_ERROR' || error.message?.includes('Unknown column')) {
-      try {
-        const [rows] = await pool.query(
-          `SELECT DISTINCT categoria FROM inventario_item WHERE activo = 1 AND categoria IS NOT NULL AND categoria != '' ORDER BY categoria`
-        );
-        return (rows as Array<{ categoria: string }>).map((row) => row.categoria ?? '').filter(cat => cat !== '');
-      } catch {
-        return [];
-      }
-    }
-    if (error.code === 'ER_NO_SUCH_TABLE') {
       return [];
     }
     throw error;
   }
+};
+
+const categoriasDesdeTablaInventarioCategoria = async (): Promise<string[]> => {
+  try {
+    const [rows] = await pool.query(`SELECT nombre FROM inventario_categoria ORDER BY nombre`);
+    return (rows as Array<{ nombre: string }>)
+      .map((row) => (row.nombre ?? '').trim())
+      .filter((cat) => cat !== '');
+  } catch (error: any) {
+    if (error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR') {
+      return [];
+    }
+    throw error;
+  }
+};
+
+/** Une categorías de ítems y de la tabla auxiliar (sin UNION: evita fallar si falta una tabla). */
+export const obtenerCategoriasUnicas = async () => {
+  await ensureInventarioCategoriaTableExists();
+  await ensureCategoriaColumnExists();
+  const [desdeItems, desdeTabla] = await Promise.all([
+    categoriasDesdeInventarioItems(),
+    categoriasDesdeTablaInventarioCategoria()
+  ]);
+  const set = new Set<string>([...desdeItems, ...desdeTabla]);
+  return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+};
+
+/** Renombra categoría en ítems y en inventario_categoria (misma escritura, sin distinguir mayúsculas). */
+export const renombrarCategoriaInventario = async (
+  nombreActual: string,
+  nombreNuevo: string
+): Promise<void> => {
+  await ensureInventarioCategoriaTableExists();
+  await ensureCategoriaColumnExists();
+  const v = nombreActual.trim();
+  const n = nombreNuevo.trim();
+  if (!v || !n) {
+    throw new Error('CATEGORIA_INVALID');
+  }
+
+  const todas = await obtenerCategoriasUnicas();
+  const existeViejo = todas.some((c) => c.toLowerCase() === v.toLowerCase());
+  if (!existeViejo) {
+    throw new Error('CATEGORIA_NOT_FOUND');
+  }
+  const conflicto = todas.some(
+    (c) => c.toLowerCase() === n.toLowerCase() && c.toLowerCase() !== v.toLowerCase()
+  );
+  if (conflicto) {
+    throw new Error('CATEGORIA_DUPLICATE');
+  }
+  if (v.toLowerCase() === n.toLowerCase()) {
+    return;
+  }
+
+  await withTransaction(async (conn) => {
+    await conn.execute(
+      `
+      UPDATE inventario_item
+      SET categoria = :n, actualizado_en = NOW()
+      WHERE activo = 1 AND LOWER(TRIM(categoria)) = LOWER(TRIM(:v))
+      `,
+      { n, v }
+    );
+    await conn.execute(
+      `
+      UPDATE inventario_categoria
+      SET nombre = :n
+      WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(:v))
+      `,
+      { n, v }
+    );
+  });
 };
 

@@ -549,7 +549,7 @@ class _MenuViewState extends State<MenuView> {
     );
 
     // Abrir modal de modificadores
-    final result = await ProductModifierModal.show(context, item);
+    final result = await ProductModifierModal.show(context, item, null);
 
     if (result != null && mounted) {
       // IMPORTANTE: Usar el precio unitario del producto, NO el totalPrice

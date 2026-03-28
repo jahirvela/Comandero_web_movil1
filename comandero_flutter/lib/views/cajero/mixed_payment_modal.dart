@@ -45,6 +45,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   final List<_MixedPaymentEntry> _entries = [];
   final _discountController = TextEditingController();
   final _tipController = TextEditingController();
+  final _tipPercentageController = TextEditingController();
   bool _submitted = false;
 
   double get _originalBillTotal => widget.bill.calculatedTotal;
@@ -67,6 +68,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
     _entries.add(
       _MixedPaymentEntry(id: 'entry-${DateTime.now().millisecondsSinceEpoch}'),
     );
+    _tipPercentageController.text = '0';
   }
 
   @override
@@ -75,9 +77,30 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
       entry.dispose();
     }
     _tipController.dispose();
+    _tipPercentageController.dispose();
     _discountController.dispose();
     super.dispose();
   }
+  void _updateTipFromPercentage(String value) {
+    final pct = (double.tryParse(value) ?? 0).clamp(0, 100).toDouble();
+    final tip = (_billTotal * (pct / 100));
+    _tipController.text = tip.toStringAsFixed(2);
+    _tipController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _tipController.text.length),
+    );
+    setState(() {});
+  }
+
+  void _updateTipPercentageFromAmount(String value) {
+    final tip = double.tryParse(value) ?? 0;
+    final pct = _billTotal > 0 ? (tip / _billTotal) * 100 : 0.0;
+    _tipPercentageController.text = pct.toStringAsFixed(2);
+    _tipPercentageController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _tipPercentageController.text.length),
+    );
+    setState(() {});
+  }
+
 
   bool _isEntryValid(_MixedPaymentEntry entry) {
     return entry.amount > 0;
@@ -352,15 +375,39 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   }
 
   Widget _buildTipField(bool isTablet) {
-    return TextFormField(
-      controller: _tipController,
-      decoration: InputDecoration(
-        labelText: 'Propina global (opcional)',
-        prefixIcon: const Icon(Icons.volunteer_activism),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-      keyboardType: TextInputType.number,
-      onChanged: (_) => setState(() {}),
+    return Row(
+      children: [
+        Expanded(
+          child: TextFormField(
+            controller: _tipController,
+            decoration: InputDecoration(
+              labelText: 'Propina global \$',
+              prefixIcon: const Icon(Icons.volunteer_activism),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: _updateTipPercentageFromAmount,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: TextFormField(
+            controller: _tipPercentageController,
+            decoration: InputDecoration(
+              labelText: 'Propina global %',
+              prefixIcon: const Icon(Icons.percent),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            keyboardType: TextInputType.number,
+            validator: (value) {
+              final pct = double.tryParse(value ?? '') ?? 0;
+              if (pct < 0 || pct > 100) return 'Usa un % entre 0 y 100';
+              return null;
+            },
+            onChanged: _updateTipFromPercentage,
+          ),
+        ),
+      ],
     );
   }
 
@@ -544,12 +591,19 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
             TextFormField(
               controller: entry.referenceCtrl,
               decoration: InputDecoration(
-                labelText: 'Referencia / clave (opcional)',
+                labelText: 'Referencia / clave *',
                 prefixIcon: const Icon(Icons.link),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),
+              validator: (_) {
+                final ref = entry.referenceCtrl.text.trim();
+                if (entry.type != PaymentType.transfer) return null;
+                if (ref.isEmpty) return 'La referencia es obligatoria';
+                if (ref.length < 4) return 'Referencia demasiado corta';
+                return null;
+              },
               onChanged: (_) => setState(() {}),
             ),
           ],

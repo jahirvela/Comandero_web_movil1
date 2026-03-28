@@ -64,6 +64,10 @@ export const crearCategoriaInventarioSchema = z.object({
   nombre: z.string().min(2, 'Mínimo 2 caracteres').max(64).trim()
 });
 
+export const renombrarCategoriaInventarioSchema = z.object({
+  nuevoNombre: z.string().min(2, 'Mínimo 2 caracteres').max(64).trim()
+});
+
 export type CrearInsumoInput = z.infer<typeof crearInsumoSchema>;
 export type ActualizarInsumoInput = z.infer<typeof actualizarInsumoSchema>;
 export type CrearMovimientoInput = z.infer<typeof crearMovimientoSchema>;

@@ -3,13 +3,17 @@ import {
   obtenerCategoriaPorId,
   crearCategoria,
   actualizarCategoria,
-  eliminarCategoria
+  eliminarCategoria,
+  contarProductosEnCategoria
 } from './categorias.repository.js';
 import type {
   ActualizarCategoriaInput,
   CrearCategoriaInput
 } from './categorias.schemas.js';
-import { notFound } from '../../utils/http-error.js';
+import { notFound, forbidden, conflict } from '../../utils/http-error.js';
+
+const esNombreCategoriaTodosReservada = (nombre: string) =>
+  nombre.trim().toLowerCase() === 'todos';
 
 export const obtenerCategorias = () => listarCategorias();
 
@@ -47,6 +51,15 @@ export const eliminarCategoriaExistente = async (id: number) => {
   const existe = await obtenerCategoriaPorId(id);
   if (!existe) {
     throw notFound('Categoría no encontrada');
+  }
+  if (esNombreCategoriaTodosReservada(existe.nombre)) {
+    throw forbidden('No se puede eliminar la categoría «Todos».');
+  }
+  const numProductos = await contarProductosEnCategoria(id);
+  if (numProductos > 0) {
+    throw conflict(
+      'No se puede eliminar la categoría porque tiene productos asignados. Reasigne los productos a otra categoría o elimínelos primero.'
+    );
   }
   await eliminarCategoria(id);
 };

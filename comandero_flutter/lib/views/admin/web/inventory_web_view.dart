@@ -4,6 +4,7 @@ import '../../../controllers/admin_controller.dart';
 import '../../../models/admin_model.dart';
 import '../../../services/reportes_service.dart';
 import '../../../utils/app_colors.dart';
+import '../../../utils/string_search_utils.dart';
 
 class InventoryWebView extends StatefulWidget {
   const InventoryWebView({super.key});
@@ -1130,24 +1131,26 @@ class _InventoryWebViewState extends State<InventoryWebView> {
   List<InventoryItem> _getFilteredItems(AdminController controller) {
     var items = controller.inventoryItems;
 
-    // Filtrar por búsqueda solo cuando hay texto
-    final q = _searchQuery.trim();
-    if (q.isNotEmpty) {
-      items = items
-          .where(
-            (item) =>
-                item.name.toLowerCase().contains(q.toLowerCase()) ||
-                (item.description?.toLowerCase().contains(q.toLowerCase()) ??
-                    false) ||
-                item.category.toLowerCase().contains(q.toLowerCase()),
-          )
-          .toList();
+    final qNorm = normalizeForInsensitiveSearch(_searchQuery);
+    if (qNorm.isNotEmpty) {
+      items = items.where((item) {
+        return normalizeForInsensitiveSearch(item.name).contains(qNorm) ||
+            normalizeForInsensitiveSearch(item.category).contains(qNorm) ||
+            (item.description != null &&
+                normalizeForInsensitiveSearch(item.description!).contains(qNorm)) ||
+            (item.supplier != null &&
+                normalizeForInsensitiveSearch(item.supplier!).contains(qNorm)) ||
+            (item.codigoBarras != null &&
+                normalizeForInsensitiveSearch(item.codigoBarras!).contains(qNorm));
+      }).toList();
     }
 
-    // Filtrar por categoría
     if (_selectedCategory != 'todas') {
+      final cat = _selectedCategory.trim().toLowerCase();
       items = items
-          .where((item) => item.category == _selectedCategory)
+          .where(
+            (item) => item.category.trim().toLowerCase() == cat,
+          )
           .toList();
     }
 

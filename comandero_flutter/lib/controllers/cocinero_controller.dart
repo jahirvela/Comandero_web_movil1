@@ -76,6 +76,37 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   List<OldKitchenAlert> get alerts => List.unmodifiable(_alerts);
   Map<String, String> get stationOptions => Map.unmodifiable(_stationOptions);
 
+  String _normalizeRole(String? role) {
+    if (role == null || role.trim().isEmpty) return 'mesero';
+    return role
+        .toLowerCase()
+        .trim()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n');
+  }
+
+  String _normalizeAlertPriority(String rawPriority) {
+    final p = rawPriority
+        .toLowerCase()
+        .trim()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n');
+    if (p == 'urgente' || p == 'urgent' || p == 'alta' || p == 'high') {
+      return 'urgente';
+    }
+    return 'medium';
+  }
+
   String _stationKeyFromCategory(String? rawName) {
     if (rawName == null || rawName.trim().isEmpty) return KitchenStation.tacos;
     final normalized = rawName
@@ -115,7 +146,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
 
   // Obtener pedidos filtrados
   List<OrderModel> get filteredOrders {
-    return _orders.where((order) {
+    final filtered = _orders.where((order) {
       final stationMatch =
           _selectedStation == 'todas' ||
           order.items.any((item) => item.station == _selectedStation);
@@ -138,18 +169,52 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
 
       return stationMatch && statusMatch && showMatch;
     }).toList();
+
+    int statusRank(String status) {
+      switch (status) {
+        case OrderStatus.pendiente:
+          return 0;
+        case OrderStatus.enPreparacion:
+          return 1;
+        case OrderStatus.listo:
+          return 2;
+        case OrderStatus.listoParaRecoger:
+          return 3;
+        case OrderStatus.cancelada:
+          return 4;
+        default:
+          return 99;
+      }
+    }
+
+    filtered.sort((a, b) {
+      // Primero urgentes
+      final priorityCmp = (b.priority == OrderPriority.alta ? 1 : 0)
+          .compareTo(a.priority == OrderPriority.alta ? 1 : 0);
+      if (priorityCmp != 0) return priorityCmp;
+
+      // Luego estado operativo
+      final statusCmp = statusRank(a.status).compareTo(statusRank(b.status));
+      if (statusCmp != 0) return statusCmp;
+
+      // Y dentro del mismo estado, las más antiguas primero (FIFO)
+      return a.orderTime.compareTo(b.orderTime);
+    });
+
+    return filtered;
   }
 
   List<OldKitchenAlert> get filteredAlerts {
     return _alerts.where((alert) {
       if (_selectedAlert == 'todas') return true;
+      final tipo = alert.type.toLowerCase();
       switch (_selectedAlert) {
         case 'demoras':
-          return alert.type.toLowerCase() == 'demora';
+          return tipo.contains('demora') || tipo.contains('delay');
         case 'canceladas':
-          return alert.type.toLowerCase().contains('cancel');
+          return tipo.contains('cancel');
         case 'cambios':
-          return alert.type.toLowerCase().contains('cambio');
+          return tipo.contains('cambio') || tipo.contains('update');
         default:
           return true;
       }
@@ -632,10 +697,10 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
           type: alertType,
           reason: alert.message,
           details: null,
-          priority: priority,
+          priority: _normalizeAlertPriority(priority),
           timestamp: alert.createdAt ?? date_utils.AppDateUtils.nowCdmx(),
           sentBy: alert.createdByUsername,
-          sentByRole: alert.createdByRole,
+          sentByRole: _normalizeRole(alert.createdByRole),
         );
 
         // Evitar duplicados

@@ -298,6 +298,14 @@ class AdminApp extends StatelessWidget {
                 ),
               ),
               Text(
+                'Comandix Restaurante',
+                style: TextStyle(
+                  fontSize: isTablet ? 12.0 : 11.0,
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
                 '${authController.userName} • Administrador',
                 style: TextStyle(
                   fontSize: isTablet ? 14.0 : 12.0,
@@ -506,6 +514,13 @@ class AdminApp extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: AppTheme.fontWeightBold,
                 color: AppColors.textPrimary,
+              ),
+            ),
+            SizedBox(height: AppTheme.spacingXS),
+            Text(
+              'Vista rápida del estado actual: ventas, órdenes, mesas y stock crítico.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.textSecondary,
               ),
             ),
             SizedBox(height: AppTheme.spacingLG),
@@ -859,19 +874,41 @@ class AdminApp extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Título y filtros
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Consumo del Día',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: AppTheme.fontWeightBold,
-                    color: AppColors.textPrimary,
+            if (isTablet)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Consumo del Día',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: AppTheme.fontWeightBold,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
-                ),
-                // Filtros: Todos, Solo para llevar, Mesas
-                _buildConsumptionFilters(context, controller, isTablet),
-              ],
+                  _buildConsumptionFilters(context, controller, isTablet),
+                ],
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Consumo del Día',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: AppTheme.fontWeightBold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingSM),
+                  _buildConsumptionFilters(context, controller, isTablet),
+                ],
+              ),
+            SizedBox(height: AppTheme.spacingXS),
+            Text(
+              'Métricas calculadas desde tickets de hoy. "Por cobrar" incluye pendientes y sin método de pago.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
             SizedBox(height: AppTheme.spacingLG),
 
@@ -1658,12 +1695,72 @@ class AdminApp extends StatelessWidget {
           ),
           SizedBox(height: AppTheme.spacingXL),
 
-          // Filtros de área
-          _buildAreaFilters(context, controller, isTablet),
+          // 1) Administración de áreas
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+              side: BorderSide(color: AppColors.border.withValues(alpha: 0.6)),
+            ),
+            child: Padding(
+              padding: EdgeInsets.all(isTablet ? AppTheme.spacingLG : AppTheme.spacingMD),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '1. Categorías de área',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingXS),
+                  Text(
+                    'Primero crea/edita áreas (Terraza, Patio, etc.) y después asigna mesas.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                  _buildAreaFilters(context, controller, isTablet),
+                ],
+              ),
+            ),
+          ),
           SizedBox(height: AppTheme.spacingLG),
 
-          // Grid de mesas
-          _buildTablesGrid(context, controller, isTablet, isDesktop),
+          // 2) Administración de mesas
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+              side: BorderSide(color: AppColors.border.withValues(alpha: 0.6)),
+            ),
+            child: Padding(
+              padding: EdgeInsets.all(isTablet ? AppTheme.spacingLG : AppTheme.spacingMD),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '2. Mesas',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingXS),
+                  Text(
+                    'Gestiona las mesas y su asignación por área.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  SizedBox(height: AppTheme.spacingMD),
+                  _buildTablesGrid(context, controller, isTablet, isDesktop),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -2828,11 +2925,15 @@ class AdminApp extends StatelessWidget {
                   ),
                 ),
               ),
-              // Resto de categorías
+              // Resto de categorías (solo «Todos» del listado no lleva botón borrar)
               for (final category in controller.getAllCategories())
                 Padding(
                   padding: EdgeInsets.only(right: AppTheme.spacingSM),
-                  child: FilterChip(
+                  child: Builder(
+                    builder: (context) {
+                      final puedeBorrar =
+                          category.trim().toLowerCase() != 'todos';
+                      return FilterChip(
                     label: Text(
                       category,
                       style: TextStyle(
@@ -2850,16 +2951,20 @@ class AdminApp extends StatelessWidget {
                         controller.setSelectedMenuCategory(category);
                       }
                     },
-                    onDeleted: () => _handleMenuCategoryDeletion(
-                      context,
-                      controller,
-                      category,
-                    ),
-                    deleteIcon: Icon(
+                    onDeleted: puedeBorrar
+                        ? () => _handleMenuCategoryDeletion(
+                              context,
+                              controller,
+                              category,
+                            )
+                        : null,
+                    deleteIcon: puedeBorrar
+                        ? Icon(
                       Icons.close,
                       size: isTablet ? 16 : 14,
                       color: AppColors.error,
-                    ),
+                    )
+                        : null,
                     selectedColor: AppColors.primary,
                     checkmarkColor: Colors.white,
                     labelStyle: TextStyle(
@@ -2867,9 +2972,21 @@ class AdminApp extends StatelessWidget {
                           ? Colors.white
                           : AppColors.textPrimary,
                     ),
+                      );
+                    },
                   ),
                 ),
             ],
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.only(top: AppTheme.spacingSM),
+          child: Text(
+            'Solo «Todos» no se elimina. «Otros» u otra categoría solo se borra si no tiene productos: edita el producto (lápiz) y asígnalo a otra categoría antes.',
+            style: TextStyle(
+              fontSize: isTablet ? AppTheme.fontSizeXS : AppTheme.fontSizeXS - 1,
+              color: AppColors.textSecondary,
+            ),
           ),
         ),
       ],
@@ -5681,64 +5798,167 @@ class AdminApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
+          if (isTablet) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Gestión de Inventario',
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: AppTheme.fontWeightBold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PopupMenuButton<String>(
+                      tooltip: 'Exportar inventario',
+                      icon: const Icon(Icons.file_download_outlined),
+                      onSelected: (value) => _showInventoryExportDialog(
+                        context,
+                        controller,
+                        value,
+                      ),
+                      itemBuilder: (ctx) => const [
+                        PopupMenuItem(
+                          value: 'csv',
+                          child: Text('Exportar CSV'),
+                        ),
+                        PopupMenuItem(
+                          value: 'pdf',
+                          child: Text('Exportar PDF'),
+                        ),
+                      ],
+                    ),
+                    SizedBox(width: AppTheme.spacingSM),
+                    OutlinedButton(
+                      onPressed: () => _showBuscarPorCodigoBarrasDialog(
+                        context,
+                        controller,
+                        isTablet,
+                      ),
+                      child: const Text('Buscar por código'),
+                    ),
+                    SizedBox(width: AppTheme.spacingSM),
+                    ElevatedButton.icon(
+                      onPressed: () =>
+                          _showAddInventoryModal(context, controller, isTablet),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Agregar Producto'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ] else ...[
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
                   'Gestión de Inventario',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: AppTheme.fontWeightBold,
                     color: AppColors.textPrimary,
                   ),
                 ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  PopupMenuButton<String>(
-                    tooltip: 'Exportar inventario',
-                    icon: const Icon(Icons.file_download_outlined),
-                    onSelected: (value) => _showInventoryExportDialog(
-                      context,
-                      controller,
-                      value,
-                    ),
-                    itemBuilder: (ctx) => const [
-                      PopupMenuItem(
-                        value: 'csv',
-                        child: Text('Exportar CSV'),
-                      ),
-                      PopupMenuItem(
-                        value: 'pdf',
-                        child: Text('Exportar PDF'),
-                      ),
-                    ],
-                  ),
-                  SizedBox(width: AppTheme.spacingSM),
-                  OutlinedButton(
-                    onPressed: () => _showBuscarPorCodigoBarrasDialog(
-                      context,
-                      controller,
-                      isTablet,
-                    ),
-                    child: const Text('Buscar por código'),
-                  ),
-                  SizedBox(width: AppTheme.spacingSM),
-                  ElevatedButton.icon(
-                    onPressed: () =>
-                        _showAddInventoryModal(context, controller, isTablet),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Agregar Producto'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                SizedBox(height: AppTheme.spacingSM),
+                LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    final columns = constraints.maxWidth < 420 ? 1 : 2;
+                    final spacing = AppTheme.spacingSM;
+                    final totalSpacing = spacing * (columns - 1);
+                    final buttonWidth = (constraints.maxWidth - totalSpacing) / columns;
+                    const buttonHeight = 46.0;
+
+                    return Wrap(
+                      spacing: spacing,
+                      runSpacing: spacing,
+                      children: [
+                        PopupMenuButton<String>(
+                          tooltip: 'Exportar inventario',
+                          onSelected: (value) => _showInventoryExportDialog(
+                            context,
+                            controller,
+                            value,
+                          ),
+                          itemBuilder: (ctx) => const [
+                            PopupMenuItem(
+                              value: 'csv',
+                              child: Text('Exportar CSV'),
+                            ),
+                            PopupMenuItem(
+                              value: 'pdf',
+                              child: Text('Exportar PDF'),
+                            ),
+                          ],
+                          child: SizedBox(
+                            width: buttonWidth,
+                            height: buttonHeight,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.file_download_outlined, size: 18, color: AppColors.primary),
+                                  const SizedBox(width: 8),
+                                  const Text('Exportar'),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: buttonWidth,
+                          height: buttonHeight,
+                          child: OutlinedButton(
+                            onPressed: () => _showBuscarPorCodigoBarrasDialog(
+                              context,
+                              controller,
+                              isTablet,
+                            ),
+                            child: const Text(
+                              'Buscar por código',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: buttonWidth,
+                          height: buttonHeight,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _showAddInventoryModal(
+                              context,
+                              controller,
+                              isTablet,
+                            ),
+                            icon: const Icon(Icons.add),
+                            label: const Text(
+                              'Agregar Producto',
+                              textAlign: TextAlign.center,
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
           SizedBox(height: AppTheme.spacingLG),
           Theme(
             data: Theme.of(context).copyWith(
@@ -5773,19 +5993,103 @@ class AdminApp extends StatelessWidget {
                       AppTheme.spacingMD,
                     ),
                     children: [
-                      _buildInventoryAlerts(context, controller, isTablet),
-                      SizedBox(height: AppTheme.spacingMD),
-                      _buildInventorySearchAndFilters(
-                        context,
-                        controller,
-                        isTablet,
+                      _buildInventorySubsectionCard(
+                        context: context,
+                        icon: Icons.category_outlined,
+                        title: 'Categorías',
+                        subtitle: 'Administra y filtra categorías para organizar insumos.',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Wrap(
+                                spacing: AppTheme.spacingSM,
+                                runSpacing: AppTheme.spacingSM,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: () =>
+                                        _showAddCategoryDialog(context, controller),
+                                    icon: const Icon(Icons.add_circle_outline, size: 18),
+                                    label: const Text('Nueva categoría'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () =>
+                                        _showRenameCategoryDialog(context, controller),
+                                    icon: const Icon(Icons.edit_outlined, size: 18),
+                                    label: const Text('Renombrar categoría'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(height: AppTheme.spacingSM),
+                            _buildInventorySearchAndFilters(
+                              context,
+                              controller,
+                              isTablet,
+                            ),
+                          ],
+                        ),
                       ),
                       SizedBox(height: AppTheme.spacingMD),
-                      _buildInventoryItemsList(
-                        context,
-                        controller,
-                        isTablet,
-                        isDesktop,
+                      _buildInventorySubsectionCard(
+                        context: context,
+                        icon: Icons.inventory_2_outlined,
+                        title: 'Insumos',
+                        subtitle:
+                            'Alta, edición y consulta de productos con stock actual.',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: AppTheme.spacingSM,
+                              runSpacing: AppTheme.spacingSM,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => _showAddInventoryModal(
+                                    context,
+                                    controller,
+                                    isTablet,
+                                  ),
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('Agregar insumo'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () => _showBuscarPorCodigoBarrasDialog(
+                                    context,
+                                    controller,
+                                    isTablet,
+                                  ),
+                                  icon: const Icon(Icons.qr_code_scanner, size: 18),
+                                  label: const Text('Buscar por código'),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: AppTheme.spacingSM),
+                            _buildInventoryInsumosFilterHint(
+                              context,
+                              controller,
+                              isTablet,
+                            ),
+                            SizedBox(height: AppTheme.spacingSM),
+                            _buildInventoryItemsList(
+                              context,
+                              controller,
+                              isTablet,
+                              isDesktop,
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      _buildInventorySubsectionCard(
+                        context: context,
+                        icon: Icons.warning_amber_rounded,
+                        title: 'Ajustes y alertas',
+                        subtitle:
+                            'Detecta faltantes y ajusta existencias desde cada tarjeta.',
+                        child: _buildInventoryAlerts(context, controller, isTablet),
                       ),
                     ],
                   ),
@@ -5845,7 +6149,67 @@ class AdminApp extends StatelessWidget {
                   child: ExpansionTile(
                     leading: Icon(Icons.analytics_outlined, color: AppColors.primary),
                     title: Text(
-                      'Resumen',
+                      'Reportes y exportación',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Descarga reportes por día, semana, mes o rango',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    childrenPadding: EdgeInsets.fromLTRB(
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      0,
+                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                      AppTheme.spacingMD,
+                    ),
+                    children: [
+                      Wrap(
+                        spacing: AppTheme.spacingSM,
+                        runSpacing: AppTheme.spacingSM,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _showInventoryExportDialog(
+                              context,
+                              controller,
+                              'csv',
+                            ),
+                            icon: const Icon(Icons.table_chart_outlined, size: 18),
+                            label: const Text('Exportar CSV'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => _showInventoryExportDialog(
+                              context,
+                              controller,
+                              'pdf',
+                            ),
+                            icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                            label: const Text('Exportar PDF'),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      Text(
+                        'Incluye entradas, salidas y ajustes del periodo seleccionado.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: AppTheme.spacingMD),
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 0,
+                  shape: tileShape,
+                  child: ExpansionTile(
+                    leading: Icon(Icons.insights_outlined, color: AppColors.primary),
+                    title: Text(
+                      'Resumen operativo',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: AppTheme.fontWeightSemibold,
                       ),
@@ -5863,11 +6227,7 @@ class AdminApp extends StatelessWidget {
                       AppTheme.spacingMD,
                     ),
                     children: [
-                      _buildInventoryResumenSection(
-                        context,
-                        controller,
-                        isTablet,
-                      ),
+                      _buildInventoryResumenSection(context, controller, isTablet),
                     ],
                   ),
                 ),
@@ -6317,6 +6677,57 @@ class AdminApp extends StatelessWidget {
   }
 
   // Alertas de inventario
+  Widget _buildInventorySubsectionCard({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(AppTheme.spacingMD),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.32,
+        ),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: AppColors.primary),
+              SizedBox(width: AppTheme.spacingXS),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: AppTheme.fontWeightSemibold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: AppTheme.spacingXS),
+          Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          SizedBox(height: AppTheme.spacingSM),
+          child,
+        ],
+      ),
+    );
+  }
+
+  // Alertas de inventario
   Widget _buildInventoryAlerts(
     BuildContext context,
     AdminController controller,
@@ -6386,6 +6797,72 @@ class AdminApp extends StatelessWidget {
               ],
             ),
           ),
+        ],
+        if (criticalItems.isNotEmpty) ...[
+          SizedBox(height: AppTheme.spacingMD),
+          Text(
+            'Acciones rápidas de reposición',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: AppTheme.fontWeightSemibold,
+            ),
+          ),
+          SizedBox(height: AppTheme.spacingXS),
+          Text(
+            'Aumenta stock sin buscar el producto manualmente.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          SizedBox(height: AppTheme.spacingSM),
+          for (final item in criticalItems.take(4))
+            Container(
+              margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
+              padding: EdgeInsets.all(AppTheme.spacingSM),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                border: Border.all(
+                  color: Colors.red.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: AppTheme.fontWeightSemibold,
+                          ),
+                        ),
+                        SizedBox(height: AppTheme.spacingXS),
+                        Text(
+                          'Stock actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: AppTheme.spacingSM),
+                  FilledButton.tonalIcon(
+                    onPressed: () => _showAdjustStockModal(
+                      context,
+                      item,
+                      controller,
+                      isTablet,
+                      isDecrease: false,
+                    ),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Reponer'),
+                  ),
+                ],
+              ),
+            ),
         ],
       ],
     );
@@ -6550,8 +7027,22 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Categoría "$categoryName" guardada. Ya no se borrará al recargar.'),
+                      content: Text('Categoría "$categoryName" guardada.'),
                       backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } on StateError catch (e) {
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) Navigator.of(context).pop();
+                if (e.message == 'DUPLICATE_INVENTORY_CATEGORY' && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Ya existe una categoría igual o muy similar a "$categoryName".',
+                      ),
+                      backgroundColor: Colors.orange,
+                      duration: const Duration(seconds: 4),
                     ),
                   );
                 }
@@ -6575,6 +7066,185 @@ class AdminApp extends StatelessWidget {
     );
   }
 
+  void _showRenameCategoryDialog(
+    BuildContext context,
+    AdminController controller,
+  ) {
+    final sel = controller.selectedInventoryCategory;
+    if (sel == 'todos') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Selecciona primero la categoría que quieres renombrar (un chip distinto de «Todos»).',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    final nuevoController = TextEditingController(text: sel);
+    final isTablet = MediaQuery.of(context).size.width > 600;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Renombrar categoría',
+          style: TextStyle(fontSize: isTablet ? 20 : 18),
+        ),
+        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+        content: SizedBox(
+          width: isTablet ? 400 : double.infinity,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Actual: $sel',
+                style: TextStyle(
+                  fontWeight: AppTheme.fontWeightSemibold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              SizedBox(height: AppTheme.spacingMD),
+              TextField(
+                controller: nuevoController,
+                decoration: const InputDecoration(
+                  labelText: 'Nuevo nombre',
+                  hintText: 'Ej: Verduras',
+                  border: OutlineInputBorder(),
+                ),
+                autofocus: true,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final nuevo = nuevoController.text.trim();
+              if (nuevo.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Escribe el nuevo nombre'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              if (nuevo.toLowerCase() == sel.toLowerCase()) {
+                Navigator.of(context).pop();
+                return;
+              }
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(child: CircularProgressIndicator()),
+              );
+              try {
+                await controller.renameInventoryCategory(sel, nuevo);
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Categoría renombrada a «$nuevo».'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) Navigator.of(context).pop();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Error: ${AdminApp._extractErrorMessage(e)}',
+                      ),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bajo «Insumos»: atajo «Todos» y resumen (misma lógica que los chips de categorías arriba).
+  Widget _buildInventoryInsumosFilterHint(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+  ) {
+    final cat = controller.selectedInventoryCategory;
+    final todos = cat.toLowerCase() == 'todos';
+    final total = controller.inventory.length;
+    final shown = controller.filteredInventory.length;
+    final searchOn = controller.inventorySearchQuery.trim().isNotEmpty;
+    final subtitle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: AppColors.textSecondary,
+          height: 1.35,
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'La lista usa la búsqueda y la categoría de la sección anterior. '
+          'Para ver todo el catálogo, elige «Todos».',
+          style: subtitle?.copyWith(fontSize: isTablet ? 12.5 : 11.5),
+        ),
+        SizedBox(height: AppTheme.spacingSM),
+        Wrap(
+          spacing: AppTheme.spacingSM,
+          runSpacing: AppTheme.spacingSM,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilterChip(
+              label: Text(
+                'Todos',
+                style: TextStyle(
+                  fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
+                  fontWeight:
+                      todos ? AppTheme.fontWeightSemibold : AppTheme.fontWeightNormal,
+                ),
+              ),
+              selected: todos,
+              onSelected: (selected) {
+                if (selected) {
+                  controller.setSelectedInventoryCategory('todos');
+                }
+              },
+              selectedColor: AppColors.primary,
+              checkmarkColor: Colors.white,
+              labelStyle: TextStyle(
+                color: todos ? Colors.white : AppColors.textPrimary,
+              ),
+            ),
+            Text(
+              searchOn || !todos
+                  ? '$shown de $total insumo(s) en esta vista'
+                  : '$shown insumo(s) en catálogo',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                    fontWeight: AppTheme.fontWeightMedium,
+                  ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   // Lista de productos de inventario
   Widget _buildInventoryItemsList(
     BuildContext context,
@@ -6585,6 +7255,20 @@ class AdminApp extends StatelessWidget {
     final items = controller.filteredInventory;
 
     if (items.isEmpty) {
+      final emptyInv = controller.inventory.isEmpty;
+      final notTodos =
+          controller.selectedInventoryCategory.toLowerCase() != 'todos';
+      final searchOn = controller.inventorySearchQuery.trim().isNotEmpty;
+      String emptyMsg;
+      if (emptyInv) {
+        emptyMsg = 'No hay productos en inventario';
+      } else if (notTodos || searchOn) {
+        emptyMsg =
+            'Sin coincidencias. Revisa la búsqueda, elige «Todos» en categorías '
+            '(arriba o en esta sección) o confirma que el insumo esté en la categoría activa.';
+      } else {
+        emptyMsg = 'Sin coincidencias para la búsqueda';
+      }
       return Container(
         padding: EdgeInsets.all(AppTheme.spacingXL),
         child: Center(
@@ -6593,9 +7277,7 @@ class AdminApp extends StatelessWidget {
               Icon(Icons.inventory_2, size: 64, color: AppColors.textSecondary),
               SizedBox(height: AppTheme.spacingMD),
               Text(
-                controller.inventory.isEmpty
-                    ? 'No hay productos en inventario'
-                    : 'Sin coincidencias para la búsqueda',
+                emptyMsg,
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
@@ -6959,6 +7641,14 @@ class AdminApp extends StatelessWidget {
         .join(' ');
   }
 
+  String _ticketItemsPreview(payment_models.BillModel ticket) {
+    if (ticket.items.isEmpty) return 'Sin detalle de productos';
+    final first = ticket.items.first;
+    final firstQty = first.quantity > 0 ? '${first.quantity}x ' : '';
+    if (ticket.items.length == 1) return '$firstQty${first.name}';
+    return '$firstQty${first.name} + ${ticket.items.length - 1} más';
+  }
+
   // Modal para agregar producto al inventario
   void _showAddInventoryModal(
     BuildContext context,
@@ -6982,6 +7672,12 @@ class AdminApp extends StatelessWidget {
     final contenidoPorPiezaController = TextEditingController();
     String? selectedUnidadContenido; // kg, g, L, ml (solo cuando unidad es por pieza)
     final unidadContenidoOptions = ['kg', 'g', 'L', 'ml'];
+    final categoryOptions = controller.inventoryCategories
+        .where((cat) => cat != 'todos')
+        .toList();
+    if (categoryOptions.isNotEmpty) {
+      selectedCategory = categoryOptions.first;
+    }
     bool unidadEsPiezaForm() =>
         selectedUnit == 'pza' ||
         selectedUnit == 'Pieza' ||
@@ -7058,6 +7754,17 @@ class AdminApp extends StatelessWidget {
                     }
                     return null;
                   },
+                ),
+                SizedBox(height: AppTheme.spacingSM),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      _showAddCategoryDialog(context, controller);
+                    },
+                    icon: const Icon(Icons.add_circle_outline, size: 18),
+                    label: const Text('Crear categoría'),
+                  ),
                 ),
                 SizedBox(height: AppTheme.spacingMD),
                 DropdownButtonFormField<String>(
@@ -9934,53 +10641,68 @@ class AdminApp extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Título y botón exportar CSV
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Gestión de Tickets de Cobro',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: AppTheme.fontWeightBold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              Row(
+          // Título y acciones
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 820;
+              final buttonWidth = compact
+                  ? (constraints.maxWidth - AppTheme.spacingSM) / 2
+                  : null;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Botón de refrescar
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      print('🔄 AdminView: Refrescando tickets manualmente...');
-                      controller.loadTickets();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Recargando tickets...'),
-                          backgroundColor: Colors.blue,
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refrescar'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
+                  Text(
+                    'Gestión de Tickets de Cobro',
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: AppTheme.fontWeightBold,
+                      color: AppColors.textPrimary,
                     ),
                   ),
-                  SizedBox(width: AppTheme.spacingSM),
-                  ElevatedButton.icon(
-                    onPressed: () =>
-                        _showDownloadCSVDialog(context, controller, isTablet),
-                    icon: const Icon(Icons.download),
-                    label: const Text('Descargar CSV'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                    ),
+                  SizedBox(height: AppTheme.spacingSM),
+                  Wrap(
+                    spacing: AppTheme.spacingSM,
+                    runSpacing: AppTheme.spacingSM,
+                    children: [
+                      SizedBox(
+                        width: buttonWidth,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            print('🔄 AdminView: Refrescando tickets manualmente...');
+                            controller.loadTickets();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Recargando tickets...'),
+                                backgroundColor: Colors.blue,
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Refrescar'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: buttonWidth,
+                        child: ElevatedButton.icon(
+                          onPressed: () =>
+                              _showDownloadCSVDialog(context, controller, isTablet),
+                          icon: const Icon(Icons.download),
+                          label: const Text('Descargar CSV'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ),
-            ],
+              );
+            },
           ),
           SizedBox(height: AppTheme.spacingXS),
           Text(
@@ -10029,9 +10751,19 @@ class AdminApp extends StatelessWidget {
         TextField(
           controller: controller.ticketsSearchController,
           decoration: InputDecoration(
-            hintText: 'Buscar por ID, mesa, cuenta o impreso por...',
+            hintText: 'Buscar por ID, mesa, cliente, mesero o pago...',
             helperText: 'Los resultados se filtran al escribir',
             prefixIcon: const Icon(Icons.search),
+            suffixIcon: controller.ticketsSearchQuery.trim().isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Limpiar búsqueda',
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      controller.ticketsSearchController.clear();
+                      controller.setTicketsSearchQuery('');
+                    },
+                  ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusMD),
             ),
@@ -10657,9 +11389,12 @@ class AdminApp extends StatelessWidget {
                 if (ordenIds.length > 1) {
                   ticketDisplayId =
                       'Cuenta agrupada (${ordenIds.length} órdenes)';
-                } else {
+                } else if (ordenIds.length == 1) {
                   ticketDisplayId =
                       'ORD-${ordenIds.first.toString().padLeft(6, '0')}';
+                } else {
+                  // Evita crash si el ID agrupado viene malformado desde backend
+                  ticketDisplayId = 'Cuenta agrupada';
                 }
               } else if (ticket.id.startsWith('ORD-')) {
                 // Ya está bien formateado
@@ -10740,6 +11475,15 @@ class AdminApp extends StatelessWidget {
                               color: AppColors.textSecondary,
                             ),
                           ),
+                        Text(
+                          _ticketItemsPreview(ticket),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -10984,6 +11728,16 @@ class AdminApp extends StatelessWidget {
                 ),
               ),
             ],
+            SizedBox(height: AppTheme.spacingXS),
+            Text(
+              'Productos: ${_ticketItemsPreview(ticket)}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.textSecondary,
+                fontSize: AppTheme.fontSizeXS,
+              ),
+            ),
             if (ticket.printedBy != null) ...[
               SizedBox(height: AppTheme.spacingXS),
               Text(
@@ -11075,15 +11829,17 @@ class AdminApp extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () async {
-              await controller.printTicket(ticket.id, 'Admin');
+              final ok = await controller.printTicket(ticket.id, 'Admin');
               if (context.mounted) {
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
-                      'Ticket enviado a impresión: $tableText.',
+                      ok
+                          ? 'Ticket enviado a impresión: $tableText.'
+                          : 'No se pudo imprimir el ticket. Revisa conexión o impresora.',
                     ),
-                    backgroundColor: Colors.green,
+                    backgroundColor: ok ? Colors.green : Colors.red,
                   ),
                 );
               }
@@ -15107,16 +15863,22 @@ class AdminApp extends StatelessWidget {
         backgroundColor = AppColors.error;
       }
     } catch (e) {
-      message = 'Error al eliminar categoría: ${e.toString()}';
+      final base = AdminApp._extractErrorMessage(e);
+      final lower = base.toLowerCase();
+      final hint = lower.contains('productos') || lower.contains('asignad')
+          ? ' Primero edita cada producto (ícono lápiz) y asígnalo a otra categoría; luego podrás borrar «$category».'
+          : '';
+      message = '$base$hint';
       backgroundColor = AppColors.error;
     }
 
     if (context.mounted) {
+      final long = message.length > 120;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
           backgroundColor: backgroundColor,
-          duration: const Duration(seconds: 2),
+          duration: Duration(seconds: long ? 6 : 2),
         ),
       );
     }
@@ -15132,7 +15894,8 @@ class AdminApp extends StatelessWidget {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Eliminar categoría'),
         content: Text(
-          'Se eliminará "$category" y los productos de inventario de esa categoría pasarán a "Otros".\n\n¿Deseas continuar?',
+          '¿Eliminar la categoría "$category"?\n\n'
+          'Solo se puede si no tiene ítems asignados.',
         ),
         actions: [
           TextButton(
@@ -15155,7 +15918,9 @@ class AdminApp extends StatelessWidget {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Error al eliminar categoría: ${_extractErrorMessage(e)}'),
+                    content: Text(
+                      'Error al eliminar categoría: ${AdminApp._extractErrorMessage(e)}',
+                    ),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -16326,7 +17091,15 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                 final productoNombre =
                     item['productoNombre'] as String? ?? 'Producto';
                 final productoTamano =
-                    item['productoTamanoEtiqueta'] as String? ?? '';
+                    (item['productoTamanoEtiqueta'] ??
+                            item['tamanoEtiqueta'] ??
+                            item['tamanoNombre'] ??
+                            item['sizeLabel'] ??
+                            item['sizeName'] ??
+                            item['size'] ??
+                            item['tamaño'])
+                        ?.toString() ??
+                    '';
                 final productoNombreConTamano = productoTamano.isNotEmpty
                     ? '$productoNombre ($productoTamano)'
                     : productoNombre;

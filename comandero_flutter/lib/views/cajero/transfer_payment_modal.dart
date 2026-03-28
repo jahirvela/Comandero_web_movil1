@@ -45,6 +45,7 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   final _amountController = TextEditingController();
   final _discountController = TextEditingController();
   final _tipController = TextEditingController();
+  final _tipPercentageController = TextEditingController();
   final _bankController = TextEditingController();
   final _referenceController = TextEditingController();
   final _notesController = TextEditingController();
@@ -68,6 +69,7 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
     super.initState();
     // Precargar con el total pendiente para agilizar el cobro
     _amountController.text = _billTotal.toStringAsFixed(2);
+    _tipPercentageController.text = '0';
   }
 
   @override
@@ -75,11 +77,34 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
     _amountController.dispose();
     _discountController.dispose();
     _tipController.dispose();
+    _tipPercentageController.dispose();
     _bankController.dispose();
     _referenceController.dispose();
     _notesController.dispose();
     super.dispose();
   }
+  void _updateTipFromPercentage(String value) {
+    final pct = (double.tryParse(value) ?? 0).clamp(0, 100).toDouble();
+    final tip = (_billTotalAfterDiscount * (pct / 100));
+    _tipController.text = tip.toStringAsFixed(2);
+    _tipController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _tipController.text.length),
+    );
+    setState(() {});
+  }
+
+  void _updateTipPercentageFromAmount(String value) {
+    final tip = double.tryParse(value) ?? 0;
+    final pct = _billTotalAfterDiscount > 0
+        ? (tip / _billTotalAfterDiscount) * 100
+        : 0.0;
+    _tipPercentageController.text = pct.toStringAsFixed(2);
+    _tipPercentageController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _tipPercentageController.text.length),
+    );
+    setState(() {});
+  }
+
 
   bool get _isValid {
     return _amount > 0;
@@ -351,28 +376,60 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
     return TextFormField(
       controller: _referenceController,
       decoration: InputDecoration(
-        labelText: 'Referencia / clave de rastreo (opcional)',
+        labelText: 'Referencia / clave de rastreo *',
         prefixIcon: const Icon(Icons.link),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
         ),
       ),
+      validator: (value) {
+        final ref = value?.trim() ?? '';
+        if (ref.isEmpty) return 'La referencia es obligatoria';
+        if (ref.length < 4) return 'Referencia demasiado corta';
+        return null;
+      },
       onChanged: (_) => setState(() {}),
     );
   }
 
   Widget _buildTipField(bool isTablet) {
-    return TextFormField(
-      controller: _tipController,
-      decoration: InputDecoration(
-        labelText: 'Propina (opcional)',
-        prefixIcon: const Icon(Icons.volunteer_activism),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+    return Row(
+      children: [
+        Expanded(
+          child: TextFormField(
+            controller: _tipController,
+            decoration: InputDecoration(
+              labelText: 'Propina \$ (opcional)',
+              prefixIcon: const Icon(Icons.volunteer_activism),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: _updateTipPercentageFromAmount,
+          ),
         ),
-      ),
-      keyboardType: TextInputType.number,
-      onChanged: (_) => setState(() {}),
+        const SizedBox(width: 12),
+        Expanded(
+          child: TextFormField(
+            controller: _tipPercentageController,
+            decoration: InputDecoration(
+              labelText: 'Propina %',
+              prefixIcon: const Icon(Icons.percent),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            keyboardType: TextInputType.number,
+            validator: (value) {
+              final pct = double.tryParse(value ?? '') ?? 0;
+              if (pct < 0 || pct > 100) return 'Usa un % entre 0 y 100';
+              return null;
+            },
+            onChanged: _updateTipFromPercentage,
+          ),
+        ),
+      ],
     );
   }
 

@@ -112,11 +112,30 @@ class CategoriasService {
   Future<bool> eliminarCategoria(int id) async {
     try {
       final response = await _api.delete('/categorias/$id');
-      if (response.statusCode == 200 || response.statusCode == 204) {
+      final status = response.statusCode ?? 0;
+      final raw = response.data;
+      final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+
+      if (status == 200 || status == 204) {
         return true;
       }
-      final errorMsg = response.data?['message'] ?? response.data?['error'] ?? 'Error desconocido';
-      throw Exception('Error del servidor (${response.statusCode}): $errorMsg');
+
+      // Con validateStatus < 500, 403/409 llegan aquí sin lanzar DioException
+      if (status == 403 || status == 409) {
+        final msg =
+            map['message']?.toString() ??
+            map['error']?.toString() ??
+            'No se puede eliminar esta categoría';
+        throw Exception(msg);
+      }
+      if (status >= 400) {
+        final msg =
+            map['message']?.toString() ??
+            map['error']?.toString() ??
+            'Error desconocido';
+        throw Exception('Error del servidor ($status): $msg');
+      }
+      throw Exception('Respuesta inesperada del servidor (${status})');
     } on DioException catch (e) {
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
