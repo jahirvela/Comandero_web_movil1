@@ -52,7 +52,7 @@ class ApiConfig {
   );
   static const String _qaApiUrl = String.fromEnvironment(
     'API_QA_URL',
-    defaultValue: 'https://apiqa.comancleth.com:3010/api',
+    defaultValue: 'https://apiqa.comancleth.com/api',
   );
 
   /// Normaliza una URL para que siempre tenga protocolo y host correctos.
@@ -435,14 +435,14 @@ class ApiConfig {
   }
 
   /// Fallback QA en web:
-  /// qa.comancleth.com -> apiqa.comancleth.com:3010/api
+  /// qa.comancleth.com -> apiqa.comancleth.com/api
   static String? get _webQaFallbackBaseUrl {
     if (!kIsWeb || environment != 'qa') return null;
     final host = Uri.base.host;
     if (host.isEmpty || host == 'localhost') return null;
     if (host.startsWith('qa.')) {
       final rest = host.substring(3);
-      return '${Uri.base.scheme}://apiqa.$rest:3010/api';
+      return '${Uri.base.scheme}://apiqa.$rest/api';
     }
     return null;
   }
@@ -453,7 +453,7 @@ class ApiConfig {
     if (host.isEmpty || host == 'localhost') return null;
     if (host.startsWith('qa.')) {
       final rest = host.substring(3);
-      return '${Uri.base.scheme}://apiqa.$rest:3010';
+      return '${Uri.base.scheme}://apiqa.$rest';
     }
     return null;
   }
@@ -483,7 +483,7 @@ class ApiConfig {
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final u = _normalizeUrl(_qaApiUrl);
       if (u.isNotEmpty && !_isUrlBroken(u)) return u;
-      return 'https://apiqa.comancleth.com:3010/api';
+      return 'https://apiqa.comancleth.com/api';
     }
 
     // En producción: en web usar siempre el mismo dominio
@@ -530,7 +530,7 @@ class ApiConfig {
             ? origin.substring(0, origin.length - 1)
             : origin;
       }
-      return 'https://apiqa.comancleth.com:3010';
+      return 'https://apiqa.comancleth.com';
     }
 
     // En producción: en web usar mismo dominio (comancleth.com → api.comancleth.com)
