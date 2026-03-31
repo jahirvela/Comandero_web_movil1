@@ -931,7 +931,7 @@ export const actualizarProducto = async (
   }
 ) => {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: any[] = [];
 
   if (categoriaId !== undefined) {
     fields.push('categoria_id = ?');

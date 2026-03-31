@@ -136,7 +136,7 @@ export const crearUsuario = async ({
     ];
     
     const values = ['?', '?', '?', '?', '?', 'NOW()', '?'];
-    const params: unknown[] = [
+    const params: any[] = [
       nombre,
       username,
       telefono ?? null,
@@ -202,7 +202,7 @@ export const actualizarUsuario = async (
   return withTransaction(async (conn) => {
     if (nombre !== undefined || telefono !== undefined || activo !== undefined || passwordHash) {
       const fields: string[] = [];
-      const values: unknown[] = [];
+      const values: any[] = [];
 
       if (nombre !== undefined) {
         fields.push('nombre = ?');
