@@ -95,9 +95,9 @@ export const crearRol = async ({
     const [result] = await conn.execute<ResultSetHeader>(
       `
       INSERT INTO rol (nombre, descripcion)
-      VALUES (:nombre, :descripcion)
+      VALUES (?, ?)
       `,
-      { nombre, descripcion: descripcion ?? null }
+      [nombre, descripcion ?? null]
     );
     const rolId = result.insertId;
 
@@ -123,16 +123,16 @@ export const actualizarRol = async (
   return withTransaction(async (conn) => {
     if (nombre !== undefined || descripcion !== undefined) {
       const fields: string[] = [];
-      const params: Record<string, unknown> = { id };
+      const values: unknown[] = [];
 
       if (nombre !== undefined) {
-        fields.push('nombre = :nombre');
-        params.nombre = nombre;
+        fields.push('nombre = ?');
+        values.push(nombre);
       }
 
       if (descripcion !== undefined) {
-        fields.push('descripcion = :descripcion');
-        params.descripcion = descripcion ?? null;
+        fields.push('descripcion = ?');
+        values.push(descripcion ?? null);
       }
 
       if (fields.length > 0) {
@@ -140,9 +140,9 @@ export const actualizarRol = async (
           `
           UPDATE rol
           SET ${fields.join(', ')}, actualizado_en = NOW()
-          WHERE id = :id
+          WHERE id = ?
           `,
-          params
+          [...values, id]
         );
       }
     }
@@ -151,9 +151,9 @@ export const actualizarRol = async (
       await conn.execute(
         `
         DELETE FROM rol_permiso
-        WHERE rol_id = :id
+        WHERE rol_id = ?
         `,
-        { id }
+        [id]
       );
 
       if (permisos.length > 0) {
@@ -175,9 +175,9 @@ export const eliminarRol = async (id: number) => {
     await conn.execute(
       `
       DELETE FROM rol
-      WHERE id = :id
+      WHERE id = ?
       `,
-      { id }
+      [id]
     );
   });
 };
