@@ -931,35 +931,35 @@ export const actualizarProducto = async (
   }
 ) => {
   const fields: string[] = [];
-  const params: Record<string, unknown> = { id };
+  const values: unknown[] = [];
 
   if (categoriaId !== undefined) {
-    fields.push('categoria_id = :categoriaId');
-    params.categoriaId = categoriaId;
+    fields.push('categoria_id = ?');
+    values.push(categoriaId);
   }
   if (nombre !== undefined) {
-    fields.push('nombre = :nombre');
-    params.nombre = nombre;
+    fields.push('nombre = ?');
+    values.push(nombre);
   }
   if (descripcion !== undefined) {
-    fields.push('descripcion = :descripcion');
-    params.descripcion = descripcion ?? null;
+    fields.push('descripcion = ?');
+    values.push(descripcion ?? null);
   }
   if (precio !== undefined) {
-    fields.push('precio = :precio');
-    params.precio = precio;
+    fields.push('precio = ?');
+    values.push(precio);
   }
   if (disponible !== undefined) {
-    fields.push('disponible = :disponible');
-    params.disponible = disponible ? 1 : 0;
+    fields.push('disponible = ?');
+    values.push(disponible ? 1 : 0);
   }
   if (sku !== undefined) {
-    fields.push('sku = :sku');
-    params.sku = sku ?? null;
+    fields.push('sku = ?');
+    values.push(sku ?? null);
   }
   if (inventariable !== undefined) {
-    fields.push('inventariable = :inventariable');
-    params.inventariable = inventariable ? 1 : 0;
+    fields.push('inventariable = ?');
+    values.push(inventariable ? 1 : 0);
   }
 
   if (
@@ -976,16 +976,16 @@ export const actualizarProducto = async (
   await withTransaction(async (conn) => {
     const columnasDescuento = await obtenerColumnasProductoDescuento(conn);
     if (columnasDescuento.hasDescuentoPorcentaje && descuentoPorcentaje !== undefined) {
-      fields.push('descuento_porcentaje = :descuentoPorcentaje');
-      params.descuentoPorcentaje = Number(descuentoPorcentaje);
+      fields.push('descuento_porcentaje = ?');
+      values.push(Number(descuentoPorcentaje));
     }
     if (columnasDescuento.hasDescuentoInicio && descuentoInicio !== undefined) {
-      fields.push('descuento_inicio = :descuentoInicio');
-      params.descuentoInicio = descuentoInicio ?? null;
+      fields.push('descuento_inicio = ?');
+      values.push(descuentoInicio ?? null);
     }
     if (columnasDescuento.hasDescuentoFin && descuentoFin !== undefined) {
-      fields.push('descuento_fin = :descuentoFin');
-      params.descuentoFin = descuentoFin ?? null;
+      fields.push('descuento_fin = ?');
+      values.push(descuentoFin ?? null);
     }
 
     if (fields.length > 0) {
@@ -993,18 +993,18 @@ export const actualizarProducto = async (
         `
         UPDATE producto
         SET ${fields.join(', ')}, actualizado_en = NOW()
-        WHERE id = :id
+        WHERE id = ?
         `,
-        params
+        [...values, id]
       );
     } else if (tamanos !== undefined) {
       await conn.execute(
         `
         UPDATE producto
         SET actualizado_en = NOW()
-        WHERE id = :id
+        WHERE id = ?
         `,
-        { id }
+        [id]
       );
     }
 

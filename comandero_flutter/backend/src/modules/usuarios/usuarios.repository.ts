@@ -135,30 +135,21 @@ export const crearUsuario = async ({
       'password_actualizada_por_usuario_id'
     ];
     
-    const values = [
-      ':nombre',
-      ':username',
-      ':telefono',
-      ':passwordHash',
-      ':activo',
-      'NOW()',
-      ':actualizadoPor'
-    ];
-    
-    const params: Record<string, unknown> = {
+    const values = ['?', '?', '?', '?', '?', 'NOW()', '?'];
+    const params: unknown[] = [
       nombre,
       username,
-      telefono: telefono ?? null,
+      telefono ?? null,
       passwordHash,
-      activo: activo ? 1 : 0,
-      actualizadoPor: actualizadoPor ?? null
-    };
+      activo ? 1 : 0,
+      actualizadoPor ?? null
+    ];
     
     // Incluir password si passwordPlain está definido
     if (passwordPlain !== undefined && passwordPlain !== null) {
       fields.push('password');
-      values.push(':passwordPlain');
-      params.passwordPlain = passwordPlain;
+      values.push('?');
+      params.push(passwordPlain);
     }
     
     const [result] = await conn.execute<ResultSetHeader>(
@@ -211,34 +202,34 @@ export const actualizarUsuario = async (
   return withTransaction(async (conn) => {
     if (nombre !== undefined || telefono !== undefined || activo !== undefined || passwordHash) {
       const fields: string[] = [];
-      const params: Record<string, unknown> = { id };
+      const values: unknown[] = [];
 
       if (nombre !== undefined) {
-        fields.push('nombre = :nombre');
-        params.nombre = nombre;
+        fields.push('nombre = ?');
+        values.push(nombre);
       }
 
       if (telefono !== undefined) {
-        fields.push('telefono = :telefono');
-        params.telefono = telefono ?? null;
+        fields.push('telefono = ?');
+        values.push(telefono ?? null);
       }
 
       if (activo !== undefined) {
-        fields.push('activo = :activo');
-        params.activo = activo ? 1 : 0;
+        fields.push('activo = ?');
+        values.push(activo ? 1 : 0);
       }
 
       if (passwordHash) {
-        fields.push('password_hash = :passwordHash');
+        fields.push('password_hash = ?');
         fields.push('password_actualizada_en = NOW()');
-        fields.push('password_actualizada_por_usuario_id = :actualizadoPor');
-        params.passwordHash = passwordHash;
-        params.actualizadoPor = actualizadoPor ?? null;
+        fields.push('password_actualizada_por_usuario_id = ?');
+        values.push(passwordHash);
+        values.push(actualizadoPor ?? null);
         
         // Si se proporciona passwordPlain, también guardarlo en texto plano
         if (passwordPlain !== undefined) {
-          fields.push('password = :passwordPlain');
-          params.passwordPlain = passwordPlain;
+          fields.push('password = ?');
+          values.push(passwordPlain);
         }
       }
 
@@ -247,9 +238,9 @@ export const actualizarUsuario = async (
           `
           UPDATE usuario
           SET ${fields.join(', ')}, actualizado_en = NOW()
-          WHERE id = :id
+          WHERE id = ?
           `,
-          params
+          [...values, id]
         );
       }
     }
@@ -258,9 +249,9 @@ export const actualizarUsuario = async (
       await conn.execute(
         `
         DELETE FROM usuario_rol
-        WHERE usuario_id = :id
+        WHERE usuario_id = ?
         `,
-        { id }
+        [id]
       );
 
       if (roles.length > 0) {
@@ -282,9 +273,9 @@ export const eliminarUsuario = async (id: number) => {
     `
     UPDATE usuario
     SET activo = 0, actualizado_en = NOW()
-    WHERE id = :id
+    WHERE id = ?
     `,
-    { id }
+    [id]
   );
 };
 
@@ -293,16 +284,16 @@ export const eliminarUsuarioPermanente = async (id: number) => {
     await conn.execute(
       `
       DELETE FROM usuario_rol
-      WHERE usuario_id = :id
+      WHERE usuario_id = ?
       `,
-      { id }
+      [id]
     );
     await conn.execute(
       `
       DELETE FROM usuario
-      WHERE id = :id
+      WHERE id = ?
       `,
-      { id }
+      [id]
     );
   });
 };
