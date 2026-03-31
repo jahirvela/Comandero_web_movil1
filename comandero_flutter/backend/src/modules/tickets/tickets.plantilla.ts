@@ -1,5 +1,8 @@
 import type { TicketData } from './tickets.repository.js';
-import type { PlantillaImpresion } from '../configuracion/plantilla-impresion.repository.js';
+import type {
+  PlantillaImpresion,
+  TipoDocumentoPlantilla,
+} from '../configuracion/plantilla-impresion.repository.js';
 import { getCharsPerLine, getTicketColumnWidths, type PaperWidth } from '../../config/printers.config.js';
 import { formatMxNowAmPm } from '../../config/time.js';
 
@@ -105,6 +108,35 @@ function aplicarFormato(linea: string): string {
     .replace(/\[\/NEGRITA\]/g, negritaOff);
 }
 
+/**
+ * Convierte variantes guardadas en plantilla (p. ej. `((inicio centrado))` o muchos paréntesis)
+ * al formato técnico `[CENTRAR]` / `[NEGRITA]` que interpreta `aplicarFormato`.
+ */
+function normalizarMarcadoresParentesisAtecnico(linea: string): string {
+  return linea
+    .replace(/\(\(+inicio\s+centrado\s*\)+/gi, '[CENTRAR]')
+    .replace(/\(\(+fin\s+centrado\s*\)+/gi, '[/CENTRAR]')
+    .replace(/\(\(+inicio\s+negrita\s*\)+/gi, '[NEGRITA]')
+    .replace(/\(\(+fin\s+negrita\s*\)+/gi, '[/NEGRITA]');
+}
+
+function tituloDocumentoPorTipo(tipo: TipoDocumentoPlantilla): string {
+  switch (tipo) {
+    case 'ticket_cobro':
+      return 'TICKET DE COBRO';
+    case 'ticket_mesa':
+      return 'TICKET EN MESA';
+    case 'ticket_para_llevar':
+      return 'TICKET PARA LLEVAR';
+    case 'ticket_dividida':
+      return 'TICKET CUENTA DIVIDIDA';
+    case 'comanda':
+      return 'COMANDA';
+    default:
+      return 'TICKET DE COBRO';
+  }
+}
+
 const FORMAT_MARKERS = /\[\/?CENTRAR\]|\[\/?NEGRITA\]/g;
 
 /**
@@ -171,7 +203,7 @@ export function renderTicketConPlantilla(
     DIRECCION: restaurante.direccion ? norm(restaurante.direccion) : '',
     TELEFONO: restaurante.telefono ? norm(restaurante.telefono) : '',
     RFC: restaurante.rfc ? norm(restaurante.rfc) : '',
-    TITULO: 'TICKET DE COBRO',
+    TITULO: tituloDocumentoPorTipo(plantilla.tipoDocumento),
     FECHA: fechaStr,
     FOLIO: norm(orden.folio),
     MESA: orden.mesaCodigo ? norm(orden.mesaCodigo) : '',
@@ -198,6 +230,7 @@ export function renderTicketConPlantilla(
     if (linea.includes('{{ITEMS}}')) {
       let conItems = linea.replace('{{ITEMS}}', itemsBlock);
       conItems = conItems.replace(/\{\{([^}]+)\}\}/g, (_m: string, key: string) => key.trim().replace(/_/g, ' '));
+      conItems = normalizarMarcadoresParentesisAtecnico(conItems);
       contenido += aplicarFormato(conItems) + '\n';
       continue;
     }
@@ -226,7 +259,9 @@ export function renderTicketConPlantilla(
 
     for (const ln of expanded) {
       // Cualquier {{texto_con_guiones}} no definido se imprime como texto: sin llaves, guiones bajos → espacios (configurable desde la plantilla)
-      const lnFinal = ln.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => key.trim().replace(/_/g, ' '));
+      const lnFinal = normalizarMarcadoresParentesisAtecnico(
+        ln.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => key.trim().replace(/_/g, ' '))
+      );
       const lineasAAncho = wrapLineToWidth(lnFinal, w);
       for (const l of lineasAAncho) {
         contenido += aplicarFormato(l) + '\n';
