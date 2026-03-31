@@ -146,8 +146,27 @@ abstract final class PlantillaTicketFriendly {
       RegExp(r'campo personalizado:\s*(.+)$', multiLine: true, caseSensitive: false);
   static final RegExp _legacyUnknownFriendly =
       RegExp(r'«etiqueta:\s*([^»]+)»');
-  static final RegExp _oldFormatFriendly =
-      RegExp(r'\b(inicio|fin)\s+(centrado|negrita)\b', caseSensitive: false);
+  /// Solo convierte `inicio centrado` suelto (sin paréntesis); si ya está como
+  /// `(inicio centrado)`, no tocar — evita duplicar paréntesis al guardar.
+  static final RegExp _oldFormatFriendly = RegExp(
+    r'(?<!\()\b(inicio|fin)\s+(centrado|negrita)\b(?!\))',
+    caseSensitive: false,
+  );
+
+  /// Colapsa `(((inicio centrado)))` y variantes a un solo `(inicio centrado)`.
+  static String _collapseFriendlyFormatTags(String s) {
+    var t = s;
+    const pairs = <(String pattern, String replacement)>[
+      (r'\(\(+inicio\s+centrado\s*\)+', '(inicio centrado)'),
+      (r'\(\(+fin\s+centrado\s*\)+', '(fin centrado)'),
+      (r'\(\(+inicio\s+negrita\s*\)+', '(inicio negrita)'),
+      (r'\(\(+fin\s+negrita\s*\)+', '(fin negrita)'),
+    ];
+    for (final e in pairs) {
+      t = t.replaceAll(RegExp(e.$1, caseSensitive: false), e.$2);
+    }
+    return t;
+  }
   /// `"Personalizado: CLAVE"` → `{{CLAVE}}` (CLAVE sin comillas internas).
   static final RegExp _quotedPersonalizado =
       RegExp(r'"Personalizado:\s*([^"]+)"');
@@ -218,6 +237,7 @@ Cliente: {{CLIENTE}}
   /// Contenido del editor convertido a formato API (cuerpo).
   static String contenidoFriendlyATecnico(String friendly) {
     var s = friendly;
+    s = _collapseFriendlyFormatTags(s);
     s = s.replaceAllMapped(_oldFormatFriendly, (m) => '(${m.group(0)!.toLowerCase()})');
     for (final e in _legacyContenidoCampo) {
       s = s.replaceAll(e.$1, e.$2);
@@ -266,6 +286,7 @@ Cliente: {{CLIENTE}}
     final t = (friendly ?? '').trim();
     if (t.isEmpty) return null;
     var s = t;
+    s = _collapseFriendlyFormatTags(s);
     s = s.replaceAllMapped(_oldFormatFriendly, (m) => '(${m.group(0)!.toLowerCase()})');
     for (final e in _legacyLineaCampo) {
       s = s.replaceAll(e.$1, e.$2);
