@@ -14,9 +14,10 @@ class ApiConfig {
   // CONFIGURACIÓN POR AMBIENTE
   // ============================================
 
-  /// Modo de ejecución: 'development', 'production', o 'custom'
+  /// Modo de ejecución: 'development', 'qa', 'production', o 'custom'
   ///
   /// En desarrollo: usa localhost/10.0.2.2/IP local
+  /// En qa: usa URL/API de pruebas
   /// En producción: usa la URL del VPS
   /// Custom: permite configurar manualmente
   static const String _environment = String.fromEnvironment(
@@ -25,12 +26,16 @@ class ApiConfig {
   );
 
   /// Ambiente efectivo en Flutter Web.
-  /// Si el build no define API_ENV, pero se está ejecutando en un dominio real
-  /// (no localhost), asumir producción para evitar que la app apunte a localhost.
+  /// Si el build no define API_ENV, pero se está ejecutando en un dominio real:
+  /// - qa.<dominio> => qa
+  /// - cualquier otro dominio real => production
   static String get environment {
     if (kIsWeb) {
       final host = Uri.base.host;
       if (host.isNotEmpty && host != 'localhost' && host != '127.0.0.1') {
+        if (host.startsWith('qa.')) {
+          return 'qa';
+        }
         return 'production';
       }
     }
@@ -44,6 +49,10 @@ class ApiConfig {
   static const String _productionApiUrl = String.fromEnvironment(
     'API_URL',
     defaultValue: 'https://api.comandix.com',
+  );
+  static const String _qaApiUrl = String.fromEnvironment(
+    'API_QA_URL',
+    defaultValue: 'https://apiqa.comancleth.com:3010/api',
   );
 
   /// Normaliza una URL para que siempre tenga protocolo y host correctos.
@@ -425,6 +434,30 @@ class ApiConfig {
     return '$scheme://api.$host';
   }
 
+  /// Fallback QA en web:
+  /// qa.comancleth.com -> apiqa.comancleth.com:3010/api
+  static String? get _webQaFallbackBaseUrl {
+    if (!kIsWeb || environment != 'qa') return null;
+    final host = Uri.base.host;
+    if (host.isEmpty || host == 'localhost') return null;
+    if (host.startsWith('qa.')) {
+      final rest = host.substring(3);
+      return '${Uri.base.scheme}://apiqa.$rest:3010/api';
+    }
+    return null;
+  }
+
+  static String? get _webQaFallbackSocketUrl {
+    if (!kIsWeb || environment != 'qa') return null;
+    final host = Uri.base.host;
+    if (host.isEmpty || host == 'localhost') return null;
+    if (host.startsWith('qa.')) {
+      final rest = host.substring(3);
+      return '${Uri.base.scheme}://apiqa.$rest:3010';
+    }
+    return null;
+  }
+
   /// True si la URL está claramente mal formada (ej. "https://https" o "https:/.dominio").
   static bool _isUrlBroken(String url) {
     if (url.isEmpty) return true;
@@ -445,7 +478,15 @@ class ApiConfig {
       if (u.isNotEmpty) return u;
     }
 
-    // En producción: en web usar siempre el mismo dominio (comancleth.com → api.comancleth.com)
+    if (environment == 'qa') {
+      final webFallback = _webQaFallbackBaseUrl;
+      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
+      final u = _normalizeUrl(_qaApiUrl);
+      if (u.isNotEmpty && !_isUrlBroken(u)) return u;
+      return 'https://apiqa.comancleth.com:3010/api';
+    }
+
+    // En producción: en web usar siempre el mismo dominio
     // para que el mismo build funcione en cualquier servidor sin recompilar.
     if (environment == 'production') {
       final webFallback = _webProductionFallbackBaseUrl;
@@ -477,6 +518,19 @@ class ApiConfig {
         normalized.isEmpty ? _customApiUrl : normalized,
       );
       return origin.isEmpty ? 'http://localhost:3000' : origin;
+    }
+
+    if (environment == 'qa') {
+      final webFallback = _webQaFallbackSocketUrl;
+      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
+      final normalized = _normalizeUrl(_qaApiUrl);
+      final origin = _originFromBase(normalized);
+      if (origin.isNotEmpty && !_isUrlBroken(origin)) {
+        return origin.endsWith('/')
+            ? origin.substring(0, origin.length - 1)
+            : origin;
+      }
+      return 'https://apiqa.comancleth.com:3010';
     }
 
     // En producción: en web usar mismo dominio (comancleth.com → api.comancleth.com)
