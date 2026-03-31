@@ -123,7 +123,7 @@ export const actualizarRol = async (
   return withTransaction(async (conn) => {
     if (nombre !== undefined || descripcion !== undefined) {
       const fields: string[] = [];
-      const values: unknown[] = [];
+      const values: any[] = [];
 
       if (nombre !== undefined) {
         fields.push('nombre = ?');
