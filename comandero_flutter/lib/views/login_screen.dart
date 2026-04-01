@@ -70,9 +70,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (e.type == DioExceptionType.connectionError) {
         final baseUrl = ApiConfig.baseUrl;
-        final urlDisplay = kIsWeb ? 'http://localhost:3000/api' : baseUrl;
-        errorMsg =
-            'No se pudo conectar al servidor.\n\nVerifica que:\n• El backend esté corriendo (npm run dev)\n• La URL sea $urlDisplay\n• Tu celular esté en la misma red WiFi que tu laptop\n• No haya errores en la terminal del backend';
+        // Siempre mostrar la URL real (en web QA/prod no es localhost).
+        if (kIsWeb) {
+          errorMsg =
+              'No se pudo conectar al servidor.\n\nComprueba que la API responda en:\n$baseUrl\n\n(Si estás en QA o producción, revisa que el backend esté arriba y el dominio sea correcto.)';
+        } else {
+          errorMsg =
+              'No se pudo conectar al servidor.\n\nVerifica que:\n• El backend esté corriendo (npm run dev)\n• La URL sea $baseUrl\n• Tu celular esté en la misma red WiFi que tu laptop\n• No haya errores en la terminal del backend';
+        }
 
         // En Android, mostrar diálogo con opción de configurar servidor
         if (mounted && !kIsWeb) {
