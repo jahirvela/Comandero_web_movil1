@@ -8125,41 +8125,36 @@ class AdminApp extends StatelessWidget {
                           ),
                         ),
                         SizedBox(height: AppTheme.spacingMD),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              flex: 2,
-                              child: TextFormField(
-                                controller: contenidoPorPiezaController,
-                                textInputAction: TextInputAction.next,
-                                onFieldSubmitted: (_) =>
-                                    FocusScope.of(context).nextFocus(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Cantidad por envase',
-                                  border: OutlineInputBorder(),
-                                  hintText: 'Ej: 5 kg, 12 piezas…',
-                                ),
-                                keyboardType: TextInputType.number,
+                            TextFormField(
+                              controller: contenidoPorPiezaController,
+                              textInputAction: TextInputAction.next,
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
+                              decoration: const InputDecoration(
+                                labelText: 'Cantidad por envase',
+                                border: OutlineInputBorder(),
+                                hintText: 'Ej: 5 kg, 12 piezas…',
                               ),
+                              keyboardType: TextInputType.number,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: selectedUnidadContenido,
-                                decoration: const InputDecoration(
-                                  labelText: 'Unidad',
-                                  border: OutlineInputBorder(),
-                                  hintText: 'kg, ml, piezas…',
-                                ),
-                                items: inventarioUnidadContenidoOpcionesConActual(
-                                        selectedUnidadContenido)
-                                    .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                                    .toList(),
-                                onChanged: (value) {
-                                  setDialogState(() => selectedUnidadContenido = value);
-                                },
+                            SizedBox(height: AppTheme.spacingMD),
+                            DropdownButtonFormField<String>(
+                              value: selectedUnidadContenido,
+                              decoration: const InputDecoration(
+                                labelText: 'Unidad',
+                                border: OutlineInputBorder(),
+                                hintText: 'kg, ml, piezas…',
                               ),
+                              items: inventarioUnidadContenidoOpcionesConActual(
+                                      selectedUnidadContenido)
+                                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                                  .toList(),
+                              onChanged: (value) {
+                                setDialogState(() => selectedUnidadContenido = value);
+                              },
                             ),
                           ],
                         ),
@@ -8609,41 +8604,36 @@ class AdminApp extends StatelessWidget {
                           ),
                         ),
                         SizedBox(height: AppTheme.spacingMD),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              flex: 2,
-                              child: TextFormField(
-                                controller: contenidoPorPiezaController,
-                                textInputAction: TextInputAction.next,
-                                onFieldSubmitted: (_) =>
-                                    FocusScope.of(context).nextFocus(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Cantidad por envase',
-                                  border: OutlineInputBorder(),
-                                  hintText: 'Ej: 5 kg, 12 piezas…',
-                                ),
-                                keyboardType: TextInputType.number,
+                            TextFormField(
+                              controller: contenidoPorPiezaController,
+                              textInputAction: TextInputAction.next,
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
+                              decoration: const InputDecoration(
+                                labelText: 'Cantidad por envase',
+                                border: OutlineInputBorder(),
+                                hintText: 'Ej: 5 kg, 12 piezas…',
                               ),
+                              keyboardType: TextInputType.number,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: selectedUnidadContenido,
-                                decoration: const InputDecoration(
-                                  labelText: 'Unidad',
-                                  border: OutlineInputBorder(),
-                                  hintText: 'kg, ml, piezas…',
-                                ),
-                                items: inventarioUnidadContenidoOpcionesConActual(
-                                        selectedUnidadContenido)
-                                    .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                                    .toList(),
-                                onChanged: (value) {
-                                  setDialogState(() => selectedUnidadContenido = value);
-                                },
+                            SizedBox(height: AppTheme.spacingMD),
+                            DropdownButtonFormField<String>(
+                              value: selectedUnidadContenido,
+                              decoration: const InputDecoration(
+                                labelText: 'Unidad',
+                                border: OutlineInputBorder(),
+                                hintText: 'kg, ml, piezas…',
                               ),
+                              items: inventarioUnidadContenidoOpcionesConActual(
+                                      selectedUnidadContenido)
+                                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                                  .toList(),
+                              onChanged: (value) {
+                                setDialogState(() => selectedUnidadContenido = value);
+                              },
                             ),
                           ],
                         ),

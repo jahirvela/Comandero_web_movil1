@@ -3774,6 +3774,17 @@ class AdminController extends ChangeNotifier {
     // Si no hay stockMaximo en el backend, usar stockMinimo * 2 como fallback
     final maxStock = stockMaximo ?? (stockMinimo * 2);
 
+    final rawContenido = data['contenidoPorPieza'];
+    final double? contenidoPorPieza = rawContenido == null
+        ? null
+        : (rawContenido is num
+            ? rawContenido.toDouble()
+            : double.tryParse(rawContenido.toString()));
+    final ucRaw = data['unidadContenido'];
+    final String? unidadContenido = ucRaw == null || ucRaw.toString().trim().isEmpty
+        ? null
+        : ucRaw.toString().trim();
+
     return InventoryItem(
       id: data['id'].toString(),
       name: data['nombre'] as String,
@@ -3795,6 +3806,8 @@ class AdminController extends ChangeNotifier {
       status: status,
       notes: null,
       description: null,
+      contenidoPorPieza: contenidoPorPieza,
+      unidadContenido: unidadContenido,
     );
   }
 
