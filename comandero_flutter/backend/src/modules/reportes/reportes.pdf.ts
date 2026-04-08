@@ -27,6 +27,9 @@ export const generarPDFVentas = (datos: VentasReporte[]) => {
 
   if (datos.length === 0) {
     doc.fontSize(12).text('No hay ventas en el período seleccionado.', { align: 'center' });
+    doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
+      align: 'center'
+    });
     return doc;
   }
 
@@ -86,7 +89,7 @@ export const generarPDFVentas = (datos: VentasReporte[]) => {
   }
 
   // Pie de página - usar zona horaria CDMX
-  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx().toJSDate())}`, 50, doc.page.height - 50, {
+  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
     align: 'center'
   });
 
@@ -101,6 +104,9 @@ export const generarPDFTopProductos = (datos: TopProducto[]) => {
 
   if (datos.length === 0) {
     doc.fontSize(12).text('No hay productos vendidos en el período seleccionado.', { align: 'center' });
+    doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
+      align: 'center'
+    });
     return doc;
   }
 
@@ -136,7 +142,7 @@ export const generarPDFTopProductos = (datos: TopProducto[]) => {
   doc.moveDown();
   doc.font('Helvetica-Bold').text(`Total de ingresos: $${totalIngresos.toFixed(2)}`, 350);
 
-  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx().toJSDate())}`, 50, doc.page.height - 50, {
+  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
     align: 'center'
   });
 
@@ -175,7 +181,7 @@ export const generarPDFCorteCaja = (datos: CorteCaja) => {
   doc.moveDown();
   doc.font('Helvetica-Bold').text(`Total propinas: $${datos.totalPropinas.toFixed(2)}`, 70);
 
-  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx().toJSDate())}`, 50, doc.page.height - 50, {
+  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
     align: 'center'
   });
 
@@ -190,6 +196,9 @@ export const generarPDFInventario = (datos: InventarioMovimiento[]) => {
 
   if (datos.length === 0) {
     doc.fontSize(12).text('No hay movimientos en el período seleccionado.', { align: 'center' });
+    doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
+      align: 'center'
+    });
     return doc;
   }
 
@@ -200,8 +209,9 @@ export const generarPDFInventario = (datos: InventarioMovimiento[]) => {
   doc.text('Item', 120, y);
   doc.text('Tipo', 250, y);
   doc.text('Cantidad', 300, y);
-  doc.text('Costo', 360, y);
-  doc.text('Usuario', 420, y);
+  doc.text('Costo Unit.', 360, y);
+  doc.text('Costo Total', 425, y);
+  doc.text('Usuario', 500, y);
 
   doc.moveTo(50, y + 15).lineTo(550, y + 15).stroke();
   doc.moveDown(0.5);
@@ -221,11 +231,15 @@ export const generarPDFInventario = (datos: InventarioMovimiento[]) => {
       movimiento.costoUnitario !== null ? `$${movimiento.costoUnitario.toFixed(2)}` : 'N/A',
       360
     );
-    doc.text(movimiento.usuario || 'N/A', 420);
+    doc.text(
+      movimiento.costoTotal !== null ? `$${movimiento.costoTotal.toFixed(2)}` : 'N/A',
+      425
+    );
+    doc.text(movimiento.usuario || 'N/A', 500);
     doc.moveDown(0.3);
   }
 
-  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx().toJSDate())}`, 50, doc.page.height - 50, {
+  doc.fontSize(8).text(`Generado el: ${formatMxLocale(nowMx())}`, 50, doc.page.height - 50, {
     align: 'center'
   });
 

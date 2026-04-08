@@ -44,10 +44,18 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
   final _tipAmountController = TextEditingController();
   final _discountPercentageController = TextEditingController();
   final _notesController = TextEditingController();
+  final _discountFocus = FocusNode();
+  final _cashFocus = FocusNode();
+  final _tipFocus = FocusNode();
+  final _notesFocus = FocusNode();
   bool _tipDelivered = false;
 
   @override
   void dispose() {
+    _discountFocus.dispose();
+    _cashFocus.dispose();
+    _tipFocus.dispose();
+    _notesFocus.dispose();
     _cashReceivedController.dispose();
     _tipAmountController.dispose();
     _discountPercentageController.dispose();
@@ -147,6 +155,9 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
 
               TextFormField(
                 controller: _discountPercentageController,
+                focusNode: _discountFocus,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _cashFocus.requestFocus(),
                 decoration: InputDecoration(
                   labelText: 'Descuento (%)',
                   prefixIcon: const Icon(Icons.percent),
@@ -162,6 +173,9 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
               // Efectivo recibido
               TextFormField(
                 controller: _cashReceivedController,
+                focusNode: _cashFocus,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _tipFocus.requestFocus(),
                 decoration: InputDecoration(
                   labelText: 'Efectivo recibido *',
                   prefixIcon: const Icon(Icons.money),
@@ -177,6 +191,9 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
               // Propina
               TextFormField(
                 controller: _tipAmountController,
+                focusNode: _tipFocus,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _notesFocus.requestFocus(),
                 decoration: InputDecoration(
                   labelText: 'Propina (opcional)',
                   prefixIcon: const Icon(Icons.tips_and_updates),
@@ -307,6 +324,9 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
               // Notas opcionales
               TextFormField(
                 controller: _notesController,
+                focusNode: _notesFocus,
+                textInputAction: TextInputAction.newline,
+                keyboardType: TextInputType.multiline,
                 decoration: InputDecoration(
                   labelText: 'Notas del pago (opcional)',
                   hintText: 'Observaciones adicionales...',

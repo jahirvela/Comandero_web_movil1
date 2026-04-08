@@ -13,33 +13,44 @@ import '../cocinero/order_detail_modal.dart';
 import 'alert_to_kitchen_modal.dart';
 import '../../widgets/refresh_on_resume.dart';
 import '../../services/socket_service.dart';
+import '../../services/bill_repository.dart';
 
-class CaptainApp extends StatefulWidget {
+/// Usa el mismo [BillRepository] que cajero/gerente para que las cuentas por cobrar no diverjan.
+class CaptainApp extends StatelessWidget {
   const CaptainApp({super.key});
 
   @override
-  State<CaptainApp> createState() => _CaptainAppState();
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (c) => CaptainController(
+            billRepository: c.read<BillRepository>(),
+          ),
+        ),
+        ChangeNotifierProvider(create: (_) => CocineroController()),
+      ],
+      child: const _CaptainAppBody(),
+    );
+  }
 }
 
-class _CaptainAppState extends State<CaptainApp> {
-  late CaptainController _captainController;
-  late CocineroController _cocineroController;
-  bool _initialized = false;
+class _CaptainAppBody extends StatefulWidget {
+  const _CaptainAppBody();
 
   @override
-  void initState() {
-    super.initState();
-    _captainController = CaptainController();
-    _cocineroController = CocineroController();
-    _initializeData();
-  }
+  State<_CaptainAppBody> createState() => _CaptainAppBodyState();
+}
+
+class _CaptainAppBodyState extends State<_CaptainAppBody> {
+  bool _initialized = false;
 
   Future<void> _initializeData() async {
-    // Cargar órdenes del backend para el capitán
-    await _cocineroController.loadOrders();
-    await _captainController.loadTables();
+    final cocinero = context.read<CocineroController>();
+    final captain = context.read<CaptainController>();
+    await cocinero.loadOrders();
+    await captain.loadTables();
 
-    // Conectar después de recargar (por si el token expiró en background)
     final socketService = SocketService();
     if (!socketService.isConnected) {
       await socketService.connect();
@@ -52,20 +63,14 @@ class _CaptainAppState extends State<CaptainApp> {
   }
 
   @override
-  void dispose() {
-    _captainController.dispose();
-    _cocineroController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeData());
   }
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: _captainController),
-        ChangeNotifierProvider.value(value: _cocineroController),
-      ],
-      child: Consumer3<CaptainController, AuthController, CocineroController>(
+    return Consumer3<CaptainController, AuthController, CocineroController>(
         builder:
             (
               context,
@@ -127,7 +132,6 @@ class _CaptainAppState extends State<CaptainApp> {
                 },
               );
             },
-      ),
     );
   }
 

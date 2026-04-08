@@ -285,6 +285,8 @@ class _ReportOrderStatusModalState extends State<ReportOrderStatusModal> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: _detailsController,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => FocusScope.of(context).unfocus(),
                       maxLines: 3,
                       decoration: InputDecoration(
                         hintText: 'Agregar detalles adicionales...',

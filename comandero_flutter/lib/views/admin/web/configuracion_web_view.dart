@@ -884,6 +884,8 @@ class _CajonCardContentState extends State<_CajonCardContent> {
         const SizedBox(height: 12),
         TextField(
           controller: _marcaController,
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => FocusScope.of(context).nextFocus(),
           decoration: const InputDecoration(
             labelText: 'Marca (opcional)',
             hintText: 'Ej: ZKTECO, Epson',
@@ -894,6 +896,8 @@ class _CajonCardContentState extends State<_CajonCardContent> {
         const SizedBox(height: 8),
         TextField(
           controller: _modeloController,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
           decoration: const InputDecoration(
             labelText: 'Modelo (opcional)',
             hintText: 'Ej: CD-01, T88',
@@ -1053,6 +1057,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                   hintText: 'Ej: Caja 1, Cocina',
                 ),
                 controller: _nombreController,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<TipoImpresora>(
@@ -1077,6 +1083,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                     hintText: 'Como aparece en Dispositivos e impresoras',
                   ),
                   controller: _deviceController,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                 ),
               if (_tipo == TipoImpresora.tcp) ...[
                 TextField(
@@ -1085,6 +1093,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                     hintText: '192.168.1.50',
                   ),
                   controller: _hostController,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -1093,6 +1103,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                     hintText: '9100',
                   ),
                   controller: _portController,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   keyboardType: TextInputType.number,
                 ),
               ],
@@ -1103,6 +1115,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                     hintText: 'ruta/carpeta',
                   ),
                   controller: _deviceController,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                 ),
               const SizedBox(height: 12),
               DropdownButtonFormField<int>(
@@ -1123,6 +1137,8 @@ class _ImpresoraFormDialogState extends State<_ImpresoraFormDialog> {
                   hintText: 'Ej: Epson TM-T20, ZKTECO',
                 ),
                 controller: _marcaController,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => FocusScope.of(context).unfocus(),
               ),
               const SizedBox(height: 16),
               Theme(

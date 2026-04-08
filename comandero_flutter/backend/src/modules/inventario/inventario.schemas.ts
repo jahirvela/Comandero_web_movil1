@@ -14,7 +14,7 @@ export const crearInsumoSchema = z.object({
   activo: z.boolean().optional().default(true),
   /** Cuando la unidad es pieza: cuánto pesa o contiene cada pieza (ej. 5 para envase 5 kg). Opcional. */
   contenidoPorPieza: z.coerce.number().positive().optional().nullable(),
-  /** Unidad del contenido por pieza (ej. "kg", "L"). Solo tiene sentido con contenidoPorPieza. */
+  /** Unidad del contenido por pieza (ej. "kg", "L", "Piezas"). Solo tiene sentido con contenidoPorPieza. */
   unidadContenido: z.string().max(16).optional().nullable()
 });
 

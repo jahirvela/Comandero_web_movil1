@@ -853,6 +853,8 @@ class _ProductModifierModalState extends State<ProductModifierModal> {
             ),
             SizedBox(height: AppTheme.spacingMD),
             TextField(
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => FocusScope.of(context).unfocus(),
               onChanged: (value) {
                 setState(() {
                   kitchenNotes = value;

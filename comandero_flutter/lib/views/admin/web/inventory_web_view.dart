@@ -1,10 +1,48 @@
+import 'dart:convert' show utf8;
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../controllers/admin_controller.dart';
 import '../../../models/admin_model.dart';
 import '../../../services/reportes_service.dart';
+import '../../../config/api_config.dart';
 import '../../../utils/app_colors.dart';
+import '../../../utils/date_utils.dart' as date_utils;
+import '../../../utils/file_download_helper.dart';
+import '../../../utils/inventory_csv_import_utils.dart';
+import '../../../utils/inventory_display_utils.dart';
+import '../../../utils/inventory_import_template.dart';
 import '../../../utils/string_search_utils.dart';
+
+String _inventoryWebErrorMessage(Object e) {
+  final errorStr = e.toString();
+  if (errorStr.contains('Error de conexión') ||
+      errorStr.contains('No se pudo conectar') ||
+      errorStr.contains('backend esté corriendo') ||
+      errorStr.contains('connection')) {
+    return 'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
+  }
+  if (errorStr.contains('401') || errorStr.contains('403')) {
+    return 'No tienes permisos para realizar esta acción.';
+  }
+  if (errorStr.contains('Categoría no encontrada')) {
+    return 'La categoría seleccionada no existe en el sistema.';
+  }
+  final m = RegExp(r'El backend no retornó (.+?)\.').firstMatch(errorStr);
+  if (m != null) {
+    return 'Error del servidor: ${m.group(1)}';
+  }
+  final ex = RegExp(r'Exception:\s*(.+?)(?:Exception:|$)').firstMatch(errorStr);
+  if (ex != null) {
+    return ex.group(1)?.trim() ?? 'Error desconocido';
+  }
+  return errorStr.length > 150
+      ? '${errorStr.substring(0, 150)}...'
+      : errorStr;
+}
 
 class InventoryWebView extends StatefulWidget {
   const InventoryWebView({super.key});
@@ -18,6 +56,16 @@ class _InventoryWebViewState extends State<InventoryWebView> {
   String _searchQuery = '';
   String _sortBy = 'name';
   bool _showLowStockOnly = false;
+
+  String _formatInvNumber(double value, {int maxDecimals = 2}) {
+    if (value == value.toInt()) {
+      return value.toInt().toString();
+    }
+    return value
+        .toStringAsFixed(maxDecimals)
+        .replaceAll(RegExp(r'0*$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -131,7 +179,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                     children: [
                       Expanded(
                         child: _buildStatCard(
-                          'Valor Total',
+                          'Costo Total',
                           '\$${totalValue.toStringAsFixed(2)}',
                           Colors.blue,
                           isTablet,
@@ -177,7 +225,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                         children: [
                           Expanded(
                             child: _buildStatCard(
-                              'Valor Total',
+                              'Costo Total',
                               '\$${totalValue.toStringAsFixed(2)}',
                               Colors.blue,
                               isTablet,
@@ -680,6 +728,15 @@ class _InventoryWebViewState extends State<InventoryWebView> {
               columns: [
                 DataColumn(
                   label: Text(
+                    'ID',
+                    style: TextStyle(
+                      fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 9.0),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                DataColumn(
+                  label: Text(
                     'Producto',
                     style: TextStyle(
                       fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
@@ -716,7 +773,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                 ),
                 DataColumn(
                   label: Text(
-                    'Precio Unitario',
+                    'Costo Unitario',
                     style: TextStyle(
                       fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                       fontWeight: FontWeight.w600,
@@ -725,7 +782,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                 ),
                 DataColumn(
                   label: Text(
-                    'Valor Total',
+                    'Costo Total',
                     style: TextStyle(
                       fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
                       fontWeight: FontWeight.w600,
@@ -764,6 +821,47 @@ class _InventoryWebViewState extends State<InventoryWebView> {
     );
   }
 
+  Widget _buildStockTableCell({
+    required String primary,
+    String? secondary,
+    List<String>? secondaryLines,
+    required bool isTablet,
+    required bool isDesktop,
+    required FontWeight primaryWeight,
+    Color? primaryColor,
+    Color? secondaryColor,
+  }) {
+    final small = isDesktop ? 11.0 : (isTablet ? 10.0 : 9.0);
+    final lines = secondaryLines ??
+        (secondary != null && secondary.isNotEmpty ? [secondary] : <String>[]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          primary,
+          style: TextStyle(
+            fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+            fontWeight: primaryWeight,
+            color: primaryColor ?? AppColors.textPrimary,
+          ),
+        ),
+        for (final line in lines)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              line,
+              style: TextStyle(
+                fontSize: small,
+                color: secondaryColor ?? AppColors.textSecondary,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   DataRow _buildDataRow(
     InventoryItem item,
     AdminController controller,
@@ -789,6 +887,19 @@ class _InventoryWebViewState extends State<InventoryWebView> {
 
     return DataRow(
       cells: [
+        DataCell(
+          Tooltip(
+            message: 'Usa este id en el CSV (o codigoBarras si el producto lo tiene)',
+            child: SelectableText(
+              item.id,
+              style: TextStyle(
+                fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 9.0),
+                fontFamily: 'monospace',
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ),
         DataCell(
           Row(
             children: [
@@ -850,22 +961,25 @@ class _InventoryWebViewState extends State<InventoryWebView> {
           ),
         ),
         DataCell(
-          Text(
-            '${item.currentStock} ${item.unit}',
-            style: TextStyle(
-              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
-              fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary,
-            ),
+          _buildStockTableCell(
+            primary: inventarioStockDisplay(item),
+            secondaryLines: inventarioContenidoEnvaseLines(item),
+            isTablet: isTablet,
+            isDesktop: isDesktop,
+            primaryWeight: FontWeight.w500,
           ),
         ),
         DataCell(
-          Text(
-            '${item.minimumStock} ${item.unit}',
-            style: TextStyle(
-              fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
-              color: AppColors.textSecondary,
-            ),
+          _buildStockTableCell(
+            primary: inventarioMinStockDisplay(item),
+            secondary: inventarioUnidadEsPieza(item.unit)
+                ? null
+                : inventarioEquivMinimoLine(item),
+            isTablet: isTablet,
+            isDesktop: isDesktop,
+            primaryWeight: FontWeight.normal,
+            primaryColor: AppColors.textSecondary,
+            secondaryColor: AppColors.textSecondary,
           ),
         ),
         DataCell(
@@ -982,7 +1096,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                           'Importar CSV',
                           Icons.upload_file,
                           Colors.blue,
-                          () => _showImportDialog(),
+                          () => _showImportDialog(controller),
                           isTablet,
                           isDesktop,
                         ),
@@ -1004,7 +1118,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                           'Ajuste Masivo',
                           Icons.edit_note,
                           Colors.orange,
-                          () => _showBulkAdjustmentDialog(),
+                          () => _showBulkAdjustmentDialog(controller),
                           isTablet,
                           isDesktop,
                         ),
@@ -1015,7 +1129,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                           'Generar Pedido',
                           Icons.shopping_cart,
                           Colors.purple,
-                          () => _showPurchaseOrderDialog(),
+                          () => _showPurchaseOrderDialog(controller),
                           isTablet,
                           isDesktop,
                         ),
@@ -1032,7 +1146,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                               'Importar CSV',
                               Icons.upload_file,
                               Colors.blue,
-                              () => _showImportDialog(),
+                              () => _showImportDialog(controller),
                               isTablet,
                               isDesktop,
                             ),
@@ -1058,7 +1172,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                               'Ajuste Masivo',
                               Icons.edit_note,
                               Colors.orange,
-                              () => _showBulkAdjustmentDialog(),
+                              () => _showBulkAdjustmentDialog(controller),
                               isTablet,
                               isDesktop,
                             ),
@@ -1069,7 +1183,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                               'Generar Pedido',
                               Icons.shopping_cart,
                               Colors.purple,
-                              () => _showPurchaseOrderDialog(),
+                              () => _showPurchaseOrderDialog(controller),
                               isTablet,
                               isDesktop,
                             ),
@@ -1180,22 +1294,1100 @@ class _InventoryWebViewState extends State<InventoryWebView> {
     return items;
   }
 
+  void _showAddInventoryCategoryDialog(
+    AdminController controller, {
+    void Function(String createdName)? onCreated,
+  }) {
+    final categoryNameController = TextEditingController();
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Agregar categoría',
+          style: TextStyle(fontSize: isWide ? 20 : 18),
+        ),
+        contentPadding: EdgeInsets.all(isWide ? 24 : 16),
+        content: SizedBox(
+          width: isWide ? 400 : double.infinity,
+          child: TextField(
+            controller: categoryNameController,
+            decoration: const InputDecoration(
+              labelText: 'Nombre de la categoría',
+              hintText: 'Ej: Verduras, Lácteos, etc.',
+              border: OutlineInputBorder(),
+            ),
+            autofocus: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final categoryName = categoryNameController.text.trim();
+              if (categoryName.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Por favor ingresa un nombre para la categoría'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              final exists = controller.inventoryCategories.any(
+                (c) => c.trim().toLowerCase() == categoryName.toLowerCase(),
+              );
+              if (exists) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('La categoría "$categoryName" ya existe'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              final catMessenger = ScaffoldMessenger.of(context);
+              final catNav = Navigator.of(context);
+              showDialog<void>(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => const Center(child: CircularProgressIndicator()),
+              );
+              try {
+                await controller.createInventoryCategory(categoryName);
+                if (!mounted) return;
+                catNav.pop();
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+                onCreated?.call(categoryName);
+                if (!mounted) return;
+                catMessenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Categoría "$categoryName" guardada.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } on StateError catch (e) {
+                if (!mounted) return;
+                catNav.pop();
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+                if (e.message == 'DUPLICATE_INVENTORY_CATEGORY' && mounted) {
+                  catMessenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Ya existe una categoría igual o muy similar a "$categoryName".',
+                      ),
+                      backgroundColor: Colors.orange,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (!mounted) return;
+                catNav.pop();
+                if (!mounted) return;
+                catMessenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Error: ${_inventoryWebErrorMessage(e)}'),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+            },
+            child: const Text('Crear'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showAddItemDialog(AdminController controller) {
-    // TODO: Implementar diálogo para agregar producto
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de agregar producto en desarrollo'),
-        backgroundColor: Colors.blue,
+    final categoryOptions = controller.inventoryCategories
+        .where((cat) => cat != 'todos')
+        .toList();
+    if (categoryOptions.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Crea al menos una categoría antes de agregar productos (usa «Crear categoría» o el panel de inventario).',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final formKey = GlobalKey<FormState>();
+    final nameController = TextEditingController();
+    final codigoBarrasController = TextEditingController();
+    final stockController = TextEditingController();
+    final minStockController = TextEditingController();
+    final maxStockController = TextEditingController();
+    final costController = TextEditingController();
+    final supplierController = TextEditingController();
+    String? selectedCategory = categoryOptions.first;
+    String selectedUnit = 'g';
+    const inventoryUnitOptions = [
+      'kg', 'g', 'L', 'ml',
+      'pza', 'Pieza', 'Piezas', 'Unidad', 'Unidades',
+    ];
+    final contenidoPorPiezaController = TextEditingController();
+    String? selectedUnidadContenido;
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+
+    String? resolveCategoryField(AdminController c, String? sel) {
+      final o = c.inventoryCategories.where((x) => x != 'todos').toList();
+      if (o.isEmpty) return null;
+      if (sel != null && o.contains(sel)) return sel;
+      return o.first;
+    }
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            'Agregar al inventario',
+            style: TextStyle(fontSize: isWide ? 20 : 18),
+          ),
+          contentPadding: EdgeInsets.all(isWide ? 24 : 16),
+          content: SizedBox(
+            width: isWide ? 500 : double.infinity,
+            child: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: nameController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre del producto *',
+                        border: OutlineInputBorder(),
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        if (value.trim().length < 2) {
+                          return 'Mínimo 2 caracteres';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: codigoBarrasController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Código de barras (opcional)',
+                        border: OutlineInputBorder(),
+                        hintText:
+                            'Único por línea de producto; para buscar al registrar entradas',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: resolveCategoryField(
+                        controller,
+                        selectedCategory,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Categoría *',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: controller.inventoryCategories
+                          .where((cat) => cat != 'todos')
+                          .map(
+                            (c) => DropdownMenuItem(value: c, child: Text(c)),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setDialogState(() => selectedCategory = value);
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () {
+                          _showAddInventoryCategoryDialog(
+                            controller,
+                            onCreated: (name) {
+                              setDialogState(() => selectedCategory = name);
+                            },
+                          );
+                        },
+                        icon: const Icon(Icons.add_circle_outline, size: 18),
+                        label: const Text('Crear categoría'),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: selectedUnit,
+                      decoration: InputDecoration(
+                        labelText: 'Unidad *',
+                        border: const OutlineInputBorder(),
+                        helperText: inventarioUnidadEsPieza(selectedUnit)
+                            ? 'Stock en número de envases. Abajo: cuánto trae cada uno (kg, L, piezas…).'
+                            : 'Para envases: elige Pieza o pza y define contenido por envase.',
+                      ),
+                      items: inventoryUnitOptions
+                          .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => selectedUnit = value);
+                        }
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        return null;
+                      },
+                    ),
+                    if (inventarioUnidadEsPieza(selectedUnit)) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
+                              style: TextStyle(
+                                fontSize: isWide ? 14 : 13,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad del ingrediente.',
+                              style: TextStyle(
+                                fontSize: isWide ? 12 : 11,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextFormField(
+                                    controller: contenidoPorPiezaController,
+                                    textInputAction: TextInputAction.next,
+                                    onFieldSubmitted: (_) =>
+                                        FocusScope.of(context).nextFocus(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Cantidad por envase',
+                                      border: OutlineInputBorder(),
+                                      hintText: 'Ej: 5 kg, 12 piezas…',
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: DropdownButtonFormField<String>(
+                                    value: selectedUnidadContenido,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Unidad',
+                                      border: OutlineInputBorder(),
+                                      hintText: 'kg, ml, piezas…',
+                                    ),
+                                    items: inventarioUnidadContenidoOpcionesConActual(
+                                            selectedUnidadContenido)
+                                        .map(
+                                          (u) => DropdownMenuItem(
+                                            value: u,
+                                            child: Text(u),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (value) {
+                                      setDialogState(
+                                        () => selectedUnidadContenido = value,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: stockController,
+                      onChanged: (_) => setDialogState(() {}),
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: InputDecoration(
+                        labelText: inventarioUnidadEsPieza(selectedUnit)
+                            ? 'Stock actual (número de piezas) *'
+                            : 'Stock actual *',
+                        border: const OutlineInputBorder(),
+                        hintText: inventarioUnidadEsPieza(selectedUnit)
+                            ? 'Ej: 6 envases = 6'
+                            : null,
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: minStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock mínimo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: maxStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock máximo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: costController,
+                      onChanged: (_) => setDialogState(() {}),
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Costo unitario (\$) *',
+                        border: OutlineInputBorder(),
+                        prefixText: '\$',
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final cost = double.tryParse(value);
+                        if (cost == null || cost < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Builder(
+                      builder: (_) {
+                        final stock = double.tryParse(stockController.text.trim()) ?? 0;
+                        final costText = costController.text
+                            .trim()
+                            .replaceAll('\$', '')
+                            .replaceAll(' ', '');
+                        final cost = double.tryParse(costText) ?? 0;
+                        final total = stock * cost;
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                                .withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Theme.of(context).colorScheme.outlineVariant,
+                            ),
+                          ),
+                          child: Text(
+                            'Costo Total: \$${total.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: supplierController,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).unfocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Proveedor',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final categoryToSave =
+                    resolveCategoryField(controller, selectedCategory);
+                if (categoryToSave == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Por favor selecciona una categoría'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                final stock = double.parse(stockController.text.trim());
+                final minStock = double.parse(minStockController.text.trim());
+                final maxStock = double.parse(maxStockController.text.trim());
+                final costText = costController.text
+                    .trim()
+                    .replaceAll('\$', '')
+                    .replaceAll(' ', '');
+                final cost = double.parse(costText);
+                final totalPrice = stock * cost;
+
+                String status;
+                if (stock <= 0) {
+                  status = InventoryStatus.outOfStock;
+                } else if (stock < minStock) {
+                  status = InventoryStatus.lowStock;
+                } else {
+                  status = InventoryStatus.available;
+                }
+
+                final codigoBarras = codigoBarrasController.text.trim();
+                double? contenidoPorPieza;
+                String? unidadContenido;
+                if (inventarioUnidadEsPieza(selectedUnit)) {
+                  final uCont = selectedUnidadContenido;
+                  if (contenidoPorPiezaController.text.trim().isNotEmpty &&
+                      uCont != null &&
+                      uCont.isNotEmpty) {
+                    contenidoPorPieza = double.tryParse(
+                      contenidoPorPiezaController.text.trim(),
+                    );
+                    if (contenidoPorPieza != null && contenidoPorPieza > 0) {
+                      unidadContenido = uCont;
+                    } else {
+                      contenidoPorPieza = null;
+                      unidadContenido = null;
+                    }
+                  } else {
+                    contenidoPorPieza = null;
+                    unidadContenido = null;
+                  }
+                } else {
+                  contenidoPorPieza = null;
+                  unidadContenido = null;
+                }
+                final newItem = InventoryItem(
+                  id: 'temp',
+                  name: nameController.text.trim(),
+                  codigoBarras:
+                      codigoBarras.isEmpty ? null : codigoBarras,
+                  category: categoryToSave,
+                  currentStock: stock,
+                  minStock: minStock,
+                  maxStock: maxStock,
+                  minimumStock: minStock,
+                  unit: selectedUnit,
+                  cost: cost,
+                  price: totalPrice,
+                  unitPrice: cost,
+                  supplier: supplierController.text.trim().isEmpty
+                      ? null
+                      : supplierController.text.trim(),
+                  lastRestock: date_utils.AppDateUtils.nowCdmx(),
+                  status: status,
+                  contenidoPorPieza: contenidoPorPieza,
+                  unidadContenido: unidadContenido,
+                );
+
+                final messenger = ScaffoldMessenger.of(context);
+                final nav = Navigator.of(context);
+                showDialog<void>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => const Center(child: CircularProgressIndicator()),
+                );
+                try {
+                  await controller.addInventoryItem(newItem);
+                  if (!mounted) return;
+                  nav.pop();
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Producto agregado al inventario exitosamente',
+                      ),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  nav.pop();
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Error al crear ítem: ${_inventoryWebErrorMessage(e)}',
+                      ),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Agregar al inventario'),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   void _showEditItemDialog(InventoryItem item, AdminController controller) {
-    // TODO: Implementar diálogo para editar producto
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de editar producto en desarrollo'),
-        backgroundColor: Colors.blue,
+    final formKey = GlobalKey<FormState>();
+    final nameController = TextEditingController(text: item.name);
+    final codigoBarrasController =
+        TextEditingController(text: item.codigoBarras ?? '');
+    final stockController = TextEditingController(
+      text: _formatInvNumber(item.currentStock),
+    );
+    final minStockController = TextEditingController(
+      text: _formatInvNumber(item.minStock),
+    );
+    final maxStockController = TextEditingController(
+      text: _formatInvNumber(item.maxStock),
+    );
+    final costController = TextEditingController(
+      text: item.cost > 0 ? _formatInvNumber(item.cost, maxDecimals: 2) : '',
+    );
+    final supplierController =
+        TextEditingController(text: item.supplier ?? '');
+    final contenidoPorPiezaController = TextEditingController(
+      text: item.contenidoPorPieza != null && item.contenidoPorPieza! > 0
+          ? _formatInvNumber(item.contenidoPorPieza!)
+          : '',
+    );
+    String? selectedUnidadContenido = item.unidadContenido?.trim();
+    final unidadEsPieza = inventarioUnidadEsPieza(item.unit);
+
+    List<String> categoryOptions =
+        List<String>.from(controller.getInventoryCategories());
+    if (categoryOptions.isEmpty) {
+      categoryOptions = ['General'];
+    }
+    if (!categoryOptions.contains(item.category) && item.category.isNotEmpty) {
+      categoryOptions = [item.category, ...categoryOptions];
+    }
+    String selectedCategory = categoryOptions.contains(item.category)
+        ? item.category
+        : categoryOptions.first;
+
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'Editar producto',
+                  style: TextStyle(fontSize: isWide ? 20 : 18),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.close, size: isWide ? 24 : 20),
+                onPressed: () => Navigator.of(dialogContext).pop(),
+              ),
+            ],
+          ),
+          contentPadding: EdgeInsets.all(isWide ? 24 : 16),
+          content: SizedBox(
+            width: isWide ? 500 : double.infinity,
+            child: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: nameController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre *',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        if (value.trim().length < 2) {
+                          return 'Mínimo 2 caracteres';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: selectedCategory,
+                      decoration: const InputDecoration(
+                        labelText: 'Categoría *',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: categoryOptions
+                          .map(
+                            (c) => DropdownMenuItem(value: c, child: Text(c)),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => selectedCategory = value);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      initialValue: item.unit,
+                      enabled: false,
+                      decoration: const InputDecoration(
+                        labelText: 'Unidad',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: codigoBarrasController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Código de barras (opcional)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: stockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: InputDecoration(
+                        labelText: unidadEsPieza
+                            ? 'Stock actual (número de piezas) *'
+                            : 'Stock actual *',
+                        border: const OutlineInputBorder(),
+                        hintText: unidadEsPieza ? 'Ej: 6 envases = 6' : null,
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    if (unidadEsPieza) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
+                              style: TextStyle(
+                                fontSize: isWide ? 14 : 13,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad de la receta.',
+                              style: TextStyle(
+                                fontSize: isWide ? 12 : 11,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextFormField(
+                                    controller: contenidoPorPiezaController,
+                                    textInputAction: TextInputAction.next,
+                                    onFieldSubmitted: (_) =>
+                                        FocusScope.of(context).nextFocus(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Cantidad por envase',
+                                      border: OutlineInputBorder(),
+                                      hintText: 'Ej: 5 kg, 12 piezas…',
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: DropdownButtonFormField<String>(
+                                    value: selectedUnidadContenido,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Unidad',
+                                      border: OutlineInputBorder(),
+                                      hintText: 'kg, ml, piezas…',
+                                    ),
+                                    items: inventarioUnidadContenidoOpcionesConActual(
+                                            selectedUnidadContenido)
+                                        .map(
+                                          (u) => DropdownMenuItem(
+                                            value: u,
+                                            child: Text(u),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (value) {
+                                      setDialogState(
+                                        () => selectedUnidadContenido = value,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: minStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock mínimo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: maxStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock máximo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: costController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Costo Unitario (\$)',
+                        border: OutlineInputBorder(),
+                        prefixText: '\$',
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return null;
+                        }
+                        final cost = double.tryParse(value);
+                        if (cost == null || cost < 0) {
+                          return 'Debe ser un número válido mayor o igual a 0';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: supplierController,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).unfocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Proveedor',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+
+                final messenger = ScaffoldMessenger.of(context);
+                final nav = Navigator.of(context);
+                showDialog<void>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => const Center(child: CircularProgressIndicator()),
+                );
+
+                try {
+                  final stock = double.parse(stockController.text.trim());
+                  final minStock = double.parse(minStockController.text.trim());
+                  final maxStock = double.parse(maxStockController.text.trim());
+                  final costText = costController.text
+                      .trim()
+                      .replaceAll('\$', '')
+                      .replaceAll(' ', '');
+                  final cost = costText.isEmpty ? 0.0 : double.parse(costText);
+                  final totalPrice = stock * cost;
+
+                  String status;
+                  if (stock <= 0) {
+                    status = InventoryStatus.outOfStock;
+                  } else if (stock < minStock) {
+                    status = InventoryStatus.lowStock;
+                  } else {
+                    status = InventoryStatus.available;
+                  }
+
+                  final codigoBarras = codigoBarrasController.text.trim();
+                  double? contenidoPorPieza;
+                  String? unidadContenido;
+                  if (unidadEsPieza) {
+                    final uContEdit = selectedUnidadContenido;
+                    if (contenidoPorPiezaController.text.trim().isNotEmpty &&
+                        uContEdit != null &&
+                        uContEdit.isNotEmpty) {
+                      contenidoPorPieza = double.tryParse(
+                        contenidoPorPiezaController.text.trim(),
+                      );
+                      if (contenidoPorPieza != null && contenidoPorPieza > 0) {
+                        unidadContenido = uContEdit;
+                      } else {
+                        contenidoPorPieza = null;
+                        unidadContenido = null;
+                      }
+                    } else {
+                      contenidoPorPieza = null;
+                      unidadContenido = null;
+                    }
+                  } else {
+                    contenidoPorPieza = null;
+                    unidadContenido = null;
+                  }
+
+                  final newName = nameController.text.trim();
+                  final updatedItem = InventoryItem(
+                    id: item.id,
+                    name: newName,
+                    codigoBarras:
+                        codigoBarras.isEmpty ? null : codigoBarras,
+                    category: selectedCategory,
+                    currentStock: stock,
+                    minStock: minStock,
+                    maxStock: maxStock,
+                    minimumStock: minStock,
+                    unit: item.unit,
+                    cost: cost,
+                    price: totalPrice,
+                    unitPrice: cost,
+                    supplier: supplierController.text.trim().isEmpty
+                        ? null
+                        : supplierController.text.trim(),
+                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
+                    expiryDate: item.expiryDate,
+                    status: status,
+                    notes: item.notes,
+                    description: item.description,
+                    contenidoPorPieza: contenidoPorPieza,
+                    unidadContenido: unidadContenido,
+                  );
+
+                  await controller.updateInventoryItem(updatedItem);
+
+                  if (!mounted) return;
+                  nav.pop();
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('Inventario actualizado exitosamente'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  nav.pop();
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Error al actualizar inventario: ${_inventoryWebErrorMessage(e)}',
+                      ),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Guardar cambios'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1204,30 +2396,450 @@ class _InventoryWebViewState extends State<InventoryWebView> {
     InventoryItem item,
     AdminController controller,
   ) {
-    // TODO: Implementar diálogo para ajustar stock
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de ajuste de stock en desarrollo'),
-        backgroundColor: Colors.orange,
+    final formKey = GlobalKey<FormState>();
+    final quantityController = TextEditingController();
+    var isDecrease = false;
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isDecrease ? 'Disminuir stock' : 'Aumentar stock'),
+          contentPadding: EdgeInsets.all(isWide ? 24 : 16),
+          content: SizedBox(
+            width: isWide ? 400 : double.infinity,
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ToggleButtons(
+                    isSelected: [!isDecrease, isDecrease],
+                    onPressed: (index) {
+                      setDialogState(() {
+                        isDecrease = index == 1;
+                        quantityController.clear();
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    children: const [
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: Text('Aumentar'),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: Text('Disminuir'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Stock actual: ${inventarioStockDisplay(item)}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  for (final line in inventarioContenidoEnvaseLines(item)) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      line,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                            fontStyle: FontStyle.italic,
+                          ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: quantityController,
+                    decoration: InputDecoration(
+                      labelText: isDecrease
+                          ? 'Cantidad a disminuir *'
+                          : 'Cantidad a aumentar *',
+                      border: const OutlineInputBorder(),
+                      suffixText: inventarioUnidadSuffixAjuste(item),
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Campo obligatorio';
+                      }
+                      final quantity = double.tryParse(value);
+                      if (quantity == null || quantity <= 0) {
+                        return 'Debe ser un número válido mayor a 0';
+                      }
+                      final stockActual = item.currentStock < 0
+                          ? 0.0
+                          : item.currentStock;
+                      if (isDecrease && quantity > stockActual) {
+                        return 'No puede disminuir más del stock actual';
+                      }
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+
+                final messenger = ScaffoldMessenger.of(context);
+                final nav = Navigator.of(context);
+                showDialog<void>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => const Center(child: CircularProgressIndicator()),
+                );
+
+                try {
+                  final quantity = double.parse(quantityController.text);
+                  final stockBase =
+                      item.currentStock < 0 ? 0.0 : item.currentStock;
+                  final newStock = isDecrease
+                      ? (stockBase - quantity).clamp(0.0, double.infinity)
+                      : stockBase + quantity;
+
+                  String status;
+                  if (newStock <= 0) {
+                    status = InventoryStatus.outOfStock;
+                  } else if (newStock < item.minStock) {
+                    status = InventoryStatus.lowStock;
+                  } else {
+                    status = InventoryStatus.available;
+                  }
+
+                  final updatedItem = item.copyWith(
+                    currentStock: newStock,
+                    price: newStock * item.unitPrice,
+                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
+                    status: status,
+                  );
+
+                  if (!isDecrease) {
+                    await controller.restockInventoryItem(item.id, quantity);
+                  } else {
+                    await controller.updateInventoryItem(updatedItem);
+                  }
+
+                  if (!mounted) return;
+                  nav.pop();
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        isDecrease
+                            ? 'Stock disminuido exitosamente'
+                            : 'Stock aumentado exitosamente',
+                      ),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  nav.pop();
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Error al ajustar stock: ${_inventoryWebErrorMessage(e)}',
+                      ),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isDecrease ? Colors.red : Colors.green,
+                foregroundColor: Colors.white,
+              ),
+              child: Text(isDecrease ? 'Disminuir' : 'Aumentar'),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _showDeleteConfirmation(InventoryItem item, AdminController controller) {
-    // TODO: Implementar confirmación de eliminación
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de eliminación en desarrollo'),
-        backgroundColor: Colors.red,
+  void _showDeleteConfirmation(
+    InventoryItem item,
+    AdminController controller,
+  ) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eliminar producto'),
+        content: Text(
+          '¿Estás seguro de eliminar "${item.name}" del inventario?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final delMessenger = ScaffoldMessenger.of(context);
+              final delNav = Navigator.of(context);
+              showDialog<void>(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => const Center(child: CircularProgressIndicator()),
+              );
+              try {
+                await controller.deleteInventoryItem(item.id);
+                if (!mounted) return;
+                delNav.pop();
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+                if (!mounted) return;
+                delMessenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Producto "${item.name}" eliminado'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                delNav.pop();
+                if (!mounted) return;
+                delMessenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Error al eliminar ítem: ${_inventoryWebErrorMessage(e)}',
+                    ),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 5),
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Eliminar'),
+          ),
+        ],
       ),
     );
   }
 
-  void _showImportDialog() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de importación CSV en desarrollo'),
-        backgroundColor: Colors.blue,
+  void _showImportDialog(AdminController controller) {
+    final rootContext = context;
+    final csvController = TextEditingController();
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+    final messenger = ScaffoldMessenger.of(context);
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.upload_file, color: AppColors.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Importar ajustes CSV',
+                    style: TextStyle(fontSize: isWide ? 20 : 18),
+                  ),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: isWide ? 520 : double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Primera fila: encabezados. Por fila indica id (columna «ID» de la tabla) '
+                      'o codigoBarras (también barcode, ean, sku…). Si vienen ambos, se usa solo id. '
+                      'Además, al menos uno de: cantidadActual (o stock), stockMinimo (o minimo), '
+                      'stockMaximo (o maximo), costoUnitario (o costo). Números con coma o punto.',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            try {
+                              await FileDownloadHelper.downloadCSV(
+                                buildInventoryImportCsvTemplateContent(),
+                                'plantilla-importacion-inventario.csv',
+                              );
+                            } catch (e) {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'No se pudo generar el CSV: ${_inventoryWebErrorMessage(e)}',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.table_chart, size: 18),
+                          label: const Text('Plantilla CSV'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            try {
+                              final bytes =
+                                  await buildInventoryImportTemplatePdfBytes();
+                              await FileDownloadHelper.downloadPdf(
+                                bytes,
+                                'plantilla-importacion-inventario.pdf',
+                              );
+                            } catch (e) {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'No se pudo generar el PDF: ${_inventoryWebErrorMessage(e)}',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.picture_as_pdf, size: 18),
+                          label: const Text('Guía PDF'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final result = await FilePicker.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: const ['csv', 'txt'],
+                          withData: true,
+                        );
+                        if (result == null || result.files.isEmpty) return;
+                        final bytes = result.files.single.bytes;
+                        if (bytes == null) {
+                          if (mounted) {
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'No se pudo leer el archivo en este dispositivo. Pega el CSV en el cuadro de texto.',
+                                ),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                          }
+                          return;
+                        }
+                        csvController.text = utf8.decode(bytes);
+                        setDialogState(() {});
+                      },
+                      icon: const Icon(Icons.folder_open),
+                      label: const Text('Elegir archivo (.csv)'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: csvController,
+                      maxLines: 10,
+                      decoration: const InputDecoration(
+                        labelText: 'O pega aquí el contenido CSV',
+                        border: OutlineInputBorder(),
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cerrar'),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  final text = csvController.text.trim();
+                  if (text.isEmpty) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Agrega un CSV o elige un archivo'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  final nav = Navigator.of(rootContext);
+                  showDialog<void>(
+                    context: rootContext,
+                    barrierDismissible: false,
+                    builder: (_) => const Center(child: CircularProgressIndicator()),
+                  );
+                  try {
+                    final rows = parseInventoryImportCsv(text);
+                    if (rows.isEmpty) {
+                      throw Exception('No hay filas de datos después del encabezado');
+                    }
+                    final r = await controller.importInventoryUpdatesFromCsvRowMaps(rows);
+                    if (!mounted) return;
+                    nav.pop();
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    final errTail = r.errors.length > 3
+                        ? ' (${r.errors.length} avisos; revisa la consola si hace falta)'
+                        : (r.errors.isEmpty
+                            ? ''
+                            : ': ${r.errors.take(3).join('; ')}');
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Importación: ${r.updated} actualizados, ${r.skipped} omitidos$errTail',
+                        ),
+                        backgroundColor:
+                            r.updated > 0 ? Colors.green : Colors.orange,
+                        duration: const Duration(seconds: 6),
+                      ),
+                    );
+                    if (r.errors.length > 3) {
+                      for (final e in r.errors) {
+                        debugPrint('[import CSV] $e');
+                      }
+                    }
+                  } catch (e) {
+                    if (!mounted) return;
+                    nav.pop();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Error: ${_inventoryWebErrorMessage(e)}'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Aplicar'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1236,11 +2848,12 @@ class _InventoryWebViewState extends State<InventoryWebView> {
     final now = DateTime.now();
     DateTime fechaInicio = DateTime(now.year, now.month, 1);
     DateTime fechaFin = now;
+    final exportMessenger = ScaffoldMessenger.of(context);
 
     showDialog<void>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (_, setDialogState) {
           return AlertDialog(
             title: const Row(
               children: [
@@ -1268,7 +2881,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                       icon: const Icon(Icons.calendar_today),
                       onPressed: () async {
                         final picked = await showDatePicker(
-                          context: context,
+                          context: dialogContext,
                           initialDate: fechaInicio,
                           firstDate: DateTime(2020),
                           lastDate: DateTime.now(),
@@ -1291,7 +2904,7 @@ class _InventoryWebViewState extends State<InventoryWebView> {
                       icon: const Icon(Icons.calendar_today),
                       onPressed: () async {
                         final picked = await showDatePicker(
-                          context: context,
+                          context: dialogContext,
                           initialDate: fechaFin,
                           firstDate: fechaInicio,
                           lastDate: DateTime.now(),
@@ -1307,34 +2920,32 @@ class _InventoryWebViewState extends State<InventoryWebView> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => Navigator.of(dialogContext).pop(),
                 child: const Text('Cancelar'),
               ),
               FilledButton.icon(
                 onPressed: () async {
-                  Navigator.of(context).pop();
+                  Navigator.of(dialogContext).pop();
                   try {
                     await ReportesService().generarReporteInventarioPDF(
                       fechaInicio: fechaInicio,
                       fechaFin: fechaFin,
                     );
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Reporte PDF descargado'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
+                    if (!mounted) return;
+                    exportMessenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Reporte PDF descargado'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
                   } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error al descargar PDF: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
+                    if (!mounted) return;
+                    exportMessenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Error al descargar PDF: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
                   }
                 },
                 icon: const Icon(Icons.picture_as_pdf),
@@ -1342,29 +2953,27 @@ class _InventoryWebViewState extends State<InventoryWebView> {
               ),
               FilledButton.icon(
                 onPressed: () async {
-                  Navigator.of(context).pop();
+                  Navigator.of(dialogContext).pop();
                   try {
                     await ReportesService().generarReporteInventarioCSV(
                       fechaInicio: fechaInicio,
                       fechaFin: fechaFin,
                     );
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Reporte CSV descargado'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
+                    if (!mounted) return;
+                    exportMessenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Reporte CSV descargado'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
                   } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error al descargar CSV: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
+                    if (!mounted) return;
+                    exportMessenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Error al descargar CSV: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
                   }
                 },
                 icon: const Icon(Icons.table_chart),
@@ -1377,20 +2986,298 @@ class _InventoryWebViewState extends State<InventoryWebView> {
     );
   }
 
-  void _showBulkAdjustmentDialog() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de ajuste masivo en desarrollo'),
-        backgroundColor: Colors.orange,
+  void _showBulkAdjustmentDialog(AdminController controller) {
+    final rootContext = context;
+    final qtyController = TextEditingController();
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+    final messenger = ScaffoldMessenger.of(context);
+    var mode = 'add';
+    var onlyLowOrOut = true;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final filtered = _getFilteredItems(controller);
+          List<InventoryItem> targets() {
+            var list = List<InventoryItem>.from(filtered);
+            if (onlyLowOrOut) {
+              list = list
+                  .where(
+                    (i) =>
+                        i.currentStock <= i.minStock || i.currentStock <= 0,
+                  )
+                  .toList();
+            }
+            return list;
+          }
+
+          final n = targets().length;
+
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.edit_note, color: Colors.orange),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Ajuste masivo de stock',
+                    style: TextStyle(fontSize: isWide ? 20 : 18),
+                  ),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: isWide ? 420 : double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Se aplicará a los productos que ves ahora en la tabla '
+                      '(filtros y búsqueda actuales): ${filtered.length} ítems.',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      value: onlyLowOrOut,
+                      onChanged: (v) {
+                        setDialogState(() => onlyLowOrOut = v ?? true);
+                      },
+                      title: const Text(
+                        'Solo productos en mínimo o sin stock',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    Text(
+                      'Afectará $n producto${n == 1 ? '' : 's'}.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: n == 0 ? Colors.red : AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: mode,
+                      decoration: const InputDecoration(
+                        labelText: 'Operación',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'add',
+                          child: Text('Sumar a la cantidad actual'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'subtract',
+                          child: Text('Restar de la cantidad actual'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'set',
+                          child: Text('Fijar cantidad exacta'),
+                        ),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setDialogState(() => mode = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: qtyController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Cantidad',
+                        border: OutlineInputBorder(),
+                        hintText: 'Ej: 5 o 2.5',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final list = targets();
+                  if (list.isEmpty) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('No hay productos que coincidan con el criterio'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  final q = double.tryParse(qtyController.text.trim());
+                  if (q == null || (mode != 'set' && q <= 0)) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Indica una cantidad válida (> 0, salvo «fijar» que puede ser 0)',
+                        ),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  if (mode == 'set' && q < 0) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('La cantidad fijada no puede ser negativa'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
+                  final nav = Navigator.of(rootContext);
+                  showDialog<void>(
+                    context: rootContext,
+                    barrierDismissible: false,
+                    builder: (_) => const Center(child: CircularProgressIndicator()),
+                  );
+                  try {
+                    await controller.bulkAdjustInventoryStockForItems(
+                      list,
+                      mode: mode,
+                      quantity: q,
+                    );
+                    if (!mounted) return;
+                    nav.pop();
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Ajuste aplicado a ${list.length} producto${list.length == 1 ? '' : 's'}',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } catch (e) {
+                    if (!mounted) return;
+                    nav.pop();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Error: ${_inventoryWebErrorMessage(e)}',
+                        ),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                },
+                child: const Text('Aplicar'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  void _showPurchaseOrderDialog() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidad de pedido de compra en desarrollo'),
-        backgroundColor: Colors.purple,
+  void _showPurchaseOrderDialog(AdminController controller) {
+    final rootMessenger = ScaffoldMessenger.of(context);
+    final isWide = MediaQuery.sizeOf(context).width > 600;
+    final need = controller.inventoryItems
+        .where((i) => i.currentStock < i.minStock)
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
+    final buf = StringBuffer()
+      ..writeln('Pedido sugerido — stock bajo mínimo')
+      ..writeln(
+        'Generado: ${DateTime.now().toLocal().toString().split('.').first}',
+      )
+      ..writeln('')
+      ..writeln('Producto\tUnidad\tActual\tMínimo\tSugerido comprar');
+
+    for (final i in need) {
+      final gap = i.minStock - i.currentStock;
+      final sug = gap <= 0 ? 0.0 : gap;
+      buf.writeln(
+        '${i.name}\t${i.unit}\t${i.currentStock}\t${i.minStock}\t${sug.toStringAsFixed(2)}',
+      );
+    }
+
+    final text = buf.toString();
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.shopping_cart, color: Colors.purple),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Pedido de compra (sugerido)',
+                style: TextStyle(fontSize: isWide ? 20 : 18),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: isWide ? 480 : double.maxFinite,
+          child: need.isEmpty
+              ? const Text(
+                  'No hay productos por debajo del stock mínimo en este momento.',
+                  style: TextStyle(fontSize: 14),
+                )
+              : SingleChildScrollView(
+                  child: SelectableText(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cerrar'),
+          ),
+          if (need.isNotEmpty) ...[
+            TextButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: text));
+                if (!mounted) return;
+                rootMessenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Texto copiado al portapapeles'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              },
+              icon: const Icon(Icons.copy, size: 18),
+              label: const Text('Copiar'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                await Share.share(
+                  text,
+                  subject: 'Pedido inventario Comandix',
+                );
+              },
+              icon: const Icon(Icons.share),
+              label: const Text('Compartir'),
+            ),
+          ],
+        ],
       ),
     );
   }

@@ -5,7 +5,7 @@ import type {
   CorteCaja,
   InventarioMovimiento
 } from './reportes.repository.js';
-import { formatMxLocale, formatMxDate } from '../../config/time.js';
+import { formatMxLocale, formatMxDate, nowMx } from '../../config/time.js';
 
 /**
  * Librería elegida: json2csv (v6.0.0-alpha.2)
@@ -33,7 +33,8 @@ export const generarCSVVentas = (datos: VentasReporte[]): string => {
   ];
 
   const parser = new Parser({ fields, withBOM: true });
-  return parser.parse(datos);
+  const body = datos.length === 0 ? '' : parser.parse(datos);
+  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
 };
 
 export const generarCSVTopProductos = (datos: TopProducto[]): string => {
@@ -46,7 +47,8 @@ export const generarCSVTopProductos = (datos: TopProducto[]): string => {
   ];
 
   const parser = new Parser({ fields, withBOM: true });
-  return parser.parse(datos);
+  const body = datos.length === 0 ? '' : parser.parse(datos);
+  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
 };
 
 export const generarCSVCorteCaja = (datos: CorteCaja): string => {
@@ -63,7 +65,8 @@ export const generarCSVCorteCaja = (datos: CorteCaja): string => {
   ];
 
   const parser = new Parser({ fields, withBOM: true });
-  return parser.parse([datos]);
+  const body = parser.parse([datos]);
+  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
 };
 
 export const generarCSVInventario = (datos: InventarioMovimiento[]): string => {
@@ -77,11 +80,16 @@ export const generarCSVInventario = (datos: InventarioMovimiento[]): string => {
       label: 'Costo Unitario',
       value: (row: InventarioMovimiento) => (row.costoUnitario !== null ? row.costoUnitario.toFixed(2) : 'N/A')
     },
+    {
+      label: 'Costo Total',
+      value: (row: InventarioMovimiento) => (row.costoTotal !== null ? row.costoTotal.toFixed(2) : 'N/A')
+    },
     { label: 'Motivo', value: 'motivo' },
     { label: 'Usuario', value: 'usuario' }
   ];
 
   const parser = new Parser({ fields, withBOM: true });
-  return parser.parse(datos);
+  const body = datos.length === 0 ? '' : parser.parse(datos);
+  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
 };
 

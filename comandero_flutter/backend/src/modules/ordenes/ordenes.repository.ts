@@ -117,7 +117,7 @@ export const listarOrdenes = async ({
     LEFT JOIN usuario u ON u.id = o.creado_por_usuario_id
     ${whereClause}
     ORDER BY o.creado_en DESC
-    LIMIT 200
+    LIMIT ${incluirCerradas ? 1000 : 200}
     `,
     params
   );

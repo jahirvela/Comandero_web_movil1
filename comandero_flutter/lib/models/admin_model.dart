@@ -107,7 +107,7 @@ class InventoryItem {
   final String? description;
   /// Cuando la unidad es pieza: cuánto pesa o contiene cada pieza (ej. 5 para envase 5 kg). Opcional.
   final double? contenidoPorPieza;
-  /// Unidad del contenido por pieza (ej. "kg", "L"). Solo tiene sentido con contenidoPorPieza.
+  /// Unidad del contenido por pieza (ej. "kg", "L", "Piezas"). Solo tiene sentido con contenidoPorPieza.
   final String? unidadContenido;
 
   InventoryItem({
@@ -195,6 +195,8 @@ class InventoryItem {
     };
   }
 
+  static const Object _unsetContenido = Object();
+
   InventoryItem copyWith({
     String? id,
     String? name,
@@ -214,8 +216,8 @@ class InventoryItem {
     String? status,
     String? notes,
     String? description,
-    double? contenidoPorPieza,
-    String? unidadContenido,
+    Object? contenidoPorPieza = _unsetContenido,
+    Object? unidadContenido = _unsetContenido,
   }) {
     return InventoryItem(
       id: id ?? this.id,
@@ -236,8 +238,12 @@ class InventoryItem {
       status: status ?? this.status,
       notes: notes ?? this.notes,
       description: description ?? this.description,
-      contenidoPorPieza: contenidoPorPieza ?? this.contenidoPorPieza,
-      unidadContenido: unidadContenido ?? this.unidadContenido,
+      contenidoPorPieza: identical(contenidoPorPieza, _unsetContenido)
+          ? this.contenidoPorPieza
+          : contenidoPorPieza as double?,
+      unidadContenido: identical(unidadContenido, _unsetContenido)
+          ? this.unidadContenido
+          : unidadContenido as String?,
     );
   }
 }

@@ -43,6 +43,7 @@ export interface InventarioMovimiento {
   tipo: string;
   cantidad: number;
   costoUnitario: number | null;
+  costoTotal: number | null;
   motivo: string | null;
   usuario: string | null;
 }
@@ -226,6 +227,7 @@ export const obtenerReporteInventario = async (
       m.tipo,
       m.cantidad,
       m.costo_unitario,
+      (m.cantidad * m.costo_unitario) AS costo_total,
       m.motivo,
       CONCAT(u.nombre, ' (', u.username, ')') AS usuario
     FROM movimiento_inventario m
@@ -244,6 +246,7 @@ export const obtenerReporteInventario = async (
     tipo: row.tipo,
     cantidad: Number(row.cantidad),
     costoUnitario: row.costo_unitario === null ? null : Number(row.costo_unitario),
+    costoTotal: row.costo_total === null ? null : Number(row.costo_total),
     motivo: row.motivo,
     usuario: row.usuario
   }));

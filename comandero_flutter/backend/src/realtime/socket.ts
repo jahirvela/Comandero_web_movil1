@@ -97,6 +97,10 @@ const handleConnection = (socket: Socket) => {
       socket.join(`${SOCKET_ROOM_ROLE_PREFIX}cajero`);
       socket.join(`${SOCKET_ROOM_ROLE_PREFIX}cocinero`);
     }
+    // Capitán: mismas cuentas por cobrar / pagos en tiempo real que cajero
+    if (normalizedList.includes('capitan') || normalizedList.includes('capitán')) {
+      socket.join(`${SOCKET_ROOM_ROLE_PREFIX}cajero`);
+    }
     for (const role of user.roles) {
       const normalizedRole = typeof role === 'string' ? role.toLowerCase() : String(role);
       socket.join(`${SOCKET_ROOM_ROLE_PREFIX}${normalizedRole}`);

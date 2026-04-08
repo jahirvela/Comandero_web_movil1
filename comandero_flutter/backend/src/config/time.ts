@@ -276,6 +276,33 @@ export function getDateOnlyMx(date: Date | string | DateTime | null | undefined)
 }
 
 /**
+ * Columna MySQL DATE leída con `timezone: 'Z'`: viene como medianoche UTC.
+ * El calendario Y-M-D coincide con la fecha guardada (no usar utcToMx sobre el Date sin más: desplaza el día en CDMX).
+ */
+export function sqlDateUtcToYmd(value: Date | string | null | undefined): string | null {
+  if (value == null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (s.length >= 10) return s.slice(0, 10);
+    return null;
+  }
+  const y = value.getUTCFullYear();
+  const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(value.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Inicio del día CDMX para una columna DATE (calendario operativo en México).
+ */
+export function sqlDateColumnToMxStartIso(value: Date | string | null | undefined): string | null {
+  const ymd = sqlDateUtcToYmd(value);
+  if (!ymd) return null;
+  const dt = DateTime.fromISO(ymd, { zone: APP_TIMEZONE }).startOf('day');
+  return dt.toISO();
+}
+
+/**
  * Parsea una fecha string en zona CDMX y devuelve como UTC
  * @param dateStr - String de fecha (puede ser ISO o SQL format)
  * @returns DateTime en UTC listo para guardar en BD

@@ -1430,6 +1430,8 @@ class _CartViewState extends State<CartView> {
         title: const Text('Agregar Persona'),
         content: TextField(
           controller: nameController,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
           decoration: const InputDecoration(
             labelText: 'Nombre de la persona',
             hintText: 'Ej: Juan, María, Persona 1',

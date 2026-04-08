@@ -96,6 +96,11 @@ class AdminController extends ChangeNotifier {
   List<InventoryItem> _inventory = [];
   List<String> _inventoryCategories = ['todos'];
   List<Map<String, dynamic>> _inventoryMovimientos = [];
+  String _inventoryMovementsPeriod = 'day';
+  DateTime? _inventoryMovementsStart;
+  DateTime? _inventoryMovementsEnd;
+  String _inventoryMovementsTypeFilter = 'todos';
+  String _inventoryMovementsSearchQuery = '';
   /// Rango para exportación CSV/PDF con periodo `personalizado` (fecha y hora).
   DateTime? _inventoryExportStart;
   DateTime? _inventoryExportEnd;
@@ -244,6 +249,25 @@ class AdminController extends ChangeNotifier {
   /// Últimos movimientos de inventario (kárdex), desde el backend.
   List<Map<String, dynamic>> get inventoryMovimientos =>
       List.unmodifiable(_inventoryMovimientos);
+  List<Map<String, dynamic>> get filteredInventoryMovimientos {
+    final q = normalizeForInsensitiveSearch(_inventoryMovementsSearchQuery);
+    return _inventoryMovimientos.where((m) {
+      final tipo = (m['tipo'] ?? '').toString().toLowerCase();
+      final typeMatch = _inventoryMovementsTypeFilter == 'todos' ||
+          tipo == _inventoryMovementsTypeFilter;
+      if (!typeMatch) return false;
+      if (q.isEmpty) return true;
+      final nombre = normalizeForInsensitiveSearch(
+        (m['inventarioItemNombre'] ?? '').toString(),
+      );
+      return nombre.contains(q);
+    }).toList();
+  }
+  String get inventoryMovementsPeriod => _inventoryMovementsPeriod;
+  DateTime? get inventoryMovementsStart => _inventoryMovementsStart;
+  DateTime? get inventoryMovementsEnd => _inventoryMovementsEnd;
+  String get inventoryMovementsTypeFilter => _inventoryMovementsTypeFilter;
+  String get inventoryMovementsSearchQuery => _inventoryMovementsSearchQuery;
   List<CashCloseModel> get cashClosures => _cashClosures;
   bool get isLoadingCashClosures => _isLoadingCashClosures;
   List<MenuItem> get menuItems => _menuItems;
@@ -592,8 +616,7 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar usuarios: $e');
-      // Si falla, mantener lista vacía
-      _users = [];
+      // Mantener último estado para no vaciar UI por error temporal.
       notifyListeners();
     }
   }
@@ -607,7 +630,7 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar productos: $e');
-      _menuItems = [];
+      // Mantener catálogo previo mientras se recupera la conexión/sesión.
       notifyListeners();
     }
   }
@@ -623,21 +646,78 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar inventario: $e');
-      _inventory = [];
+      // Mantener inventario previo para evitar parpadeo y pérdida visual.
       notifyListeners();
     }
   }
 
+  ({DateTime start, DateTime end, String slug}) _inventoryMovementsRange() {
+    final now = date_utils.AppDateUtils.nowCdmx();
+    final endDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    switch (_inventoryMovementsPeriod) {
+      case 'personalizado':
+        final s =
+            _inventoryMovementsStart ?? DateTime(now.year, now.month, now.day);
+        var e = _inventoryMovementsEnd ?? endDay;
+        if (e.isBefore(s)) e = s;
+        return (start: s, end: e, slug: 'personalizado');
+      case 'week':
+        final start = endDay.subtract(const Duration(days: 6));
+        return (
+          start: DateTime(start.year, start.month, start.day),
+          end: endDay,
+          slug: 'semana',
+        );
+      case 'month':
+        final start = DateTime(now.year, now.month, 1);
+        return (start: start, end: endDay, slug: 'mes');
+      case 'day':
+      default:
+        final start = DateTime(now.year, now.month, now.day);
+        return (start: start, end: endDay, slug: 'dia');
+    }
+  }
+
+  void setInventoryMovementsPeriod(String period) {
+    _inventoryMovementsPeriod = period;
+    notifyListeners();
+    unawaited(loadInventoryMovimientos());
+  }
+
+  void setInventoryMovementsDateRange(DateTime start, DateTime end) {
+    _inventoryMovementsStart = start;
+    _inventoryMovementsEnd = end.isBefore(start) ? start : end;
+    notifyListeners();
+    if (_inventoryMovementsPeriod == 'personalizado') {
+      unawaited(loadInventoryMovimientos());
+    }
+  }
+
+  void setInventoryMovementsTypeFilter(String value) {
+    _inventoryMovementsTypeFilter = value;
+    notifyListeners();
+  }
+
+  void setInventoryMovementsSearchQuery(String value) {
+    _inventoryMovementsSearchQuery = value;
+    notifyListeners();
+  }
+
   Future<void> loadInventoryMovimientos() async {
     try {
-      final raw = await _inventarioService.getMovimientos();
+      final range = _inventoryMovementsRange();
+      final raw = await _inventarioService.getMovimientos(
+        desde: range.start.toUtc(),
+        hasta: range.end.toUtc(),
+        limit: 50000,
+      );
       _inventoryMovimientos = raw
           .map((e) => Map<String, dynamic>.from(e as Map<String, dynamic>))
           .toList();
       notifyListeners();
     } catch (e) {
       print('Error al cargar movimientos de inventario: $e');
-      _inventoryMovimientos = [];
+      // Mantener kárdex previo en fallos transitorios.
       notifyListeners();
     }
   }
@@ -729,7 +809,7 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar mesas: $e');
-      _tables = [];
+      // Mantener mesas actuales para evitar vaciado por error temporal.
       notifyListeners();
     }
   }
@@ -741,7 +821,7 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar roles: $e');
-      _roles = [];
+      // Conservar roles existentes hasta el siguiente refresh exitoso.
       notifyListeners();
     }
   }
@@ -753,7 +833,7 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar permisos: $e');
-      _permisos = [];
+      // Conservar permisos existentes hasta recuperar conexión.
       notifyListeners();
     }
   }
@@ -876,7 +956,7 @@ class AdminController extends ChangeNotifier {
     } catch (e) {
       print('Error al cargar impresoras: $e');
       _impresorasError = e.toString().replaceFirst('Exception: ', '');
-      _impresoras = [];
+      // No vaciar impresoras si falla la carga puntual.
     } finally {
       _isLoadingImpresoras = false;
       notifyListeners();
@@ -1510,28 +1590,41 @@ class AdminController extends ChangeNotifier {
     }
   }
 
+  /// Pagos del día con filtro de consumo (todos / para llevar / mesas) y estado aplicado en caja.
+  List<payment_models.PaymentModel> get _consumptionPagosAplicados =>
+      filteredDailyPayments.where((p) => p.voucherPrinted == true).toList();
+
   double get todayTotalSales {
-    return todayPayments.fold(0.0, (sum, payment) => sum + payment.totalAmount);
+    return _consumptionPagosAplicados.fold(
+      0.0,
+      (sum, payment) => sum + payment.totalAmount,
+    );
   }
 
+  /// Tarjeta (y parte no efectivo de un pago mixto registrado como un solo movimiento mixto).
   double get todayCardSales {
-    return todayPayments.fold(0.0, (sum, payment) {
+    return _consumptionPagosAplicados.fold(0.0, (sum, payment) {
       if (payment.type == payment_models.PaymentType.card) {
-        return sum + payment.totalAmount;
-      }
-      if (payment.type == payment_models.PaymentType.transfer) {
         return sum + payment.totalAmount;
       }
       if (payment.type == payment_models.PaymentType.mixed) {
         final cashPortion = payment.cashApplied ?? 0;
-        return sum + (payment.totalAmount - cashPortion);
+        return sum +
+            (payment.totalAmount - cashPortion).clamp(0.0, double.infinity);
       }
       return sum;
     });
   }
 
+  /// Transferencia (cada fila de pago en BD con forma transferencia).
+  double get todayTransferSales {
+    return _consumptionPagosAplicados
+        .where((p) => p.type == payment_models.PaymentType.transfer)
+        .fold(0.0, (sum, p) => sum + p.totalAmount);
+  }
+
   double get todayCashSales {
-    return todayPayments.fold(0.0, (sum, payment) {
+    return _consumptionPagosAplicados.fold(0.0, (sum, payment) {
       if (payment.type == payment_models.PaymentType.cash) {
         return sum + payment.totalAmount;
       }
@@ -1543,13 +1636,15 @@ class AdminController extends ChangeNotifier {
   }
 
   double get todayLocalSales {
-    return todayPayments
+    return _consumptionPagosAplicados
         .where((payment) => payment.tableNumber != null)
         .fold(0.0, (sum, payment) => sum + payment.totalAmount);
   }
 
   int get todayLocalOrdersCount {
-    return todayPayments.where((payment) => payment.tableNumber != null).length;
+    return _consumptionPagosAplicados
+        .where((payment) => payment.tableNumber != null)
+        .length;
   }
 
   // Obtener órdenes activas (pendientes, en preparación, listas)
@@ -1630,13 +1725,15 @@ class AdminController extends ChangeNotifier {
   }
 
   double get todayTakeawaySales {
-    return todayPayments
+    return _consumptionPagosAplicados
         .where((payment) => payment.tableNumber == null)
         .fold(0.0, (sum, payment) => sum + payment.totalAmount);
   }
 
   int get todayTakeawayOrdersCount {
-    return todayPayments.where((payment) => payment.tableNumber == null).length;
+    return _consumptionPagosAplicados
+        .where((payment) => payment.tableNumber == null)
+        .length;
   }
 
   double get pendingCollectionsTotal {
@@ -1964,6 +2061,10 @@ class AdminController extends ChangeNotifier {
       csvLines.add('Total Propinas,${totalPropinas.toStringAsFixed(2)}');
       csvLines.add('Total Efectivo,${totalEfectivo.toStringAsFixed(2)}');
       csvLines.add('Total Tarjeta,${totalTarjeta.toStringAsFixed(2)}');
+      csvLines.add('');
+      csvLines.add(
+        'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+      );
 
       final csvContent = csvLines.join('\n');
 
@@ -2094,7 +2195,7 @@ class AdminController extends ChangeNotifier {
     } catch (e, stackTrace) {
       print('❌ AdminController: Error al cargar cierres de caja: $e');
       print('Stack trace: $stackTrace');
-      _cashClosures = [];
+      // Mantener cierres previos para evitar UI vacía por fallo temporal.
     } finally {
       _isLoadingCashClosures = false;
       // Siempre notificar al final para mostrar los datos cargados
@@ -2225,15 +2326,20 @@ class AdminController extends ChangeNotifier {
             }
           }
           
-          // Determinar tipo de pago basado en formaPagoNombre
+          // Determinar tipo de pago según forma en BD (transferencia antes que tarjeta).
           final formaPagoNombre = (pagoData['formaPagoNombre'] as String? ?? '').toLowerCase();
-          String paymentType = 'cash';
-          if (formaPagoNombre.contains('tarjeta') || formaPagoNombre.contains('card')) {
-            paymentType = 'card';
+          String paymentType = payment_models.PaymentType.cash;
+          if (formaPagoNombre.contains('transfer')) {
+            paymentType = payment_models.PaymentType.transfer;
+          } else if (formaPagoNombre.contains('tarjeta') || formaPagoNombre.contains('card')) {
+            paymentType = payment_models.PaymentType.card;
           } else if (formaPagoNombre.contains('mixto') || formaPagoNombre.contains('mixed')) {
-            paymentType = 'mixed';
+            paymentType = payment_models.PaymentType.mixed;
           }
-          
+
+          final aplicado =
+              (pagoData['estado'] as String?)?.toLowerCase().trim() == 'aplicado';
+
           // Crear PaymentModel
           final payment = payment_models.PaymentModel(
             id: pagoData['id'].toString(),
@@ -2244,7 +2350,8 @@ class AdminController extends ChangeNotifier {
             timestamp: date_utils.AppDateUtils.parseToLocal(pagoData['fechaPago'] ?? pagoData['creadoEn']),
             cashierName: cashierName,
             notes: pagoData['referencia'] as String?,
-            voucherPrinted: (pagoData['estado'] as String?)?.toLowerCase() == 'aplicado',
+            voucherPrinted: aplicado,
+            ordenId: ordenId,
           );
           
           payments.add(payment);
@@ -2395,14 +2502,11 @@ class AdminController extends ChangeNotifier {
         }
       }
 
-      // Datos
+      // Datos (fecha/hora CDMX, hora con segundos)
       for (final cierre in cierresOrdenados) {
-        final fecha = date_utils.AppDateUtils.formatDateTimeWithAmPm(cierre.fecha);
-        final fechaParts = fecha.split(' ');
-        final fechaStr = fechaParts.isNotEmpty ? fechaParts[0] : '';
-        final horaStr = fechaParts.length >= 3
-            ? '${fechaParts[1]} ${fechaParts[2]}'
-            : (fechaParts.length > 1 ? fechaParts[1] : '');
+        final fechaStr = date_utils.AppDateUtils.formatDate(cierre.fecha);
+        final horaStr =
+            date_utils.AppDateUtils.formatTimeWithSeconds(cierre.fecha);
 
         final estadoStr = formatStatus(cierre.estado);
         final notas = (cierre.notaCajero ?? '')
@@ -2473,6 +2577,10 @@ class AdminController extends ChangeNotifier {
       csvLines.add('Total Tarjeta,${totalTarjeta.toStringAsFixed(2)}');
       csvLines.add('Total Otros Ingresos,${totalOtros.toStringAsFixed(2)}');
       csvLines.add('Total Propinas,${totalPropinas.toStringAsFixed(2)}');
+      csvLines.add('');
+      csvLines.add(
+        'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+      );
 
       final csvContent = csvLines.join('\n');
 
@@ -2814,7 +2922,7 @@ class AdminController extends ChangeNotifier {
                         pdf_widgets.Padding(
                           padding: const pdf_widgets.EdgeInsets.all(5),
                           child: pdf_widgets.Text(
-                            date_utils.AppDateUtils.formatDateTime(
+                            date_utils.AppDateUtils.formatDateTimeWithAmPm(
                               cierre.fecha,
                             ),
                           ),
@@ -2852,6 +2960,16 @@ class AdminController extends ChangeNotifier {
                   }),
                 ],
               ),
+              pdf_widgets.SizedBox(height: 24),
+              pdf_widgets.Divider(),
+              pdf_widgets.Text(
+                'Generado el ${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())} (CDMX)',
+                style: const pdf_widgets.TextStyle(
+                  fontSize: 9,
+                  color: PdfColors.grey700,
+                ),
+                textAlign: pdf_widgets.TextAlign.center,
+              ),
             ];
           },
         ),
@@ -2859,10 +2977,11 @@ class AdminController extends ChangeNotifier {
 
       // Guardar y compartir PDF
       final bytes = await pdfDoc.save();
+      final pdfHoy = date_utils.AppDateUtils.nowCdmx();
       await Printing.sharePdf(
         bytes: bytes,
         filename:
-            'cierres_caja_${date_utils.AppDateUtils.nowCdmx().year}_${date_utils.AppDateUtils.nowCdmx().month.toString().padLeft(2, '0')}_${date_utils.AppDateUtils.nowCdmx().day.toString().padLeft(2, '0')}.pdf',
+            'cierres_caja_${pdfHoy.year}_${pdfHoy.month.toString().padLeft(2, '0')}_${pdfHoy.day.toString().padLeft(2, '0')}.pdf',
       );
 
       print('✅ PDF de cierres de caja generado correctamente');
@@ -3340,6 +3459,26 @@ class AdminController extends ChangeNotifier {
     }
   }
 
+  Map<String, dynamic> _inventoryItemToBackendUpdatePayload(InventoryItem item) {
+    return {
+      'nombre': item.name,
+      if (item.codigoBarras != null)
+        'codigoBarras': item.codigoBarras!.trim().isEmpty
+            ? null
+            : item.codigoBarras!.trim(),
+      'categoria': _normalizeInventoryCategory(item.category),
+      'unidad': item.unit,
+      'cantidadActual': item.currentStock,
+      'stockMinimo': item.minStock,
+      'stockMaximo': item.maxStock,
+      'costoUnitario': item.cost,
+      'proveedor': item.supplier,
+      'activo': item.status != InventoryStatus.expired,
+      'contenidoPorPieza': item.contenidoPorPieza,
+      'unidadContenido': item.unidadContenido,
+    };
+  }
+
   Future<void> updateInventoryItem(InventoryItem item) async {
     try {
       final itemId = int.tryParse(item.id);
@@ -3347,26 +3486,231 @@ class AdminController extends ChangeNotifier {
         throw Exception('ID de inventario inválido: ${item.id}');
       }
 
-      final Map<String, dynamic> data = {
-        'nombre': item.name,
-        if (item.codigoBarras != null) 'codigoBarras': item.codigoBarras!.trim().isEmpty ? null : item.codigoBarras!.trim(),
-        'categoria': _normalizeInventoryCategory(item.category),
-        'unidad': item.unit,
-        'cantidadActual': item.currentStock,
-        'stockMinimo': item.minStock,
-        'stockMaximo': item.maxStock,
-        'costoUnitario': item.cost,
-        'proveedor': item.supplier,
-        'activo': item.status != InventoryStatus.expired,
-        'contenidoPorPieza': item.contenidoPorPieza,
-        'unidadContenido': item.unidadContenido,
-      };
-      await _inventarioService.updateItem(itemId, data);
-      // Recargar inventario desde el backend para asegurar sincronización
+      await _inventarioService.updateItem(
+        itemId,
+        _inventoryItemToBackendUpdatePayload(item),
+      );
       await loadInventory();
     } catch (e) {
       rethrow;
     }
+  }
+
+  /// Varias actualizaciones PUT seguidas y una sola recarga al final.
+  Future<void> batchUpdateInventoryItems(List<InventoryItem> items) async {
+    for (final item in items) {
+      final itemId = int.tryParse(item.id);
+      if (itemId == null) {
+        throw Exception('ID de inventario inválido: ${item.id}');
+      }
+      await _inventarioService.updateItem(
+        itemId,
+        _inventoryItemToBackendUpdatePayload(item),
+      );
+    }
+    await loadInventory();
+    unawaited(loadInventoryMovimientos());
+  }
+
+  double? _parseFlexibleDoubleFromRow(Map<String, String> map, List<String> keys) {
+    for (final k in keys) {
+      final raw = map[k];
+      if (raw == null || raw.trim().isEmpty) continue;
+      final t = raw.trim().replaceAll(RegExp(r"\s|'"), '').replaceAll('\$', '');
+      final normalized = t.replaceAll(',', '.');
+      final v = double.tryParse(normalized);
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  String _parseFlexibleStringFromRow(Map<String, String> map, List<String> keys) {
+    for (final k in keys) {
+      final v = map[k];
+      if (v != null && v.trim().isNotEmpty) return v.trim();
+    }
+    return '';
+  }
+
+  InventoryItem _mergeInventoryNumericFields(
+    InventoryItem existing, {
+    double? currentStock,
+    double? minStock,
+    double? maxStock,
+    double? cost,
+  }) {
+    final stock = currentStock ?? existing.currentStock;
+    var minS = minStock ?? existing.minStock;
+    var maxS = maxStock ?? existing.maxStock;
+    if (maxS < minS) maxS = minS;
+    final c = cost ?? existing.cost;
+
+    String status;
+    if (stock <= 0) {
+      status = InventoryStatus.outOfStock;
+    } else if (stock < minS) {
+      status = InventoryStatus.lowStock;
+    } else {
+      status = InventoryStatus.available;
+    }
+
+    return existing.copyWith(
+      currentStock: stock,
+      minStock: minS,
+      maxStock: maxS,
+      minimumStock: minS,
+      cost: c,
+      unitPrice: c,
+      price: stock * c,
+      status: status,
+      lastRestock: date_utils.AppDateUtils.nowCdmx(),
+    );
+  }
+
+  /// Importa actualizaciones parciales por [id] o por [codigoBarras] (columnas
+  /// normalizadas: codigobarras, barcode, ean, etc.). Si hay ambos, prevalece [id].
+  /// Requiere al menos un campo numérico reconocido por fila.
+  Future<({int updated, int skipped, List<String> errors})>
+      importInventoryUpdatesFromCsvRowMaps(
+    List<Map<String, String>> rows,
+  ) async {
+    final errors = <String>[];
+    var skipped = 0;
+    final updates = <InventoryItem>[];
+
+    for (var i = 0; i < rows.length; i++) {
+      final map = rows[i];
+      final rowLabel = 'Fila ${i + 2}';
+      final idStr = (map['id'] ?? '').trim();
+      final barcode = _parseFlexibleStringFromRow(map, [
+        'codigobarras',
+        'codbarras',
+        'barcode',
+        'ean',
+        'upc',
+        'sku',
+      ]);
+
+      if (idStr.isEmpty && barcode.isEmpty) {
+        skipped++;
+        errors.add(
+          '$rowLabel: indica id o codigoBarras (o columnas equivalentes: barcode, ean, sku…)',
+        );
+        continue;
+      }
+
+      late final InventoryItem existing;
+      if (idStr.isNotEmpty) {
+        final matches = _inventory.where((e) => e.id == idStr).toList();
+        if (matches.isEmpty) {
+          skipped++;
+          errors.add('$rowLabel: no hay ítem con id=$idStr');
+          continue;
+        }
+        existing = matches.first;
+      } else {
+        final bcLower = barcode.toLowerCase();
+        final withBarcode = _inventory
+            .where(
+              (e) =>
+                  e.codigoBarras != null &&
+                  e.codigoBarras!.trim().toLowerCase() == bcLower,
+            )
+            .toList();
+        if (withBarcode.isEmpty) {
+          skipped++;
+          errors.add(
+            '$rowLabel: no hay ítem con código de barras "$barcode"',
+          );
+          continue;
+        }
+        if (withBarcode.length > 1) {
+          skipped++;
+          errors.add(
+            '$rowLabel: varios productos comparten ese código de barras; usa la columna id',
+          );
+          continue;
+        }
+        existing = withBarcode.first;
+      }
+
+      final newStock = _parseFlexibleDoubleFromRow(
+        map,
+        ['cantidadactual', 'stock', 'cantidad'],
+      );
+      final newMin = _parseFlexibleDoubleFromRow(
+        map,
+        ['stockminimo', 'minimo', 'minstock'],
+      );
+      final newMax = _parseFlexibleDoubleFromRow(
+        map,
+        ['stockmaximo', 'maximo', 'maxstock'],
+      );
+      final newCost = _parseFlexibleDoubleFromRow(
+        map,
+        ['costounitario', 'costo', 'preciounitario'],
+      );
+
+      if (newStock == null && newMin == null && newMax == null && newCost == null) {
+        skipped++;
+        errors.add(
+          '$rowLabel: indica cantidadActual, stockMinimo, stockMaximo o costoUnitario',
+        );
+        continue;
+      }
+
+      updates.add(
+        _mergeInventoryNumericFields(
+          existing,
+          currentStock: newStock,
+          minStock: newMin,
+          maxStock: newMax,
+          cost: newCost,
+        ),
+      );
+    }
+
+    if (updates.isEmpty) {
+      return (updated: 0, skipped: skipped, errors: errors);
+    }
+
+    try {
+      await batchUpdateInventoryItems(updates);
+    } catch (e) {
+      errors.add('Error al guardar: $e');
+      return (updated: 0, skipped: skipped + updates.length, errors: errors);
+    }
+
+    return (updated: updates.length, skipped: skipped, errors: errors);
+  }
+
+  /// Ajuste masivo de [cantidadActual] según [mode]: `add`, `subtract` o `set`.
+  Future<void> bulkAdjustInventoryStockForItems(
+    List<InventoryItem> items, {
+    required String mode,
+    required double quantity,
+  }) async {
+    if (items.isEmpty) return;
+    final updates = <InventoryItem>[];
+    for (final item in items) {
+      double newStock;
+      switch (mode) {
+        case 'add':
+          newStock = item.currentStock + quantity;
+          break;
+        case 'subtract':
+          newStock = (item.currentStock - quantity).clamp(0.0, double.infinity);
+          break;
+        case 'set':
+          newStock = quantity;
+          break;
+        default:
+          continue;
+      }
+      updates.add(_mergeInventoryNumericFields(item, currentStock: newStock));
+    }
+    if (updates.isEmpty) return;
+    await batchUpdateInventoryItems(updates);
   }
 
   Future<void> deleteInventoryItem(String itemId) async {
@@ -4250,12 +4594,17 @@ class AdminController extends ChangeNotifier {
   Future<void> exportInventoryReportToCSV(String period) async {
     final range = _inventoryPeriodRange(period);
     final rows = await _fetchMovimientosForExportRange(range.start, range.end);
+    double _num(dynamic v) => (v is num) ? v.toDouble() : 0.0;
     final buffer = StringBuffer();
     buffer.writeln('Reporte de inventario (${range.slug})');
-    buffer.writeln('Desde,${range.start.toIso8601String()}');
-    buffer.writeln('Hasta,${range.end.toIso8601String()}');
     buffer.writeln(
-      'IdMov,IdItem,Item,Tipo,Cantidad,Unidad,CostoUnit,Motivo,Origen,RefOrden,UsuarioId,Fecha',
+      'Desde,${date_utils.AppDateUtils.formatDateTimeWithAmPm(range.start)}',
+    );
+    buffer.writeln(
+      'Hasta,${date_utils.AppDateUtils.formatDateTimeWithAmPm(range.end)}',
+    );
+    buffer.writeln(
+      'IdMov,IdItem,Item,Tipo,Cantidad,Unidad,CostoUnit,CostoTotal,Motivo,Origen,RefOrden,UsuarioId,Fecha',
     );
     String esc(String v) => v.replaceAll(',', ' ');
     for (final m in rows) {
@@ -4267,13 +4616,18 @@ class AdminController extends ChangeNotifier {
         m['cantidad'],
         m['unidad'],
         m['costoUnitario'],
+        (_num(m['cantidad']) * _num(m['costoUnitario'])).toStringAsFixed(2),
         esc('${m['motivo'] ?? ''}'),
         m['origen'],
         m['referenciaOrdenId'],
         m['creadoPorUsuarioId'],
-        m['creadoEn'],
+        _adminFormatReportTimestamp(m['creadoEn']),
       ].join(','));
     }
+    buffer.writeln('');
+    buffer.writeln(
+      'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+    );
     final file = 'inventario_${range.slug}_${DateTime.now().millisecondsSinceEpoch}.csv';
     await FileDownloadHelper.downloadCSV(buffer.toString(), file);
   }
@@ -4281,6 +4635,7 @@ class AdminController extends ChangeNotifier {
   Future<void> exportInventoryReportToPDF(String period) async {
     final range = _inventoryPeriodRange(period);
     final rows = await _fetchMovimientosForExportRange(range.start, range.end);
+    double _num(dynamic v) => (v is num) ? v.toDouble() : 0.0;
     final pdfDoc = pdf_widgets.Document();
     pdfDoc.addPage(
       pdf_widgets.MultiPage(
@@ -4296,8 +4651,12 @@ class AdminController extends ChangeNotifier {
               ),
             ),
             pdf_widgets.SizedBox(height: 8),
-            pdf_widgets.Text('Desde: ${range.start.toIso8601String()}'),
-            pdf_widgets.Text('Hasta: ${range.end.toIso8601String()}'),
+            pdf_widgets.Text(
+              'Desde: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(range.start)}',
+            ),
+            pdf_widgets.Text(
+              'Hasta: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(range.end)}',
+            ),
             pdf_widgets.SizedBox(height: 12),
             pdf_widgets.Table.fromTextArray(
               headers: const [
@@ -4306,7 +4665,8 @@ class AdminController extends ChangeNotifier {
                 'Tipo',
                 'Cant',
                 'Ud',
-                'Costo',
+                'Costo Unit.',
+                'Costo Total',
                 'Motivo',
                 'Origen',
                 'Ord',
@@ -4322,11 +4682,13 @@ class AdminController extends ChangeNotifier {
                       (m['cantidad'] ?? '').toString(),
                       (m['unidad'] ?? '').toString(),
                       '${m['costoUnitario'] ?? ''}',
+                      (_num(m['cantidad']) * _num(m['costoUnitario']))
+                          .toStringAsFixed(2),
                       (m['motivo'] ?? '').toString(),
                       (m['origen'] ?? '').toString(),
                       '${m['referenciaOrdenId'] ?? ''}',
                       '${m['creadoPorUsuarioId'] ?? ''}',
-                      (m['creadoEn'] ?? '').toString(),
+                      _adminFormatReportTimestamp(m['creadoEn']),
                     ],
                   )
                   .toList(),
@@ -4336,6 +4698,14 @@ class AdminController extends ChangeNotifier {
               ),
               cellStyle: const pdf_widgets.TextStyle(fontSize: 6),
               cellAlignment: pdf_widgets.Alignment.centerLeft,
+            ),
+            pdf_widgets.SizedBox(height: 16),
+            pdf_widgets.Text(
+              'Generado el ${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())} (CDMX)',
+              style: const pdf_widgets.TextStyle(
+                fontSize: 8,
+                color: PdfColors.grey700,
+              ),
             ),
           ];
         },
@@ -4364,7 +4734,7 @@ class AdminController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar consumo del día: $e');
-      _dailyConsumption = [];
+      // Mantener resumen previo si el backend falla temporalmente.
       notifyListeners();
     }
   }
@@ -4890,5 +5260,16 @@ class AdminController extends ChangeNotifier {
         })
         .reduce((a, b) => a > b ? a : b);
     return 'menu_${(maxId + 1).toString().padLeft(3, '0')}';
+  }
+}
+
+String _adminFormatReportTimestamp(dynamic v) {
+  if (v == null) return '';
+  try {
+    return date_utils.AppDateUtils.formatDateTimeWithAmPm(
+      date_utils.AppDateUtils.parseToLocal(v),
+    );
+  } catch (_) {
+    return v.toString();
   }
 }

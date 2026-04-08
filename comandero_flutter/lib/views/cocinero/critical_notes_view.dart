@@ -860,17 +860,27 @@ class _CriticalNotesViewState extends State<CriticalNotesView> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Agregar Nota Crítica'),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(decoration: InputDecoration(labelText: 'Título')),
-            SizedBox(height: 16),
             TextField(
-              decoration: InputDecoration(labelText: 'Descripción'),
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              decoration: const InputDecoration(labelText: 'Título'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              textInputAction: TextInputAction.next,
+              onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              decoration: const InputDecoration(labelText: 'Descripción'),
               maxLines: 3,
             ),
-            SizedBox(height: 16),
-            TextField(decoration: InputDecoration(labelText: 'Asignado a')),
+            const SizedBox(height: 16),
+            TextField(
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => FocusScope.of(context).unfocus(),
+              decoration: const InputDecoration(labelText: 'Asignado a'),
+            ),
           ],
         ),
         actions: [
