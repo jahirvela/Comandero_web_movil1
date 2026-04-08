@@ -4,6 +4,64 @@ import '../services/ordenes_service.dart';
 import '../services/pagos_service.dart';
 import '../utils/date_utils.dart' as date_utils;
 
+List<int> _ordenIdsEnBill(BillModel bill) {
+  if (bill.ordenIds != null && bill.ordenIds!.isNotEmpty) {
+    return List<int>.from(bill.ordenIds!);
+  }
+  if (bill.ordenId != null) return [bill.ordenId!];
+  return bill.ordenIdsFromBillIdInt;
+}
+
+/// Solo pagos con efecto en caja (excluye anulados / pendientes de aplicar).
+bool _pagoCuentaParaSaldo(dynamic p) {
+  if (p is! Map) return false;
+  final e = (p['estado'] as String? ?? 'aplicado').toLowerCase().trim();
+  return e == 'aplicado';
+}
+
+Map<int, double> _montoPagadoAplicadoPorOrden(List<dynamic> pagos) {
+  final acum = <int, double>{};
+  for (final p in pagos) {
+    if (!_pagoCuentaParaSaldo(p)) continue;
+    if (p is! Map) continue;
+    final ordenId = (p['ordenId'] as num?)?.toInt();
+    if (ordenId == null) continue;
+    final monto = (p['monto'] as num?)?.toDouble() ?? 0.0;
+    acum[ordenId] = (acum[ordenId] ?? 0) + monto;
+  }
+  return acum;
+}
+
+bool _ordenCancelada(Map<String, dynamic> ordenData) {
+  final est =
+      (ordenData['estadoNombre'] as String? ?? '').toLowerCase();
+  return est.contains('cancel');
+}
+
+bool _ordenMarcadaPagada(Map<String, dynamic> ordenData) {
+  final est =
+      (ordenData['estadoNombre'] as String? ?? '').toLowerCase();
+  return est.contains('pagad');
+}
+
+double _totalOrdenDesdeMap(Map<String, dynamic> ordenData) {
+  return (ordenData['total'] as num?)?.toDouble() ?? 0.0;
+}
+
+/// Cobrada al 100 %: estado pagada en BD o suma de pagos aplicados >= total de la orden.
+bool _ordenTotalmenteCobrada(
+  Map<String, dynamic> ordenData,
+  double pagadoAplicado,
+) {
+  if (_ordenCancelada(ordenData)) return false;
+  if (_ordenMarcadaPagada(ordenData)) return true;
+  final total = _totalOrdenDesdeMap(ordenData);
+  if (total <= 0.009) {
+    return pagadoAplicado > 0.009;
+  }
+  return pagadoAplicado + 0.009 >= total;
+}
+
 /// Repositorio para compartir las cuentas abiertas entre Mesero y Cajero.
 /// Ahora carga órdenes pendientes desde el backend y las convierte en bills.
 class BillRepository extends ChangeNotifier {
@@ -52,6 +110,9 @@ class BillRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Quita bills cuyo [tableNumber] coincide. **No usar** para “liberar mesa” en mesero:
+  /// el cajero y gerente comparten este repositorio; las cuentas deben quitarse solo al
+  /// cobrar (o cancelar orden), no al cerrar la mesa en la vista del mesero.
   void removeBillsForTable(int tableNumber) {
     _bills.removeWhere((bill) => bill.tableNumber == tableNumber);
     notifyListeners();
@@ -66,55 +127,70 @@ class BillRepository extends ChangeNotifier {
       final ordenes = await ordenesFut;
       final pagos = await pagosFut;
 
-      // Órdenes que ya tienen al menos un pago registrado (cobradas por el cajero)
-      final ordenIdsCobrados = <int>{};
-      for (final p in pagos) {
-        final ordenId = (p is Map) ? (p['ordenId'] as num?)?.toInt() : null;
-        if (ordenId != null) ordenIdsCobrados.add(ordenId);
+      final pagadoPorOrden = _montoPagadoAplicadoPorOrden(pagos);
+
+      // Índice id -> orden (lista cajero + detalle para ids que no vienen en listado, p. ej. pagada)
+      final idsNecesarios = <int>{};
+      for (final bill in _bills) {
+        idsNecesarios.addAll(_ordenIdsEnBill(bill));
+      }
+      for (final o in ordenes) {
+        if (o is Map) {
+          final id = (o['id'] as num?)?.toInt();
+          if (id != null) idsNecesarios.add(id);
+        }
       }
 
-      // PRIMERO: Eliminar bills pendientes SOLO cuando fueron cobradas por el cajero
-      // Una cuenta se quita de la lista únicamente si tiene pagos registrados (métodos de pago del cajero)
+      final ordenPorId = <int, Map<String, dynamic>>{};
+      for (final o in ordenes) {
+        if (o is! Map) continue;
+        final m = Map<String, dynamic>.from(o);
+        final id = (m['id'] as num?)?.toInt();
+        if (id != null) ordenPorId[id] = m;
+      }
+      for (final id in idsNecesarios) {
+        if (ordenPorId.containsKey(id)) continue;
+        final det = await _ordenesService.getOrden(id);
+        if (det != null) ordenPorId[id] = det;
+      }
+
+      // Quitar cuentas pendientes solo si: cancelación, o TODAS las órdenes están pagadas al 100 %.
       _bills.removeWhere((bill) {
         if (bill.status == BillStatus.pending) {
-          final ids = bill.ordenIds ?? (bill.ordenId != null ? [bill.ordenId!] : bill.ordenIdsFromBillIdInt);
+          final ids = _ordenIdsEnBill(bill);
           if (ids.isEmpty) return false;
 
-          // Eliminar si encontramos la orden en la lista y está cancelada
           for (final ordenId in ids) {
-            final ordenData = ordenes.firstWhere(
-              (o) => o['id'] == ordenId,
-              orElse: () => <String, dynamic>{},
-            );
-            if (ordenData.isNotEmpty) {
-              final estadoNombre = (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
-              if (estadoNombre.contains('cancel')) {
-                print('🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Orden $ordenId cancelada');
-                return true;
-              }
+            final od = ordenPorId[ordenId];
+            if (od != null && _ordenCancelada(od)) {
+              print(
+                '🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Orden $ordenId cancelada',
+              );
+              return true;
             }
           }
 
-          // Eliminar SOLO si todas las órdenes de esta cuenta tienen al menos un pago (fueron cobradas)
-          final todasCobradas = ids.every((id) => ordenIdsCobrados.contains(id));
-          if (todasCobradas) {
-            print('🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Todas las órdenes cobradas (tienen pagos registrados)');
+          final todasTotalmenteCobradas = ids.every((id) {
+            final od = ordenPorId[id];
+            if (od == null) return false;
+            final pag = pagadoPorOrden[id] ?? 0;
+            return _ordenTotalmenteCobrada(od, pag);
+          });
+          if (todasTotalmenteCobradas) {
+            print(
+              '🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Todas las órdenes cobradas al 100%',
+            );
             return true;
           }
           return false;
         }
 
-        // Bills ya procesados: eliminar si la orden no existe o está cancelada
-        final ids = bill.ordenIds ?? (bill.ordenId != null ? [bill.ordenId!] : bill.ordenIdsFromBillIdInt);
-        if (ids.isEmpty) return false;
-        for (final ordenId in ids) {
-          final ordenData = ordenes.firstWhere(
-            (o) => o['id'] == ordenId,
-            orElse: () => <String, dynamic>{},
-          );
-          if (ordenData.isEmpty) return true;
-          final estadoNombre = (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
-          if (estadoNombre.contains('cancel')) return true;
+        // Bills no pendientes: limpiar solo si alguna orden asociada está cancelada
+        final idsNp = _ordenIdsEnBill(bill);
+        if (idsNp.isEmpty) return false;
+        for (final ordenId in idsNp) {
+          final od = ordenPorId[ordenId];
+          if (od != null && _ordenCancelada(od)) return true;
         }
         return false;
       });
@@ -204,7 +280,9 @@ class BillRepository extends ChangeNotifier {
         }
       }
 
-      for (final ordenData in ordenes) {
+      for (final raw in ordenes) {
+        if (raw is! Map) continue;
+        final ordenData = Map<String, dynamic>.from(raw);
         final ordenId = ordenData['id'] as int;
         final estadoNombre =
             (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
@@ -226,30 +304,23 @@ class BillRepository extends ChangeNotifier {
           continue;
         }
 
-        // CRÍTICO: No mostrar cuenta si ya fue cobrada (tiene pagos registrados en backend)
-        if (ordenIdsCobrados.contains(ordenId)) {
-          print('⏭️ BillRepository: Saltando orden $ordenId - Ya tiene pagos registrados (fue cobrada)');
+        final pagadoAqui = pagadoPorOrden[ordenId] ?? 0;
+        if (_ordenTotalmenteCobrada(ordenData, pagadoAqui)) {
+          print(
+            '⏭️ BillRepository: Saltando orden $ordenId - Ya está cobrada al 100% (estado o pagos aplicados)',
+          );
           continue;
         }
 
-        // Para órdenes "pagadas" o cerradas, incluir si aún no tienen pagos
+        // Para órdenes "pagadas" o cerradas, incluir si aún no están liquidadas al 100%
         if (estadoNombre.contains('pagada') || esCerradaParaCobro) {
-          // También comprobar por si el backend devuelve pagos en la orden
-          final pagosEnOrden = ordenData['pagos'] as List<dynamic>? ?? [];
-          if (pagosEnOrden.isNotEmpty) {
-            print('⏭️ BillRepository: Saltando orden $ordenId - Orden con pagos en respuesta');
-            continue;
-          }
-
           if (estadoNombre.contains('pagada')) {
             esPagadaSinPagos = true;
           }
 
-          // No tiene pagos y está cerrada/enviada/cobrada o pagada sin pagos
           print(
-            '✅ BillRepository: Incluyendo orden $ordenId - Estado: $estadoNombre${esPagadaSinPagos ? ' (pagada sin pagos)' : ''}',
+            '✅ BillRepository: Incluyendo orden $ordenId - Estado: $estadoNombre${esPagadaSinPagos ? ' (pagada sin liquidar)' : ''}',
           );
-          // Continuar para crear el bill
         }
 
         // CRÍTICO: NO crear bill individual si esta orden ya está en un bill agrupado

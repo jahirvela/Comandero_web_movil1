@@ -1,6 +1,13 @@
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { pool } from '../../db/pool.js';
-import { utcToMx, utcToMxISO, getDateOnlyMx, nowMxISO } from '../../config/time.js';
+import {
+  utcToMx,
+  utcToMxISO,
+  getDateOnlyMx,
+  sqlDateColumnToMxStartIso,
+  sqlDateUtcToYmd,
+  todayMxString
+} from '../../config/time.js';
 
 interface CierreCajaRow extends RowDataPacket {
   fecha: Date;
@@ -266,9 +273,8 @@ export const listarCierresCaja = async (
       // Si hay fecha de creación, convertirla a zona CDMX
       fecha = utcToMxISO(row.creado_en) ?? new Date().toISOString();
     } else {
-      // Si no hay fecha de creación, usar la fecha del cierre convertida a CDMX
-      const fechaMx = utcToMx(row.fecha);
-      fecha = fechaMx?.startOf('day').toISO() ?? new Date().toISOString();
+      // DATE sin hora: anclar al inicio del día en CDMX (evita corrimiento -6h vs utcToMx directo)
+      fecha = sqlDateColumnToMxStartIso(row.fecha) ?? new Date().toISOString();
     }
     
     // ID único para cada cierre manual basado en su ID de BD
@@ -399,11 +405,11 @@ export const crearCierreCaja = async (
   const uniqueParts = parts.filter((p, i) => parts.indexOf(p) === i);
   const notasCompletas = uniqueParts.length > 0 ? uniqueParts.join(' | ') : null;
 
-  // Convertir fecha a string usando zona CDMX
-  const fechaStr = getDateOnlyMx(input.fecha) ?? (input.fecha instanceof Date ? input.fecha.toISOString().split('T')[0] : String(input.fecha).split('T')[0]);
+  // Día operativo en CDMX (nunca usar toISOString().split('T')[0] sobre un Date: desplaza el día en UTC).
+  const fechaStr = getDateOnlyMx(input.fecha) ?? todayMxString();
 
   // IMPORTANTE: Usar INSERT ... ON DUPLICATE KEY UPDATE para manejar cierres duplicados
-  // Si ya existe un cierre para esa fecha, actualizarlo en lugar de fallar
+  // creado_en siempre en UTC (sesión pool = +00:00), igual que en UPDATE → hora real del cierre al guardar.
   const [result] = await pool.execute<ResultSetHeader>(
     `
     INSERT INTO caja_cierre (
@@ -415,7 +421,8 @@ export const crearCierreCaja = async (
       total_tarjeta,
       creado_por_usuario_id,
       notas,
-      estado
+      estado,
+      creado_en
     )
     VALUES (
       :fecha,
@@ -426,7 +433,8 @@ export const crearCierreCaja = async (
       :totalTarjeta,
       :usuarioId,
       :notas,
-      'pending'
+      'pending',
+      UTC_TIMESTAMP()
     )
     ON DUPLICATE KEY UPDATE
       efectivo_final = VALUES(efectivo_final),
@@ -435,7 +443,8 @@ export const crearCierreCaja = async (
       total_tarjeta = VALUES(total_tarjeta),
       notas = VALUES(notas),
       estado = 'pending',
-      creado_por_usuario_id = VALUES(creado_por_usuario_id)
+      creado_por_usuario_id = VALUES(creado_por_usuario_id),
+      creado_en = UTC_TIMESTAMP()
     `,
     {
       fecha: fechaStr,
@@ -488,12 +497,17 @@ export const crearCierreCaja = async (
   );
 
   const row = rows[0];
-  // Convertir fechas UTC de BD a objetos Date (el consumidor decidirá cómo mostrarlas)
-  const fechaMx = utcToMx(row.fecha);
+  // DATE = día operativo en columna `fecha`; el momento mostrado al usuario es creado_en (cierre real).
+  const inicioDiaIso = sqlDateColumnToMxStartIso(row.fecha);
+  const fechaDiaOperativo = inicioDiaIso
+    ? new Date(inicioDiaIso)
+    : new Date(row.fecha);
   const creadoEnMx = utcToMx(row.creadoEn);
+  const fechaRespuesta = creadoEnMx?.toJSDate() ?? fechaDiaOperativo;
   return {
     id: row.id,
-    fecha: fechaMx?.toJSDate() ?? new Date(row.fecha),
+    // Misma semántica que listar (manuales): `fecha` en la API = instante del cierre en CDMX vía creado_en
+    fecha: fechaRespuesta,
     efectivoInicial: Number(row.efectivoInicial),
     efectivoFinal: Number(row.efectivoFinal),
     totalPagos: row.totalPagos ? Number(row.totalPagos) : null,
@@ -516,7 +530,7 @@ export const actualizarEstadoCierreCaja = async (
     UPDATE caja_cierre
     SET estado = :estado,
         revisado_por_usuario_id = :revisadoPorUsuarioId,
-        revisado_en = NOW(),
+        revisado_en = UTC_TIMESTAMP(),
         comentario_revision = :comentarioRevision
     WHERE id = :cierreId
     `,
@@ -559,14 +573,13 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
   }
 
   const row = rows[0];
-  // Convertir fecha UTC a zona CDMX para mostrar
-  const fecha = getDateOnlyMx(row.fecha) ?? (row.fecha instanceof Date
-    ? row.fecha.toISOString().split('T')[0]
-    : new Date(row.fecha).toISOString().split('T')[0]);
+  // Momento real del cierre (creado_en); si falta, anclar al día operativo del DATE
+  const fecha =
+    utcToMxISO(row.creado_en) ?? sqlDateColumnToMxStartIso(row.fecha) ?? new Date().toISOString();
 
   // Obtener propinas por tipo para este cierre - TOTAL del día (sin filtrar por cajero),
   // porque el cierre manual puede ser del cajero pero las propinas vienen de pagos del mesero
-  const fechaStr = row.fecha instanceof Date ? row.fecha.toISOString().split('T')[0] : String(row.fecha).split('T')[0];
+  const fechaStr = sqlDateUtcToYmd(row.fecha) ?? '';
   interface PropinasPorIdRow extends RowDataPacket { total_propinas_efectivo: number; total_propinas_tarjeta: number; }
   const [rowsPropinas] = await pool.execute<PropinasPorIdRow[]>(
     `

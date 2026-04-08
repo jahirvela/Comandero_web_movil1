@@ -103,8 +103,12 @@ class CierresService {
   /// Retorna el cierre creado
   Future<CashCloseModel> crearCierreCaja(CashCloseModel cierre) async {
     try {
+      // Solo día operativo (CDMX). El servidor guarda `creado_en` en UTC (sesión +00:00) al insertar/actualizar.
+      final d = cierre.fecha;
+      final fechaYmd =
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
       final dataToSend = {
-        'fecha': cierre.fecha.toIso8601String(),
+        'fecha': fechaYmd,
         'efectivoInicial': cierre.efectivoInicial,
         'efectivoFinal': cierre.efectivoContado,
         'totalPagos': cierre.totalNeto,
@@ -194,10 +198,16 @@ class CierresService {
 
   /// Mapea los datos del backend a CashCloseModel
   CashCloseModel _mapBackendToCashCloseModel(Map<String, dynamic> data) {
-    // Parsear fecha usando AppDateUtils para convertir correctamente a zona horaria local
-    DateTime fecha = date_utils.AppDateUtils.parseToLocal(data['fecha']);
-    
-    print('📅 CierresService: Fecha parseada: $fecha (año: ${fecha.year}, mes: ${fecha.month}, día: ${fecha.day}, hora: ${fecha.hour}:${fecha.minute})');
+    // Priorizar creadoEn = momento real del cierre en servidor (UTC → local)
+    final dynamic momentoCierre = data['creadoEn'] ?? data['creado_en'];
+    final DateTime fecha = (momentoCierre != null &&
+            momentoCierre.toString().trim().isNotEmpty)
+        ? date_utils.AppDateUtils.parseToLocal(momentoCierre)
+        : date_utils.AppDateUtils.parseToLocal(data['fecha']);
+
+    print(
+      '📅 CierresService: Fecha/hora cierre: $fecha (creadoEn: ${momentoCierre != null})',
+    );
     
     // Obtener datos del backend (estructura de CierreCajaItem)
     final totalVentas = (data['totalVentas'] as num?)?.toDouble() ?? 0.0;

@@ -1,36 +1,13 @@
-import 'package:dio/dio.dart';
-import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
-import 'auth_storage.dart';
 import 'socket_service.dart';
 import 'auth_service.dart';
+import 'api_service.dart';
 
 /// Servicio para manejar alertas con el backend y Socket.IO
 class AlertasService {
-  final Dio _dio = Dio(
-    BaseOptions(
-      baseUrl: ApiConfig.baseUrl,
-      headers: {'Content-Type': 'application/json'},
-    ),
-  );
+  final ApiService _api = ApiService();
   final SocketService _socketService = SocketService();
-  final AuthStorage _storage = AuthStorage();
   final AuthService _authService = AuthService();
-
-  AlertasService() {
-    // Agregar interceptor para incluir token en todas las peticiones
-    _dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) async {
-          final token = await _storage.read('accessToken');
-          if (token != null) {
-            options.headers['Authorization'] = 'Bearer $token';
-          }
-          handler.next(options);
-        },
-      ),
-    );
-  }
 
   /// Crear alerta y enviarla al backend y por Socket.IO
   Future<void> crearAlerta({
@@ -79,7 +56,7 @@ class AlertasService {
       // Enviar al backend (guarda en BD)
       // NOTA: baseUrl ya incluye /api, así que solo usar /alertas
       try {
-        await _dio.post('/alertas', data: payload);
+        await _api.post('/alertas', data: payload);
       } catch (e) {
         print('Error al guardar alerta en backend: $e');
         // Continuar aunque falle el guardado en BD
@@ -139,10 +116,9 @@ class AlertasService {
   Future<List<Map<String, dynamic>>> obtenerAlertasNoLeidas() async {
     try {
       print('📡 AlertasService: Obteniendo alertas desde /alertas...');
-      print('📡 AlertasService: Base URL: ${ApiConfig.baseUrl}');
       // El backend filtra automáticamente por rol (mesero = solo alerta.cocina)
       // NOTA: baseUrl ya incluye /api, así que solo usar /alertas
-      final response = await _dio.get('/alertas');
+      final response = await _api.get('/alertas');
 
       print('📡 AlertasService: Status code: ${response.statusCode}');
 
@@ -221,7 +197,7 @@ class AlertasService {
   /// Marcar una alerta como leída
   Future<void> marcarAlertaLeida(int alertaId) async {
     try {
-      await _dio.patch('/alertas/$alertaId/leida');
+      await _api.patch('/alertas/$alertaId/leida');
     } catch (e) {
       print('Error al marcar alerta como leída: $e');
       // No rethrow, no es crítico
@@ -235,7 +211,7 @@ class AlertasService {
       print(
         '📡 AlertasService: Marcando todas las alertas como leídas en el backend...',
       );
-      final response = await _dio.post('/alertas/marcar-todas-leidas');
+      final response = await _api.post('/alertas/marcar-todas-leidas');
 
       if (response.statusCode == 200) {
         final alertasMarcadas =
@@ -338,7 +314,7 @@ class AlertasService {
       print('📤 AlertasService: URL: /alertas/cocina (baseUrl ya incluye /api)');
 
       // Hacer POST a "/alertas/cocina" (baseUrl ya incluye /api)
-      final response = await _dio.post('/alertas/cocina', data: payload);
+      final response = await _api.post('/alertas/cocina', data: payload);
 
       print('✅ AlertasService: Alerta enviada exitosamente - Status: ${response.statusCode}');
 

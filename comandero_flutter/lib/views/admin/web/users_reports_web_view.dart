@@ -151,6 +151,8 @@ class _UsersReportsWebViewState extends State<UsersReportsWebView>
                   Expanded(
                     flex: 3,
                     child: TextField(
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => FocusScope.of(context).unfocus(),
                       decoration: InputDecoration(
                         labelText: 'Buscar por nombre o usuario...',
                         helperText: 'Los resultados se filtran al escribir',

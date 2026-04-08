@@ -1462,7 +1462,7 @@ class MeseroController extends ChangeNotifier {
       print('✅ Mesero: ${_tables.length} mesas activas cargadas');
     } catch (e) {
       print('❌ Error al cargar mesas: $e');
-      _tables = []; // Mantener lista vacía si falla la carga
+      // Mantener último estado en memoria para no vaciar UI por fallo transitorio.
       notifyListeners();
     }
   }
@@ -1629,7 +1629,7 @@ class MeseroController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar productos: $e');
-      _products = [];
+      // Mantener último catálogo visible si hay error temporal de red/token.
       notifyListeners();
     }
   }
@@ -1644,7 +1644,7 @@ class MeseroController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar categorías: $e');
-      _categories = [];
+      // Mantener categorías actuales para evitar parpadeo/vaciado en UI.
       notifyListeners();
     }
   }
@@ -2585,20 +2585,9 @@ class MeseroController extends ChangeNotifier {
     _tableOrders[tableKey] = [];
     _tableOrderHistory[tableKey] = [];
 
-    final selectedTable = _tables.firstWhere(
-      (table) => table.id == tableId,
-      orElse: () {
-        if (_selectedTable != null) {
-          return _selectedTable!;
-        }
-        // Si no hay tabla seleccionada y la lista está vacía, lanzar excepción
-        if (_tables.isEmpty) {
-          throw Exception('No hay mesas disponibles');
-        }
-        return _tables.first;
-      },
-    );
-    _billRepository.removeBillsForTable(selectedTable.number);
+    // NO llamar a removeBillsForTable: [BillRepository] es compartido con cajero y gerente.
+    // Las cuentas enviadas deben seguir visibles allí hasta cobrarse (cualquier método) o
+    // cancelarse la orden; liberar la mesa aquí solo actualiza estado de mesas en mesero.
 
     _tables = _tables.map((tableEntry) {
       if (tableEntry.id == tableId) {

@@ -16,6 +16,7 @@ import '../../widgets/refresh_on_resume.dart';
 import '../../utils/app_theme.dart';
 import '../../config/api_config.dart';
 import '../../utils/date_utils.dart' as date_utils;
+import '../../utils/inventory_display_utils.dart';
 import '../../utils/closure_utils.dart' as closure_utils;
 import '../cocinero/order_detail_modal.dart';
 import '../../services/ordenes_service.dart';
@@ -905,7 +906,7 @@ class AdminApp extends StatelessWidget {
               ),
             SizedBox(height: AppTheme.spacingXS),
             Text(
-              'Métricas calculadas desde tickets de hoy. "Por cobrar" incluye pendientes y sin método de pago.',
+              'Ventas por canal y por método desde pagos aplicados (BD). Pago mixto: efectivo y tarjeta se reparten. Por cobrar: tickets pendientes.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AppColors.textSecondary,
               ),
@@ -1599,7 +1600,7 @@ class AdminApp extends StatelessWidget {
                       ),
                       SizedBox(height: AppTheme.spacingXS),
                       Text(
-                        'Stock: ${_formatStockNumber(item.currentStock)} ${item.unit}',
+                        'Stock: ${inventarioStockDisplay(item)}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -6043,6 +6044,7 @@ class AdminApp extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Wrap(
+                              alignment: WrapAlignment.start,
                               spacing: AppTheme.spacingSM,
                               runSpacing: AppTheme.spacingSM,
                               children: [
@@ -6100,6 +6102,7 @@ class AdminApp extends StatelessWidget {
                   elevation: 0,
                   shape: tileShape,
                   child: ExpansionTile(
+                    maintainState: true,
                     leading: Icon(Icons.swap_vert, color: AppColors.primary),
                     title: Text(
                       'Movimientos (kárdex)',
@@ -6108,7 +6111,7 @@ class AdminApp extends StatelessWidget {
                       ),
                     ),
                     subtitle: Text(
-                      'Entradas, salidas y ajustes recientes',
+                      'Entradas, salidas y ajustes por período',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -6125,12 +6128,169 @@ class AdminApp extends StatelessWidget {
                       AppTheme.spacingMD,
                     ),
                     children: [
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () => controller.loadInventoryMovimientos(),
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('Actualizar movimientos'),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(AppTheme.spacingSM),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Período',
+                              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                fontWeight: AppTheme.fontWeightSemibold,
+                              ),
+                            ),
+                            SizedBox(height: AppTheme.spacingXS),
+                            Wrap(
+                              spacing: AppTheme.spacingSM,
+                              runSpacing: AppTheme.spacingSM,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('Día'),
+                                  selected:
+                                      controller.inventoryMovementsPeriod == 'day',
+                                  onSelected: (_) =>
+                                      controller.setInventoryMovementsPeriod('day'),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Semana'),
+                                  selected:
+                                      controller.inventoryMovementsPeriod == 'week',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsPeriod('week'),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Mes'),
+                                  selected:
+                                      controller.inventoryMovementsPeriod == 'month',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsPeriod('month'),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Personalizado'),
+                                  selected:
+                                      controller.inventoryMovementsPeriod ==
+                                      'personalizado',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsPeriod('personalizado'),
+                                ),
+                              ],
+                            ),
+                            if (controller.inventoryMovementsPeriod == 'personalizado') ...[
+                              SizedBox(height: AppTheme.spacingSM),
+                              SizedBox(
+                                width: isTablet ? null : double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _showInventoryRangePickerDialog(
+                                    context,
+                                    controller,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.date_range_outlined,
+                                    size: 18,
+                                  ),
+                                  label: const Text('Definir rango'),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (controller.inventoryMovementsPeriod == 'personalizado' &&
+                          controller.inventoryMovementsStart != null &&
+                          controller.inventoryMovementsEnd != null)
+                        Padding(
+                          padding: EdgeInsets.only(top: AppTheme.spacingSM),
+                          child: Text(
+                            'Desde ${date_utils.AppDateUtils.formatDateTimeWithAmPm(controller.inventoryMovementsStart!)} '
+                            'hasta ${date_utils.AppDateUtils.formatDateTimeWithAmPm(controller.inventoryMovementsEnd!)}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(AppTheme.spacingSM),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tipo de movimiento',
+                              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                fontWeight: AppTheme.fontWeightSemibold,
+                              ),
+                            ),
+                            SizedBox(height: AppTheme.spacingXS),
+                            Wrap(
+                              alignment: WrapAlignment.start,
+                              spacing: AppTheme.spacingSM,
+                              runSpacing: AppTheme.spacingSM,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('Todos'),
+                                  selected:
+                                      controller.inventoryMovementsTypeFilter ==
+                                      'todos',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsTypeFilter('todos'),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Entrada'),
+                                  selected:
+                                      controller.inventoryMovementsTypeFilter ==
+                                      'entrada',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsTypeFilter('entrada'),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Salida'),
+                                  selected:
+                                      controller.inventoryMovementsTypeFilter ==
+                                      'salida',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsTypeFilter('salida'),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Ajuste'),
+                                  selected:
+                                      controller.inventoryMovementsTypeFilter ==
+                                      'ajuste',
+                                  onSelected: (_) => controller
+                                      .setInventoryMovementsTypeFilter('ajuste'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      _InventoryMovementsSearchField(controller: controller),
+                      SizedBox(height: isTablet ? AppTheme.spacingXS : AppTheme.spacingSM),
+                      SizedBox(
+                        width: isTablet ? null : double.infinity,
+                        child: Align(
+                          alignment: isTablet
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () => controller.loadInventoryMovimientos(),
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Actualizar movimientos'),
+                          ),
                         ),
                       ),
                       _buildInventoryMovimientosSection(
@@ -6215,7 +6375,7 @@ class AdminApp extends StatelessWidget {
                       ),
                     ),
                     subtitle: Text(
-                      'Totales y alertas rápidas',
+                      'Indicadores clave de stock, alertas y costos',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -6277,12 +6437,12 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
-    final movs = controller.inventoryMovimientos;
+    final movs = controller.filteredInventoryMovimientos;
     if (movs.isEmpty) {
       return Padding(
         padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
         child: Text(
-          'No hay movimientos registrados o aún no se han cargado. Pulsa actualizar o expande de nuevo.',
+          'No hay movimientos que coincidan con el filtro actual. Ajusta tipo, búsqueda o período.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
             color: AppColors.textSecondary,
           ),
@@ -6300,6 +6460,19 @@ class AdminApp extends StatelessWidget {
           return 'Ajuste';
         default:
           return t ?? '—';
+      }
+    }
+
+    Color tipoColor(String? t) {
+      switch (t) {
+        case 'entrada':
+          return Colors.green;
+        case 'salida':
+          return Colors.red;
+        case 'ajuste':
+          return Colors.blue;
+        default:
+          return AppColors.primary;
       }
     }
 
@@ -6333,7 +6506,8 @@ class AdminApp extends StatelessWidget {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.12),
+                            color: tipoColor(m['tipo']?.toString())
+                                .withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
@@ -6341,7 +6515,7 @@ class AdminApp extends StatelessWidget {
                             style: TextStyle(
                               fontSize: isTablet ? 12 : 11,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.primary,
+                              color: tipoColor(m['tipo']?.toString()),
                             ),
                           ),
                         ),
@@ -6349,7 +6523,7 @@ class AdminApp extends StatelessWidget {
                     ),
                     SizedBox(height: AppTheme.spacingXS),
                     Text(
-                      '${m['cantidad'] ?? ''} ${m['unidad'] ?? ''} · ${m['motivo'] ?? 'Sin motivo'}',
+                      '${m['tipo'] == 'salida' ? '-' : '+'}${m['cantidad'] ?? ''} ${m['unidad'] ?? ''} · ${m['motivo'] ?? 'Sin motivo'}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -6364,9 +6538,8 @@ class AdminApp extends StatelessWidget {
                       ),
                     if (m['creadoEn'] != null)
                       Text(
-                        DateFormat('dd/MM/yyyy HH:mm', 'es_MX').format(
-                          DateTime.tryParse(m['creadoEn'].toString())?.toLocal() ??
-                              DateTime.now(),
+                        date_utils.AppDateUtils.formatDateTimeWithAmPm(
+                          date_utils.AppDateUtils.parseToLocal(m['creadoEn']),
                         ),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           fontSize: 11,
@@ -6382,6 +6555,75 @@ class AdminApp extends StatelessWidget {
     );
   }
 
+  Future<void> _showInventoryRangePickerDialog(
+    BuildContext context,
+    AdminController controller,
+  ) async {
+    final now = date_utils.AppDateUtils.nowCdmx();
+    final initialStart = controller.inventoryMovementsStart ??
+        DateTime(now.year, now.month, now.day);
+    final initialEnd = controller.inventoryMovementsEnd ?? now;
+    DateTime tempStart = initialStart;
+    DateTime tempEnd = initialEnd.isBefore(initialStart) ? initialStart : initialEnd;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Rango personalizado (kárdex)'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Desde'),
+                subtitle:
+                    Text(date_utils.AppDateUtils.formatDateTimeWithAmPm(tempStart)),
+                trailing: const Icon(Icons.edit_calendar_outlined),
+                onTap: () async {
+                  await _pickExportDateTime(context, tempStart, (d) {
+                    setState(() {
+                      tempStart = d;
+                      if (tempEnd.isBefore(tempStart)) tempEnd = tempStart;
+                    });
+                  });
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Hasta'),
+                subtitle:
+                    Text(date_utils.AppDateUtils.formatDateTimeWithAmPm(tempEnd)),
+                trailing: const Icon(Icons.edit_calendar_outlined),
+                onTap: () async {
+                  await _pickExportDateTime(context, tempEnd, (d) {
+                    setState(() {
+                      tempEnd = d.isBefore(tempStart) ? tempStart : d;
+                    });
+                  });
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                controller.setInventoryMovementsDateRange(tempStart, tempEnd);
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Aplicar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildInventoryResumenSection(
     BuildContext context,
     AdminController controller,
@@ -6393,12 +6635,36 @@ class AdminApp extends StatelessWidget {
         .length;
     final bajos = inv.where((i) => i.status == InventoryStatus.lowStock).length;
     double valor = 0;
+    double sumaCostoUnitario = 0;
+    int itemsConCosto = 0;
     for (final i in inv) {
       valor += i.currentStock * i.cost;
+      if (i.cost > 0) {
+        sumaCostoUnitario += i.cost;
+        itemsConCosto++;
+      }
     }
     final fmt = NumberFormat.currency(locale: 'es_MX', symbol: r'$');
+    final costoUnitarioPromedio =
+        itemsConCosto == 0 ? 0.0 : (sumaCostoUnitario / itemsConCosto);
 
-    Widget line(String label, String value) {
+    Widget sectionTitle(String title) {
+      return Padding(
+        padding: EdgeInsets.only(
+          top: AppTheme.spacingSM,
+          bottom: AppTheme.spacingSM,
+        ),
+        child: Text(
+          title,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            fontWeight: AppTheme.fontWeightSemibold,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      );
+    }
+
+    Widget line(String label, String value, {bool highlight = false}) {
       return Padding(
         padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
         child: Row(
@@ -6407,13 +6673,14 @@ class AdminApp extends StatelessWidget {
             Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.textSecondary,
+                color: highlight ? AppColors.textPrimary : AppColors.textSecondary,
               ),
             ),
             Text(
               value,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontWeight: AppTheme.fontWeightSemibold,
+                color: highlight ? AppColors.primary : null,
               ),
             ),
           ],
@@ -6424,13 +6691,23 @@ class AdminApp extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        line('Productos activos en catálogo', '${inv.length}'),
+        sectionTitle('Inventario actual'),
+        line('Productos activos', '${inv.length}'),
+        line(
+          'Valor estimado del inventario',
+          fmt.format(valor),
+          highlight: true,
+        ),
+        Divider(height: AppTheme.spacingMD * 1.5),
+        sectionTitle('Alertas'),
         line('Sin stock (crítico)', '$criticos'),
-        line('Stock bajo', '$bajos'),
-        line('Valor aproximado (stock × costo)', fmt.format(valor)),
+        line('Stock bajo (revisar compra)', '$bajos'),
+        Divider(height: AppTheme.spacingMD * 1.5),
+        sectionTitle('Costos'),
+        line('Costo unitario promedio', fmt.format(costoUnitarioPromedio)),
         SizedBox(height: AppTheme.spacingXS),
         Text(
-          'El valor es orientativo según costo unitario registrado por producto.',
+          'Los montos son referenciales y dependen del costo unitario registrado por insumo.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: AppColors.textSecondary,
             fontSize: 11,
@@ -6840,7 +7117,7 @@ class AdminApp extends StatelessWidget {
                         ),
                         SizedBox(height: AppTheme.spacingXS),
                         Text(
-                          'Stock actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
+                          'Stock actual: ${inventarioStockDisplay(item)}',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: AppColors.textSecondary,
                           ),
@@ -7310,20 +7587,6 @@ class AdminApp extends StatelessWidget {
   }
 
   // Tarjeta de producto de inventario
-  // Helper para formatear números de stock sin decimales innecesarios
-  // Asegura que nunca se muestren valores negativos (muestra 0 en su lugar)
-  String _formatStockNumber(double value) {
-    // Si el valor es negativo, mostrar 0
-    final stockValue = value < 0 ? 0.0 : value;
-    if (stockValue == stockValue.toInt()) {
-      return stockValue.toInt().toString();
-    }
-    return stockValue
-        .toStringAsFixed(1)
-        .replaceAll(RegExp(r'0*$'), '')
-        .replaceAll(RegExp(r'\.$'), '');
-  }
-
   Widget _buildInventoryItemCard(
     BuildContext context,
     InventoryItem item,
@@ -7495,12 +7758,26 @@ class AdminApp extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Stock Actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                        // Si el stock es negativo, usar color rojo para indicar problema
-                        color: item.currentStock < 0 ? Colors.red : statusColor,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Stock actual: ${inventarioStockDisplay(item)}',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontWeight: AppTheme.fontWeightSemibold,
+                              color: item.currentStock < 0 ? Colors.red : statusColor,
+                            ),
+                          ),
+                          for (final line in inventarioContenidoEnvaseLines(item))
+                            Text(
+                              line,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: AppColors.textSecondary,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     Text(
@@ -7521,15 +7798,32 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingXS),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Mín: ${_formatStockNumber(item.minStock)} ${item.unit}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Mín: ${inventarioMinStockDisplay(item)}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          if (inventarioEquivMinimoLine(item) != null)
+                            Text(
+                              inventarioEquivMinimoLine(item)!,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: AppColors.textSecondary,
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     Text(
-                      'Máx: ${_formatStockNumber(item.maxStock)} ${item.unit}',
+                      'Máx: ${inventarioMaxStockDisplay(item)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -7548,13 +7842,13 @@ class AdminApp extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Precio Total: \$${item.price.toStringAsFixed(2)}',
+                      'Costo Total: \$${(item.currentStock * item.unitPrice).toStringAsFixed(2)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
                     ),
                     Text(
-                      'Costo Unitario: \$${item.unitPrice.toStringAsFixed(2)}/${item.unit}',
+                      'Costo Unitario: \$${item.unitPrice.toStringAsFixed(2)}${inventarioEtiquetaUnidadCosto(item.unit)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -7670,8 +7964,7 @@ class AdminApp extends StatelessWidget {
       'pza', 'Pieza', 'Piezas', 'Unidad', 'Unidades',
     ];
     final contenidoPorPiezaController = TextEditingController();
-    String? selectedUnidadContenido; // kg, g, L, ml (solo cuando unidad es por pieza)
-    final unidadContenidoOptions = ['kg', 'g', 'L', 'ml'];
+    String? selectedUnidadContenido;
     final categoryOptions = controller.inventoryCategories
         .where((cat) => cat != 'todos')
         .toList();
@@ -7706,6 +7999,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: isTablet ? 16 : 12),
                 TextFormField(
                   controller: nameController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Nombre del Producto *',
                     border: OutlineInputBorder(),
@@ -7713,8 +8009,11 @@ class AdminApp extends StatelessWidget {
                     floatingLabelBehavior: FloatingLabelBehavior.auto,
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) {
+                    if (value == null || value.trim().isEmpty) {
                       return 'Campo obligatorio';
+                    }
+                    if (value.trim().length < 2) {
+                      return 'Mínimo 2 caracteres';
                     }
                     return null;
                   },
@@ -7722,6 +8021,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: codigoBarrasController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Código de barras (opcional)',
                     border: OutlineInputBorder(),
@@ -7774,8 +8076,8 @@ class AdminApp extends StatelessWidget {
                     border: const OutlineInputBorder(),
                     hintText: 'kg, g, ml, pza, piezas...',
                     helperText: unidadEsPiezaForm()
-                        ? 'Stock en número de envases. Abajo indica cuántos kg/L tiene cada uno.'
-                        : 'Para envases (ej. Nescafé 5 kg): elige "Pieza" o "pza" y aparecerá la opción de contenido por envase.',
+                        ? 'Stock en número de envases. Abajo: cuánto trae cada uno (kg, L, piezas…).'
+                        : 'Para envases: elige Pieza o pza y define contenido por envase.',
                   ),
                   items: inventoryUnitOptions
                       .map((u) => DropdownMenuItem(value: u, child: Text(u)))
@@ -7807,7 +8109,7 @@ class AdminApp extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Contenido de cada envase (kg, L, g o ml)',
+                          'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
                           style: TextStyle(
                             fontSize: isTablet ? 14 : 13,
                             fontWeight: FontWeight.w600,
@@ -7816,7 +8118,7 @@ class AdminApp extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Indica cuántos kg, litros, g o ml tiene cada envase. Así el inventario se descontará bien cuando uses este producto en recetas (por peso o volumen).',
+                          'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad del ingrediente.',
                           style: TextStyle(
                             fontSize: isTablet ? 12 : 11,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -7830,10 +8132,13 @@ class AdminApp extends StatelessWidget {
                               flex: 2,
                               child: TextFormField(
                                 controller: contenidoPorPiezaController,
+                                textInputAction: TextInputAction.next,
+                                onFieldSubmitted: (_) =>
+                                    FocusScope.of(context).nextFocus(),
                                 decoration: const InputDecoration(
                                   labelText: 'Cantidad por envase',
                                   border: OutlineInputBorder(),
-                                  hintText: 'Ej: 5 (para envase de 5 kg)',
+                                  hintText: 'Ej: 5 kg, 12 piezas…',
                                 ),
                                 keyboardType: TextInputType.number,
                               ),
@@ -7845,9 +8150,10 @@ class AdminApp extends StatelessWidget {
                                 decoration: const InputDecoration(
                                   labelText: 'Unidad',
                                   border: OutlineInputBorder(),
-                                  hintText: 'kg, L, g, ml',
+                                  hintText: 'kg, ml, piezas…',
                                 ),
-                                items: unidadContenidoOptions
+                                items: inventarioUnidadContenidoOpcionesConActual(
+                                        selectedUnidadContenido)
                                     .map((u) => DropdownMenuItem(value: u, child: Text(u)))
                                     .toList(),
                                 onChanged: (value) {
@@ -7864,6 +8170,10 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: stockController,
+                  onChanged: (_) => setDialogState(() {}),
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: InputDecoration(
                     labelText: unidadEsPiezaForm() ? 'Stock actual (número de piezas) *' : 'Stock Actual *',
                     border: const OutlineInputBorder(),
@@ -7884,6 +8194,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: minStockController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Stock Mínimo *',
                     border: OutlineInputBorder(),
@@ -7903,6 +8216,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: maxStockController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Stock Máximo *',
                     border: OutlineInputBorder(),
@@ -7922,6 +8238,10 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: costController,
+                  onChanged: (_) => setDialogState(() {}),
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Costo Unitario (\$) *',
                     border: OutlineInputBorder(),
@@ -7939,9 +8259,45 @@ class AdminApp extends StatelessWidget {
                     return null;
                   },
                 ),
+                SizedBox(height: AppTheme.spacingSM),
+                Builder(
+                  builder: (_) {
+                    final stock = double.tryParse(stockController.text.trim()) ?? 0;
+                    final costText = costController.text
+                        .trim()
+                        .replaceAll('\$', '')
+                        .replaceAll(' ', '');
+                    final cost = double.tryParse(costText) ?? 0;
+                    final total = stock * cost;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                      child: Text(
+                        'Costo Total: \$${total.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: supplierController,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).unfocus(),
                   decoration: const InputDecoration(
                     labelText: 'Proveedor',
                     border: OutlineInputBorder(),
@@ -8130,11 +8486,7 @@ class AdminApp extends StatelessWidget {
           ? formatNumber(item.contenidoPorPieza!)
           : '',
     );
-    final unidadContenidoOptions = ['kg', 'g', 'L', 'ml'];
     String? selectedUnidadContenido = item.unidadContenido?.trim();
-    if (selectedUnidadContenido != null && !unidadContenidoOptions.contains(selectedUnidadContenido)) {
-      selectedUnidadContenido = null;
-    }
     final unidadEsPieza = item.unit == 'pza' ||
         item.unit == 'Pieza' ||
         item.unit == 'Piezas' ||
@@ -8173,15 +8525,19 @@ class AdminApp extends StatelessWidget {
                 children: [
                 TextFormField(
                   controller: nameController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Nombre *',
                     border: OutlineInputBorder(),
                   ),
-                  enabled:
-                      false, // El nombre no se puede editar según las imágenes
                   validator: (value) {
-                    if (value == null || value.isEmpty) {
+                    if (value == null || value.trim().isEmpty) {
                       return 'Campo obligatorio';
+                    }
+                    if (value.trim().length < 2) {
+                      return 'Mínimo 2 caracteres';
                     }
                     return null;
                   },
@@ -8189,6 +8545,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: codigoBarrasController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Código de barras (opcional)',
                     border: OutlineInputBorder(),
@@ -8197,6 +8556,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: stockController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: InputDecoration(
                     labelText: unidadEsPieza ? 'Stock actual (número de piezas) *' : 'Stock Actual *',
                     border: const OutlineInputBorder(),
@@ -8231,7 +8593,7 @@ class AdminApp extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Contenido de cada envase (kg, L, g o ml)',
+                          'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
                           style: TextStyle(
                             fontSize: isTablet ? 14 : 13,
                             fontWeight: FontWeight.w600,
@@ -8240,7 +8602,7 @@ class AdminApp extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Indica cuántos kg, litros, g o ml tiene cada envase para que el inventario se descuente bien en las recetas.',
+                          'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad de la receta.',
                           style: TextStyle(
                             fontSize: isTablet ? 12 : 11,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -8254,10 +8616,13 @@ class AdminApp extends StatelessWidget {
                               flex: 2,
                               child: TextFormField(
                                 controller: contenidoPorPiezaController,
+                                textInputAction: TextInputAction.next,
+                                onFieldSubmitted: (_) =>
+                                    FocusScope.of(context).nextFocus(),
                                 decoration: const InputDecoration(
                                   labelText: 'Cantidad por envase',
                                   border: OutlineInputBorder(),
-                                  hintText: 'Ej: 5 (para envase de 5 kg)',
+                                  hintText: 'Ej: 5 kg, 12 piezas…',
                                 ),
                                 keyboardType: TextInputType.number,
                               ),
@@ -8269,9 +8634,10 @@ class AdminApp extends StatelessWidget {
                                 decoration: const InputDecoration(
                                   labelText: 'Unidad',
                                   border: OutlineInputBorder(),
-                                  hintText: 'kg, L, g, ml',
+                                  hintText: 'kg, ml, piezas…',
                                 ),
-                                items: unidadContenidoOptions
+                                items: inventarioUnidadContenidoOpcionesConActual(
+                                        selectedUnidadContenido)
                                     .map((u) => DropdownMenuItem(value: u, child: Text(u)))
                                     .toList(),
                                 onChanged: (value) {
@@ -8288,6 +8654,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: minStockController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Stock Mínimo *',
                     border: OutlineInputBorder(),
@@ -8307,6 +8676,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: maxStockController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
                     labelText: 'Stock Máximo *',
                     border: OutlineInputBorder(),
@@ -8326,8 +8698,11 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: costController,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).nextFocus(),
                   decoration: const InputDecoration(
-                      labelText: 'Costo (\$)',
+                      labelText: 'Costo Unitario (\$)',
                     border: OutlineInputBorder(),
                     prefixText: '\$',
                   ),
@@ -8347,6 +8722,9 @@ class AdminApp extends StatelessWidget {
                 SizedBox(height: AppTheme.spacingMD),
                 TextFormField(
                   controller: supplierController,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).unfocus(),
                   decoration: const InputDecoration(
                     labelText: 'Proveedor',
                     border: OutlineInputBorder(),
@@ -8399,20 +8777,29 @@ class AdminApp extends StatelessWidget {
                   final codigoBarras = codigoBarrasController.text.trim();
                   double? contenidoPorPieza;
                   String? unidadContenido;
-                  final uContEdit = selectedUnidadContenido;
-                  if (unidadEsPieza &&
-                      contenidoPorPiezaController.text.trim().isNotEmpty &&
-                      uContEdit != null &&
-                      uContEdit.isNotEmpty) {
-                    contenidoPorPieza = double.tryParse(contenidoPorPiezaController.text.trim());
-                    if (contenidoPorPieza != null && contenidoPorPieza > 0) {
-                      unidadContenido = uContEdit;
+                  if (unidadEsPieza) {
+                    final uContEdit = selectedUnidadContenido;
+                    if (contenidoPorPiezaController.text.trim().isNotEmpty &&
+                        uContEdit != null &&
+                        uContEdit.isNotEmpty) {
+                      contenidoPorPieza =
+                          double.tryParse(contenidoPorPiezaController.text.trim());
+                      if (contenidoPorPieza != null && contenidoPorPieza > 0) {
+                        unidadContenido = uContEdit;
+                      } else {
+                        contenidoPorPieza = null;
+                        unidadContenido = null;
+                      }
                     } else {
                       contenidoPorPieza = null;
                       unidadContenido = null;
                     }
+                  } else {
+                    contenidoPorPieza = null;
+                    unidadContenido = null;
                   }
                   final updatedItem = item.copyWith(
+                    name: nameController.text.trim(),
                     codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
                     currentStock: stock,
                     minStock: minStock,
@@ -8685,9 +9072,19 @@ class AdminApp extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Stock actual: ${_formatStockNumber(item.currentStock)} ${item.unit}',
+                'Stock actual: ${inventarioStockDisplay(item)}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
+              if (inventarioEquivTotalLine(item) != null) ...[
+                SizedBox(height: AppTheme.spacingXS),
+                Text(
+                  inventarioEquivTotalLine(item)!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
               SizedBox(height: AppTheme.spacingMD),
               TextFormField(
                 controller: quantityController,
@@ -8695,7 +9092,7 @@ class AdminApp extends StatelessWidget {
                   labelText:
                       'Cantidad ${isDecrease ? 'a disminuir' : 'a aumentar'} *',
                   border: const OutlineInputBorder(),
-                  suffixText: item.unit,
+                  suffixText: inventarioUnidadSuffixAjuste(item),
                 ),
                 keyboardType: TextInputType.number,
                 validator: (value) {
@@ -15642,11 +16039,11 @@ class AdminApp extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         const spacing = AppTheme.spacingMD;
-        const targetWidth = 210.0;
+        const targetWidth = 200.0;
         final maxWidth = constraints.maxWidth;
         final crossAxisCount = (maxWidth / (targetWidth + spacing))
             .floor()
-            .clamp(1, 5);
+            .clamp(1, 7);
         final itemWidth =
             (maxWidth -
                 spacing * (crossAxisCount > 1 ? crossAxisCount - 1 : 0)) /
@@ -15672,6 +16069,8 @@ class AdminApp extends StatelessWidget {
     final localSales = controller.todayLocalSales;
     final takeawaySales = controller.todayTakeawaySales;
     final cashSales = controller.todayCashSales;
+    final cardSales = controller.todayCardSales;
+    final transferSales = controller.todayTransferSales;
     final pendingTotal = controller.pendingCollectionsTotal;
     final totalNet = controller.todayTotalSales;
     final localOrdersCount = controller.todayLocalOrdersCount;
@@ -15683,8 +16082,8 @@ class AdminApp extends StatelessWidget {
         title: 'Ventas en Local',
         value: controller.formatCurrency(localSales),
         subtitle: localOrdersCount > 0
-            ? '$localOrdersCount ${localOrdersCount == 1 ? 'orden' : 'órdenes'}'
-            : 'Sin órdenes',
+            ? '$localOrdersCount ${localOrdersCount == 1 ? 'pago' : 'pagos'}'
+            : 'Sin pagos',
         color: AppColors.success,
         icon: Icons.storefront,
       ),
@@ -15692,8 +16091,8 @@ class AdminApp extends StatelessWidget {
         title: 'Ventas Para llevar',
         value: controller.formatCurrency(takeawaySales),
         subtitle: takeawayOrdersCount > 0
-            ? '$takeawayOrdersCount ${takeawayOrdersCount == 1 ? 'pedido' : 'pedidos'}'
-            : 'Sin pedidos',
+            ? '$takeawayOrdersCount ${takeawayOrdersCount == 1 ? 'pago' : 'pagos'}'
+            : 'Sin pagos',
         color: AppColors.info,
         icon: Icons.delivery_dining,
       ),
@@ -15701,10 +16100,28 @@ class AdminApp extends StatelessWidget {
         title: 'Ventas Efectivo',
         value: controller.formatCurrency(cashSales),
         subtitle: cashSales > 0
-            ? 'Incluye pagos mixtos'
+            ? 'Efectivo + parte efectivo de mixto'
             : 'Sin ventas en efectivo',
         color: AppColors.primary,
         icon: Icons.payments,
+      ),
+      _SummaryCardData(
+        title: 'Ventas Tarjeta',
+        value: controller.formatCurrency(cardSales),
+        subtitle: cardSales > 0
+            ? 'Tarjeta + parte tarjeta de mixto'
+            : 'Sin ventas con tarjeta',
+        color: AppColors.warning,
+        icon: Icons.credit_card,
+      ),
+      _SummaryCardData(
+        title: 'Ventas Transferencia',
+        value: controller.formatCurrency(transferSales),
+        subtitle: transferSales > 0
+            ? 'Solo transferencias'
+            : 'Sin transferencias',
+        color: AppColors.info,
+        icon: Icons.account_balance,
       ),
       _SummaryCardData(
         title: 'Por cobrar',
@@ -15719,7 +16136,7 @@ class AdminApp extends StatelessWidget {
         title: 'Total Neto',
         value: controller.formatCurrency(totalNet),
         subtitle: totalNet > 0
-            ? 'Incluye efectivo y tarjeta'
+            ? 'Suma pagos aplicados (filtrado)'
             : 'Sin ventas registradas',
         color: AppColors.info,
         icon: Icons.analytics,
@@ -16167,6 +16584,75 @@ class _SummaryCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _InventoryMovementsSearchField extends StatefulWidget {
+  const _InventoryMovementsSearchField({required this.controller});
+
+  final AdminController controller;
+
+  @override
+  State<_InventoryMovementsSearchField> createState() =>
+      _InventoryMovementsSearchFieldState();
+}
+
+class _InventoryMovementsSearchFieldState
+    extends State<_InventoryMovementsSearchField> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(
+      text: widget.controller.inventoryMovementsSearchQuery,
+    );
+    _searchController.addListener(_syncQueryToController);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InventoryMovementsSearchField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final external = widget.controller.inventoryMovementsSearchQuery;
+    if (_searchController.text != external) {
+      _searchController.value = _searchController.value.copyWith(
+        text: external,
+        selection: TextSelection.collapsed(offset: external.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  void _syncQueryToController() {
+    final value = _searchController.text;
+    if (value != widget.controller.inventoryMovementsSearchQuery) {
+      widget.controller.setInventoryMovementsSearchQuery(value);
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_syncQueryToController);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _searchController,
+      decoration: InputDecoration(
+        hintText: 'Buscar por nombre de insumo',
+        prefixIcon: const Icon(Icons.search),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusSM),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
       ),
     );
   }

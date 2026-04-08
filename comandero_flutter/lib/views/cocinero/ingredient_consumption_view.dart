@@ -741,6 +741,8 @@ class _IngredientConsumptionViewState extends State<IngredientConsumptionView> {
                   ),
                   const SizedBox(height: 16),
                   TextField(
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => FocusScope.of(context).unfocus(),
                     decoration: const InputDecoration(
                       labelText: 'Nuevo stock',
                       hintText: 'Ingresa la cantidad',

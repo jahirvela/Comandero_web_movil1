@@ -7,8 +7,8 @@ import '../services/ordenes_service.dart';
 import '../services/socket_service.dart';
 import '../services/kitchen_alerts_service.dart';
 import '../services/categorias_service.dart';
+import '../services/api_service.dart';
 import '../config/api_config.dart';
-import 'package:dio/dio.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/performance_helper.dart';
 
@@ -43,6 +43,7 @@ class OldKitchenAlert {
 class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   final OrdenesService _ordenesService = OrdenesService();
   final CategoriasService _categoriasService = CategoriasService();
+  final ApiService _api = ApiService();
   // Estado de los pedidos
   List<OrderModel> _orders = [];
   final List<OldKitchenAlert> _alerts = [];
@@ -465,21 +466,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   Future<void> _loadPendingAlerts() async {
     try {
       print('📥 Cocinero: Cargando alertas pendientes desde la BD...');
-
-      final dio = Dio(
-        BaseOptions(
-          baseUrl: ApiConfig.baseUrl,
-          headers: {'Content-Type': 'application/json'},
-        ),
-      );
-
-      // Agregar token de autenticación
-      final token = await _storage.read('accessToken');
-      if (token != null) {
-        dio.options.headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await dio.get('/alertas');
+      final response = await _api.get('/alertas');
 
       if (response.statusCode == 200) {
         final responseData = response.data;
@@ -1308,7 +1295,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     } catch (e, stackTrace) {
       print('❌ Error al cargar órdenes: $e');
       print('Stack trace: $stackTrace');
-      _orders = []; // Mantener lista vacía si falla la carga
+      // Mantener órdenes previas para no vaciar panel por error transitorio.
       notifyListeners();
     }
   }
@@ -1907,21 +1894,8 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
     try {
       final alertaIdInt = int.tryParse(alertId);
       if (alertaIdInt != null) {
-        final token = await _storage.read('accessToken');
-        if (token != null) {
-          final dio = Dio(
-            BaseOptions(
-              baseUrl: ApiConfig.baseUrl,
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-              },
-            ),
-          );
-
-          await dio.patch('/alertas/$alertaIdInt/leida');
-          print('✅ Cocinero: Alerta $alertId marcada como leída en BD');
-        }
+        await _api.patch('/alertas/$alertaIdInt/leida');
+        print('✅ Cocinero: Alerta $alertId marcada como leída en BD');
       }
     } catch (e) {
       print('⚠️ Cocinero: Error al marcar alerta como leída (continuando): $e');
@@ -1936,21 +1910,8 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
   Future<void> clearAlerts() async {
     // Marcar todas las alertas como leídas en el backend
     try {
-      final token = await _storage.read('accessToken');
-      if (token != null) {
-        final dio = Dio(
-          BaseOptions(
-            baseUrl: ApiConfig.baseUrl,
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          ),
-        );
-
-        await dio.post('/alertas/marcar-todas-leidas');
-        print('✅ Cocinero: Todas las alertas marcadas como leídas en BD');
-      }
+      await _api.post('/alertas/marcar-todas-leidas');
+      print('✅ Cocinero: Todas las alertas marcadas como leídas en BD');
     } catch (e) {
       print(
         '⚠️ Cocinero: Error al marcar todas las alertas como leídas (continuando): $e',

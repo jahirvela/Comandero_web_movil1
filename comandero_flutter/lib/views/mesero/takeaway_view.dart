@@ -557,6 +557,8 @@ class _TakeawayViewState extends State<TakeawayView> {
               children: [
                 TextField(
                   controller: nameController,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => FocusScope.of(dialogContext).nextFocus(),
                   decoration: InputDecoration(
                     labelText: 'Nombre del Cliente *',
                     hintText: 'Ej: Juan Pérez',
@@ -571,6 +573,8 @@ class _TakeawayViewState extends State<TakeawayView> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: phoneController,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
                   decoration: InputDecoration(
                     labelText: 'Teléfono (opcional)',
                     hintText: 'Ej: 555-123-4567',

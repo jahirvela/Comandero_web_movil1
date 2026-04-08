@@ -16,6 +16,33 @@ import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
 
+/// Débito/crédito desde nombre de forma en BD (p. ej. `tarjeta_debito`).
+String? _cardMethodDesdeFormaPagoBackend(String? formaNombre) {
+  if (formaNombre == null || formaNombre.isEmpty) return null;
+  final n = formaNombre.toLowerCase();
+  if (n.contains('credito')) return 'credito';
+  if (n.contains('debito')) return 'debito';
+  return null;
+}
+
+/// Respaldo cuando la forma es genérica "tarjeta" pero la referencia indica el tipo.
+String? _cardMethodDesdeReferencia(String? ref) {
+  if (ref == null || ref.isEmpty) return null;
+  final r = ref.toLowerCase();
+  if (r.contains('crédito') || r.contains('credito')) return 'credito';
+  if (r.contains('débito') || r.contains('debito')) return 'debito';
+  return null;
+}
+
+/// Parte no efectivo de un pago mixto: transferencia vs tarjeta (heurística).
+bool _nonCashMixtoPareceTransferencia(PaymentModel p) {
+  if (p.bankName != null && p.bankName!.trim().isNotEmpty) return true;
+  final ref = '${p.reference ?? ''} ${p.notes ?? ''}'.toLowerCase();
+  return ref.contains('banco:') ||
+      ref.contains('transferencia') ||
+      ref.contains('spei');
+}
+
 class CajeroController extends ChangeNotifier {
   final PagosService _pagosService = PagosService();
   final ConfiguracionService _configuracionService = ConfiguracionService();
@@ -178,14 +205,16 @@ class CajeroController extends ChangeNotifier {
 
     // Escuchar eventos de pagos actualizados (NO duplicar con onPaymentCreated de más abajo)
     socketService.onPaymentUpdated((data) {
-      try {
-        // Recargar pagos cuando se actualiza un pago
-        _payments = List.from(_paymentRepository.payments);
-        _bills = _billRepository.pendingBills;
-        notifyListeners();
-      } catch (e) {
-        print('Error al procesar pago actualizado en cajero: $e');
-      }
+      Future.microtask(() async {
+        try {
+          _payments = List.from(_paymentRepository.payments);
+          await _billRepository.loadBills();
+          _bills = _billRepository.pendingBills;
+          notifyListeners();
+        } catch (e) {
+          print('Error al procesar pago actualizado en cajero: $e');
+        }
+      });
     });
 
     // Escuchar actualizaciones de cierres de caja (para aclaraciones, aprobaciones, etc.)
@@ -218,57 +247,25 @@ class CajeroController extends ChangeNotifier {
       }
     });
 
-    // Escuchar cuando se crea un pago (desde el backend después del cobro)
-    // IMPORTANTE: Este listener se ejecuta cuando realmente se procesa un pago,
-    // NO cuando solo se imprime un ticket. Aquí SÍ debemos eliminar el bill.
+    // Escuchar cuando se crea un pago (desde el backend después del cobro).
+    // No quitar la cuenta por el solo hecho de haber un pago parcial: se recalcula
+    // en BillRepository.loadBills() (100 % cobrado o estado pagada).
     socketService.onPaymentCreated((data) {
-      try {
-        final ordenId = data['ordenId'] as int?;
-        final billId = data['billId'] as String?;
-
-        // Actualizar lista de pagos primero
-        _payments = List.from(_paymentRepository.payments);
-
-        if (ordenId != null) {
+      Future.microtask(() async {
+        try {
+          final ordenId = data['ordenId'] as int?;
           print(
-            '💳 Cajero: Pago creado recibido - Orden $ordenId (procesando eliminación de bill)',
+            '💳 Cajero: Pago creado recibido${ordenId != null ? ' - Orden $ordenId' : ''} — sincronizando cuentas',
           );
 
-          // Eliminar bill por ordenId o billId SOLO cuando realmente se procesó el pago
-          if (billId != null) {
-            _billRepository.removeBill(billId);
-            print('✅ Cajero: Bill eliminado por billId: $billId');
-          } else {
-            // Buscar bill por ordenId
-            try {
-              final billToRemove = _bills.firstWhere(
-                (b) => b.ordenId == ordenId && b.status == BillStatus.pending,
-              );
-              _billRepository.removeBill(billToRemove.id);
-              print(
-                '✅ Cajero: Bill eliminado por ordenId: $ordenId (billId: ${billToRemove.id})',
-              );
-            } catch (e) {
-              print(
-                '⚠️ Cajero: No se encontró bill pendiente para orden $ordenId (puede haber sido eliminado previamente)',
-              );
-            }
-          }
-
-          // Actualizar _bills y notificar
+          _payments = List.from(_paymentRepository.payments);
+          await _billRepository.loadBills();
           _bills = _billRepository.pendingBills;
           notifyListeners();
-
-          print('✅ Cajero: Bill eliminado después del cobro - Orden $ordenId');
-        } else {
-          // Si no hay ordenId, solo actualizar la lista de pagos
-          notifyListeners();
+        } catch (e) {
+          print('⚠️ Cajero: Error al procesar pago creado: $e');
         }
-      } catch (e) {
-        print('⚠️ Cajero: Error al procesar pago creado: $e');
-        // NO refrescar automáticamente - solo refrescar manualmente si es necesario
-        // refreshBills() podría eliminar bills pendientes incorrectamente
-      }
+      });
     });
 
     // Escuchar eventos de cierres de caja (para actualización en tiempo real)
@@ -421,9 +418,9 @@ class CajeroController extends ChangeNotifier {
       // pero evita restaurar bills de órdenes ya cobradas anteriormente
       int billsRestauradas = 0;
 
-      // Obtener órdenes del backend para verificar su estado
+      // Misma fuente que loadBills (incluye cerradas / por cobrar)
       final ordenesService = OrdenesService();
-      final ordenes = await ordenesService.getOrdenes();
+      final ordenes = await ordenesService.getOrdenesParaCajero();
       final ahora = date_utils.AppDateUtils.nowCdmx();
 
       for (final billExistente in billsPendientesExistentes) {
@@ -655,8 +652,8 @@ class CajeroController extends ChangeNotifier {
               print('⚠️ Cajero: Error al obtener orden $ordenId: $e');
             }
           }
-          final formaPagoNombre =
-              (pagoData['formaPagoNombre'] as String? ?? '').toLowerCase();
+          final formaPagoNombreRaw = pagoData['formaPagoNombre'] as String? ?? '';
+          final formaPagoNombre = formaPagoNombreRaw.toLowerCase();
           String paymentType = 'cash';
           if (formaPagoNombre.contains('tarjeta') ||
               formaPagoNombre.contains('card')) {
@@ -666,6 +663,13 @@ class CajeroController extends ChangeNotifier {
           } else if (formaPagoNombre.contains('mixto') ||
               formaPagoNombre.contains('mixed')) {
             paymentType = 'mixed';
+          }
+          final refStr = pagoData['referencia'] as String?;
+          String? cardMethod;
+          if (paymentType == 'card') {
+            cardMethod = _cardMethodDesdeFormaPagoBackend(formaPagoNombreRaw) ??
+                _cardMethodDesdeReferencia(refStr) ??
+                'debito';
           }
           final fechaPago = pagoData['fechaPago'] ?? pagoData['creadoEn'];
           final payment = PaymentModel(
@@ -678,7 +682,9 @@ class CajeroController extends ChangeNotifier {
             ordenId: ordenId,
             waiterName: waiterName,
             tableNumber: tableNumber,
-            notes: pagoData['referencia'] as String?,
+            cardMethod: cardMethod,
+            reference: refStr,
+            notes: refStr,
             voucherPrinted:
                 (pagoData['estado'] as String?)?.toLowerCase() == 'aplicado',
           );
@@ -725,8 +731,7 @@ class CajeroController extends ChangeNotifier {
     } catch (e, stackTrace) {
       print('❌ Error al cargar cierres de caja: $e');
       print('Stack trace: $stackTrace');
-      // Aún así notificar cambios para que la UI se muestre
-      _cashClosures = [];
+      // Mantener cierres previos para no vaciar UI por fallo transitorio.
       notifyListeners();
     }
   }
@@ -1395,7 +1400,14 @@ class CajeroController extends ChangeNotifier {
         totalTips += payment.tipAmount ?? 0;
       } else if (paymentTypeLower.contains('mixed') || paymentTypeLower.contains('mixto')) {
         totalCash += payment.cashApplied ?? 0;
-        totalCard += payment.totalAmount - (payment.cashApplied ?? 0);
+        final rest = payment.totalAmount - (payment.cashApplied ?? 0);
+        if (rest > 0) {
+          if (_nonCashMixtoPareceTransferencia(payment)) {
+            totalTransfer += rest;
+          } else {
+            totalCard += rest;
+          }
+        }
         totalTips += payment.tipAmount ?? 0;
       }
     }
@@ -1447,16 +1459,23 @@ class CajeroController extends ChangeNotifier {
         } else {
           totalDebit += amount;
         }
-      } else if (typeLower.contains('transfer')) {
+      } else if (typeLower.contains('transfer') ||
+          typeLower.contains('transferencia')) {
         totalTransfer += amount;
       } else if (typeLower.contains('mixed') || typeLower.contains('mixto')) {
         totalCash += payment.cashApplied ?? 0;
-        final cardPart = amount - (payment.cashApplied ?? 0);
-        totalCard += cardPart;
-        if (payment.cardMethod == 'credito') {
-          totalCredit += cardPart;
+        final rest = amount - (payment.cashApplied ?? 0);
+        if (rest <= 0) {
+          // sin parte no efectiva
+        } else if (_nonCashMixtoPareceTransferencia(payment)) {
+          totalTransfer += rest;
         } else {
-          totalDebit += cardPart;
+          totalCard += rest;
+          if (payment.cardMethod == 'credito') {
+            totalCredit += rest;
+          } else {
+            totalDebit += rest;
+          }
         }
       }
     }
@@ -1466,6 +1485,7 @@ class CajeroController extends ChangeNotifier {
       'totalCard': totalCard + totalTransfer,
       'totalDebit': totalDebit,
       'totalCredit': totalCredit,
+      'totalTransfer': totalTransfer,
       'totalLocal': totalLocal,
       'totalParaLlevar': totalParaLlevar,
       'total': totalCash + totalCard + totalTransfer,
@@ -1860,11 +1880,9 @@ class CajeroController extends ChangeNotifier {
     }
   }
 
-  // Formatear fecha
+  // Formatear fecha (CDMX vía AppDateUtils; no usar toLocal() del dispositivo)
   String formatDate(DateTime date) {
-    // Asegurarse de que la fecha esté en zona horaria local
-    final localDate = date.isUtc ? date.toLocal() : date;
-    return date_utils.AppDateUtils.formatDateTime(localDate);
+    return date_utils.AppDateUtils.formatDateTime(date);
   }
 
   // Formatear moneda
@@ -1885,12 +1903,18 @@ class CajeroController extends ChangeNotifier {
   // Exportar cierres de caja a CSV
   Future<void> exportCashClosuresToCSV() async {
     try {
+      await loadCashClosures();
+      notifyListeners();
+
       final hoy = date_utils.AppDateUtils.nowCdmx();
-      final cierresDelDia = _cashClosures.where((cierre) {
-        return cierre.fecha.year == hoy.year &&
-            cierre.fecha.month == hoy.month &&
-            cierre.fecha.day == hoy.day;
-      }).toList();
+      final cierresDelDia = _cashClosures
+          .where(
+            (cierre) => date_utils.AppDateUtils.isSameCalendarDayCdmx(
+              cierre.fecha,
+              hoy,
+            ),
+          )
+          .toList();
 
       // Ordenar por fecha descendente
       cierresDelDia.sort((a, b) => b.fecha.compareTo(a.fecha));
@@ -1910,12 +1934,11 @@ class CajeroController extends ChangeNotifier {
         );
       }
 
-      // Datos
+      // Datos (fecha/hora en CDMX vía AppDateUtils; segundos en hora para auditoría)
       for (final cierre in cierresDelDia) {
-        final fecha = date_utils.AppDateUtils.formatDateTime(cierre.fecha);
-        final fechaParts = fecha.split(' ');
-        final fechaStr = fechaParts.isNotEmpty ? fechaParts[0] : '';
-        final horaStr = fechaParts.length > 1 ? fechaParts[1] : '';
+        final fechaStr = date_utils.AppDateUtils.formatDate(cierre.fecha);
+        final horaStr =
+            date_utils.AppDateUtils.formatTimeWithSeconds(cierre.fecha);
 
         final estadoStr = cierre.estado.toString().split('.').last;
         final notas = (cierre.notaCajero ?? '')
@@ -1986,6 +2009,10 @@ class CajeroController extends ChangeNotifier {
       csvLines.add('Total Efectivo,${resumenEfectivo.toStringAsFixed(2)}');
       csvLines.add('Total Tarjeta,${resumenTarjeta.toStringAsFixed(2)}');
       csvLines.add('Total Propinas,${resumenPropinas.toStringAsFixed(2)}');
+      csvLines.add('');
+      csvLines.add(
+        'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+      );
 
       final csvContent = csvLines.join('\n');
       final filename =
@@ -2009,11 +2036,14 @@ class CajeroController extends ChangeNotifier {
       notifyListeners();
 
       final hoy = date_utils.AppDateUtils.nowCdmx();
-      final cierresDelDia = _cashClosures.where((cierre) {
-        return cierre.fecha.year == hoy.year &&
-            cierre.fecha.month == hoy.month &&
-            cierre.fecha.day == hoy.day;
-      }).toList();
+      final cierresDelDia = _cashClosures
+          .where(
+            (cierre) => date_utils.AppDateUtils.isSameCalendarDayCdmx(
+              cierre.fecha,
+              hoy,
+            ),
+          )
+          .toList();
 
       // Ordenar por fecha descendente
       cierresDelDia.sort((a, b) => b.fecha.compareTo(a.fecha));
@@ -2366,7 +2396,7 @@ class CajeroController extends ChangeNotifier {
               // Pie de página
               pdf_widgets.Divider(),
               pdf_widgets.Text(
-                'Generado el ${date_utils.AppDateUtils.formatDateTime(date_utils.AppDateUtils.nowCdmx())}',
+                'Generado el ${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())} (CDMX)',
                 style: const pdf_widgets.TextStyle(
                   fontSize: 10,
                   color: PdfColors.grey700,

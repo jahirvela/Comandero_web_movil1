@@ -44,6 +44,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
   String _selectedMethod = 'debito'; // 'debito' o 'credito'
   String _selectedTerminal = 'Terminal 1';
   final _discountController = TextEditingController();
+  final _discountFocus = FocusNode();
   final bool _isTerminalConnected = true; // Simulado
   double get _discountPercentage {
     final value = double.tryParse(_discountController.text) ?? 0;
@@ -56,6 +57,7 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
 
   @override
   void dispose() {
+    _discountFocus.dispose();
     _discountController.dispose();
     super.dispose();
   }
@@ -266,6 +268,10 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
 
                   TextFormField(
                     controller: _discountController,
+                    focusNode: _discountFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) =>
+                        FocusScope.of(context).nextFocus(),
                     decoration: InputDecoration(
                       labelText: 'Descuento (%)',
                       prefixIcon: const Icon(Icons.percent),

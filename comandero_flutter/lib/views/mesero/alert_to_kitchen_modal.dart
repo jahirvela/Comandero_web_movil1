@@ -199,6 +199,8 @@ class _AlertToKitchenModalState extends State<AlertToKitchenModal> {
             const SizedBox(height: 8),
 
             TextField(
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => FocusScope.of(context).unfocus(),
               onChanged: (value) {
                 setState(() {
                   additionalDetails = value;

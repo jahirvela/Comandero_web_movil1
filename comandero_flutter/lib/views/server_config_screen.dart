@@ -191,6 +191,8 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                 const SizedBox(height: 24),
                 TextFormField(
                   controller: _ipController,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
                   decoration: InputDecoration(
                     labelText: 'IP del Servidor',
                     hintText: '192.168.1.24',

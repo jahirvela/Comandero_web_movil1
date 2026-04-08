@@ -2659,6 +2659,9 @@ class CocineroApp extends StatelessWidget {
                   const SizedBox(height: 8),
                   TextField(
                     controller: customController,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) =>
+                        FocusScope.of(dialogContext).unfocus(),
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
                       labelText: 'Minutos',

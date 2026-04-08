@@ -958,6 +958,8 @@ class _DividedAccountViewState extends State<DividedAccountView> {
         ),
         content: TextField(
           controller: nameController,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
           decoration: InputDecoration(
             labelText: 'Nombre de la persona',
             hintText: 'Ej: Juan, María, etc.',
@@ -1013,6 +1015,8 @@ class _DividedAccountViewState extends State<DividedAccountView> {
         ),
         content: TextField(
           controller: nameController,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
           decoration: InputDecoration(
             labelText: 'Nuevo nombre',
             border: OutlineInputBorder(

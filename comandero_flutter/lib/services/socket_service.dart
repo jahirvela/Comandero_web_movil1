@@ -45,6 +45,7 @@ class SocketService {
   DateTime? _lastDisconnectedAt;
   bool _tokenRefreshInProgress = false;
   DateTime? _lastTokenRefreshAt;
+  bool _authRecoveryInProgress = false;
 
   /// Stream del estado de conexión
   Stream<SocketConnectionState> get connectionStateStream =>
@@ -363,7 +364,7 @@ class SocketService {
             .enableForceNew() // CRÍTICO: Forzar nueva conexión, no reutilizar manager
             .disableAutoConnect() // Conectar manualmente después de configurar handlers
             .enableReconnection() // Permitir reconexión automática
-            .setReconnectionAttempts(10)
+            .setReconnectionAttempts(1000000)
             .setReconnectionDelay(1000)
             .setReconnectionDelayMax(5000)
             .setTimeout(20000)
@@ -492,6 +493,7 @@ class SocketService {
       print('❌ Error de conexión Socket.IO: $errorStr');
       print('❌ Socket.IO: URL de error: $socketUrl');
       _updateState(SocketConnectionState.error);
+      unawaited(_recoverSocketAuthIfNeeded(errorStr));
     });
 
     _socket!.onError((error) {
@@ -499,6 +501,7 @@ class SocketService {
       final errorStr = error?.toString() ?? 'Error desconocido';
       print('Error en Socket.IO: $errorStr');
       _updateState(SocketConnectionState.error);
+      unawaited(_recoverSocketAuthIfNeeded(errorStr));
     });
 
     _socket!.onReconnect((attemptNumber) {
@@ -532,6 +535,43 @@ class SocketService {
   void _updateState(SocketConnectionState state) {
     _connectionState.value = state;
     _connectionStateController.add(state);
+  }
+
+  bool _isAuthError(String error) {
+    final e = error.toLowerCase();
+    return e.contains('unauthorized') ||
+        e.contains('jwt') ||
+        e.contains('token') ||
+        e.contains('auth');
+  }
+
+  Future<void> _recoverSocketAuthIfNeeded(String error) async {
+    if (!_isAuthError(error)) return;
+    if (_authRecoveryInProgress) return;
+    _authRecoveryInProgress = true;
+    try {
+      final refreshToken = await _storage.read('refreshToken');
+      if (refreshToken == null || refreshToken.isEmpty) {
+        print('⚠️ Socket: Sin refresh token para recuperación');
+        return;
+      }
+      if (_tokenRefreshInProgress) return;
+      _tokenRefreshInProgress = true;
+      final ok = await _authService.refreshToken(refreshToken);
+      _tokenRefreshInProgress = false;
+      if (!ok) {
+        print('❌ Socket: Refresh token falló durante recuperación');
+        return;
+      }
+      _lastTokenRefreshAt = DateTime.now();
+      print('🔄 Socket: Token refrescado, forzando reconexión...');
+      await forceReconnect();
+    } catch (e) {
+      _tokenRefreshInProgress = false;
+      print('❌ Socket: Error recuperando autenticación: $e');
+    } finally {
+      _authRecoveryInProgress = false;
+    }
   }
 
   /// Lista de eventos registrados para poder limpiarlos

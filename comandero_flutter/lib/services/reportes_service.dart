@@ -1,36 +1,33 @@
 import 'dart:io';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 import 'package:share_plus/share_plus.dart';
 import '../config/api_config.dart';
-import 'auth_storage.dart';
+import '../utils/date_utils.dart' as date_utils;
+import 'api_service.dart';
+
+/// YYYY-MM-DD del día calendario en CDMX (evita desfase al usar solo ISO UTC).
+String _ymdCdmxParaApi(DateTime d) {
+  final w = date_utils.AppDateUtils.toCdmxWallForReport(d);
+  return '${w.year}-${w.month.toString().padLeft(2, '0')}-${w.day.toString().padLeft(2, '0')}';
+}
 
 class ReportesService {
-  final AuthStorage _storage = AuthStorage();
-
-  Future<String?> _getAccessToken() async {
-    return await _storage.read('accessToken');
-  }
+  final ApiService _api = ApiService();
 
   /// Descarga un archivo (PDF o CSV) desde el backend
   Future<String?> _descargarArchivo(String url, String filename) async {
     try {
-      final token = await _getAccessToken();
-      final headers = <String, String>{
-        'Authorization': 'Bearer $token',
-      };
-
-      final response = await http.get(
-        Uri.parse(url),
-        headers: headers,
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200) {
+      final response = await _api.get(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      if (response.statusCode == 200 && response.data is List<int>) {
         // Guardar archivo en directorio temporal
         final directory = await getTemporaryDirectory();
         final file = File('${directory.path}/$filename');
-        await file.writeAsBytes(response.bodyBytes);
+        await file.writeAsBytes(response.data as List<int>);
         return file.path;
       }
 
@@ -69,8 +66,8 @@ class ReportesService {
     required DateTime fechaInicio,
     required DateTime fechaFin,
   }) async {
-    final fechaInicioStr = fechaInicio.toIso8601String().split('T')[0];
-    final fechaFinStr = fechaFin.toIso8601String().split('T')[0];
+    final fechaInicioStr = _ymdCdmxParaApi(fechaInicio);
+    final fechaFinStr = _ymdCdmxParaApi(fechaFin);
     final url =
         '${ApiConfig.baseUrl}/reportes/ventas/pdf?fechaInicio=$fechaInicioStr&fechaFin=$fechaFinStr';
     final filename = 'reporte-ventas-$fechaInicioStr-$fechaFinStr.pdf';
@@ -84,8 +81,8 @@ class ReportesService {
     required DateTime fechaInicio,
     required DateTime fechaFin,
   }) async {
-    final fechaInicioStr = fechaInicio.toIso8601String().split('T')[0];
-    final fechaFinStr = fechaFin.toIso8601String().split('T')[0];
+    final fechaInicioStr = _ymdCdmxParaApi(fechaInicio);
+    final fechaFinStr = _ymdCdmxParaApi(fechaFin);
     final url =
         '${ApiConfig.baseUrl}/reportes/ventas/csv?fechaInicio=$fechaInicioStr&fechaFin=$fechaFinStr';
     final filename = 'reporte-ventas-$fechaInicioStr-$fechaFinStr.csv';
@@ -100,8 +97,8 @@ class ReportesService {
     required DateTime fechaFin,
     int limite = 10,
   }) async {
-    final fechaInicioStr = fechaInicio.toIso8601String().split('T')[0];
-    final fechaFinStr = fechaFin.toIso8601String().split('T')[0];
+    final fechaInicioStr = _ymdCdmxParaApi(fechaInicio);
+    final fechaFinStr = _ymdCdmxParaApi(fechaFin);
     final url =
         '${ApiConfig.baseUrl}/reportes/top-productos/pdf?fechaInicio=$fechaInicioStr&fechaFin=$fechaFinStr&limite=$limite';
     final filename = 'top-productos-$fechaInicioStr-$fechaFinStr.pdf';
@@ -116,8 +113,8 @@ class ReportesService {
     required DateTime fechaFin,
     int limite = 10,
   }) async {
-    final fechaInicioStr = fechaInicio.toIso8601String().split('T')[0];
-    final fechaFinStr = fechaFin.toIso8601String().split('T')[0];
+    final fechaInicioStr = _ymdCdmxParaApi(fechaInicio);
+    final fechaFinStr = _ymdCdmxParaApi(fechaFin);
     final url =
         '${ApiConfig.baseUrl}/reportes/top-productos/csv?fechaInicio=$fechaInicioStr&fechaFin=$fechaFinStr&limite=$limite';
     final filename = 'top-productos-$fechaInicioStr-$fechaFinStr.csv';
@@ -131,7 +128,7 @@ class ReportesService {
     required DateTime fecha,
     int? cajeroId,
   }) async {
-    final fechaStr = fecha.toIso8601String().split('T')[0];
+    final fechaStr = _ymdCdmxParaApi(fecha);
     final url = cajeroId != null
         ? '${ApiConfig.baseUrl}/reportes/corte-caja/pdf?fecha=$fechaStr&cajeroId=$cajeroId'
         : '${ApiConfig.baseUrl}/reportes/corte-caja/pdf?fecha=$fechaStr';
@@ -146,7 +143,7 @@ class ReportesService {
     required DateTime fecha,
     int? cajeroId,
   }) async {
-    final fechaStr = fecha.toIso8601String().split('T')[0];
+    final fechaStr = _ymdCdmxParaApi(fecha);
     final url = cajeroId != null
         ? '${ApiConfig.baseUrl}/reportes/corte-caja/csv?fecha=$fechaStr&cajeroId=$cajeroId'
         : '${ApiConfig.baseUrl}/reportes/corte-caja/csv?fecha=$fechaStr';
@@ -161,8 +158,8 @@ class ReportesService {
     required DateTime fechaInicio,
     required DateTime fechaFin,
   }) async {
-    final fechaInicioStr = fechaInicio.toIso8601String().split('T')[0];
-    final fechaFinStr = fechaFin.toIso8601String().split('T')[0];
+    final fechaInicioStr = _ymdCdmxParaApi(fechaInicio);
+    final fechaFinStr = _ymdCdmxParaApi(fechaFin);
     final url =
         '${ApiConfig.baseUrl}/reportes/inventario/pdf?fechaInicio=$fechaInicioStr&fechaFin=$fechaFinStr';
     final filename = 'reporte-inventario-$fechaInicioStr-$fechaFinStr.pdf';
@@ -176,8 +173,8 @@ class ReportesService {
     required DateTime fechaInicio,
     required DateTime fechaFin,
   }) async {
-    final fechaInicioStr = fechaInicio.toIso8601String().split('T')[0];
-    final fechaFinStr = fechaFin.toIso8601String().split('T')[0];
+    final fechaInicioStr = _ymdCdmxParaApi(fechaInicio);
+    final fechaFinStr = _ymdCdmxParaApi(fechaFin);
     final url =
         '${ApiConfig.baseUrl}/reportes/inventario/csv?fechaInicio=$fechaInicioStr&fechaFin=$fechaFinStr';
     final filename = 'reporte-inventario-$fechaInicioStr-$fechaFinStr.csv';

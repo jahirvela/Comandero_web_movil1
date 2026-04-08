@@ -746,12 +746,14 @@ class _AdminWebAppState extends State<AdminWebApp> {
     bool isTablet,
     bool isDesktop,
   ) {
-    // Usar métricas basadas en tickets en lugar de órdenes
-    final localSales = controller.dailyLocalSales;
-    final takeawaySales = controller.dailyTakeawaySales;
-    final cashSales = controller.dailyCashSales;
-    final pendingPayment = controller.dailyPendingPayment;
-    final totalNet = controller.dailyTotalNet;
+    // Ventas por canal y método: pagos aplicados del día (misma fuente que caja).
+    final localSales = controller.todayLocalSales;
+    final takeawaySales = controller.todayTakeawaySales;
+    final cashSales = controller.todayCashSales;
+    final cardSales = controller.todayCardSales;
+    final transferSales = controller.todayTransferSales;
+    final pendingPayment = controller.pendingCollectionsTotal;
+    final totalNet = controller.todayTotalSales;
 
     return Card(
       elevation: 2,
@@ -777,13 +779,24 @@ class _AdminWebAppState extends State<AdminWebApp> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            Text(
+              'Montos por método desde pagos aplicados en BD. Pago mixto: efectivo y tarjeta se reparten; transferencias van por aparte.',
+              style: TextStyle(
+                fontSize: isDesktop ? 13.0 : 12.0,
+                color: AppColors.textSecondary,
+              ),
+            ),
             const SizedBox(height: 20),
             // Tarjetas de consumo
             LayoutBuilder(
               builder: (context, constraints) {
                 if (constraints.maxWidth > 1000) {
-                  return Row(
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      Row(
+                        children: [
                       Expanded(
                         child: _buildConsumptionCard(
                           'Ventas en Local',
@@ -791,7 +804,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.green.shade700,
                           isTablet,
                           isDesktop,
-                          subtitle: '${controller.dailyLocalOrdersCount} ${controller.dailyLocalOrdersCount == 1 ? 'orden' : 'órdenes'}',
+                          subtitle: '${controller.todayLocalOrdersCount} ${controller.todayLocalOrdersCount == 1 ? 'pago' : 'pagos'}',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -802,6 +815,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.blue.shade700,
                           isTablet,
                           isDesktop,
+                          subtitle: '${controller.todayTakeawayOrdersCount} ${controller.todayTakeawayOrdersCount == 1 ? 'pago' : 'pagos'}',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -812,7 +826,33 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.yellow.shade700,
                           isTablet,
                           isDesktop,
-                          subtitle: 'Incluye pagos mixtos',
+                          subtitle: 'Efectivo + parte efectivo de mixto',
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildConsumptionCard(
+                          'Ventas Tarjeta',
+                          '\$${cardSales.toStringAsFixed(2)}',
+                          Colors.deepOrange.shade700,
+                          isTablet,
+                          isDesktop,
+                          subtitle: 'Tarjeta + parte tarjeta de mixto',
+                        ),
+                      ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                      Expanded(
+                        child: _buildConsumptionCard(
+                          'Ventas Transferencia',
+                          '\$${transferSales.toStringAsFixed(2)}',
+                          Colors.teal.shade700,
+                          isTablet,
+                          isDesktop,
+                          subtitle: 'Solo transferencias',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -823,7 +863,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.pink.shade700,
                           isTablet,
                           isDesktop,
-                          subtitle: '${controller.dailyPendingTicketsCount} ${controller.dailyPendingTicketsCount == 1 ? 'ticket pendiente' : 'tickets pendientes'}',
+                          subtitle: '${controller.pendingCollectionsCount} ${controller.pendingCollectionsCount == 1 ? 'ticket pendiente' : 'tickets pendientes'}',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -834,8 +874,10 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           Colors.purple.shade700,
                           isTablet,
                           isDesktop,
-                          subtitle: 'Incluye efectivo y tarjeta',
+                          subtitle: 'Suma pagos aplicados (filtrado)',
                         ),
+                      ),
+                        ],
                       ),
                     ],
                   );
@@ -851,7 +893,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.green.shade700,
                               isTablet,
                               isDesktop,
-                              subtitle: '${controller.dailyLocalOrdersCount} ${controller.dailyLocalOrdersCount == 1 ? 'orden' : 'órdenes'}',
+                              subtitle: '${controller.todayLocalOrdersCount} ${controller.todayLocalOrdersCount == 1 ? 'pago' : 'pagos'}',
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -862,6 +904,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.blue.shade700,
                               isTablet,
                               isDesktop,
+                              subtitle: '${controller.todayTakeawayOrdersCount} ${controller.todayTakeawayOrdersCount == 1 ? 'pago' : 'pagos'}',
                             ),
                           ),
                         ],
@@ -876,7 +919,33 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.yellow.shade700,
                               isTablet,
                               isDesktop,
-                              subtitle: 'Incluye pagos mixtos',
+                              subtitle: 'Efectivo + parte efectivo de mixto',
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildConsumptionCard(
+                              'Ventas Tarjeta',
+                              '\$${cardSales.toStringAsFixed(2)}',
+                              Colors.deepOrange.shade700,
+                              isTablet,
+                              isDesktop,
+                              subtitle: 'Tarjeta + parte tarjeta de mixto',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildConsumptionCard(
+                              'Ventas Transferencia',
+                              '\$${transferSales.toStringAsFixed(2)}',
+                              Colors.teal.shade700,
+                              isTablet,
+                              isDesktop,
+                              subtitle: 'Solo transferencias',
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -887,7 +956,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                               Colors.pink.shade700,
                               isTablet,
                               isDesktop,
-                              subtitle: '${controller.dailyPendingTicketsCount} ${controller.dailyPendingTicketsCount == 1 ? 'ticket pendiente' : 'tickets pendientes'}',
+                              subtitle: '${controller.pendingCollectionsCount} ${controller.pendingCollectionsCount == 1 ? 'ticket pendiente' : 'tickets pendientes'}',
                             ),
                           ),
                         ],
@@ -899,7 +968,7 @@ class _AdminWebAppState extends State<AdminWebApp> {
                         Colors.purple.shade700,
                         isTablet,
                         isDesktop,
-                        subtitle: 'Incluye efectivo y tarjeta',
+                        subtitle: 'Suma pagos aplicados (filtrado)',
                       ),
                     ],
                   );

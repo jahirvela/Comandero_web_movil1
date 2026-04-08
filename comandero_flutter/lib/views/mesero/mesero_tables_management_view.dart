@@ -126,6 +126,9 @@ class MeseroTablesManagementView extends StatelessWidget {
                   children: [
                     TextFormField(
                       controller: nameOrNumberController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
                       decoration: const InputDecoration(
                         labelText: 'Nombre o número de Mesa *',
                         hintText: 'Ej: 1, Terraza, VIP 1',
@@ -145,6 +148,9 @@ class MeseroTablesManagementView extends StatelessWidget {
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: seatsController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
                       decoration: const InputDecoration(
                         labelText: 'Número de Asientos *',
                         border: OutlineInputBorder(),
@@ -287,6 +293,9 @@ class MeseroTablesManagementView extends StatelessWidget {
                   children: [
                     TextFormField(
                       controller: nameOrNumberController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
                       decoration: const InputDecoration(
                         labelText: 'Nombre o número de Mesa *',
                         hintText: 'Ej: 1, Terraza, VIP 1',
@@ -307,6 +316,9 @@ class MeseroTablesManagementView extends StatelessWidget {
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: seatsController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
                       decoration: const InputDecoration(
                         labelText: 'Asientos *',
                         border: OutlineInputBorder(),

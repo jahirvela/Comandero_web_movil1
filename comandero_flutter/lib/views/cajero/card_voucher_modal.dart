@@ -77,6 +77,10 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   final _authorizationCodeController = TextEditingController();
   final _last4DigitsController = TextEditingController();
   final _notesController = TextEditingController();
+  final _transactionFocus = FocusNode();
+  final _authorizationFocus = FocusNode();
+  final _last4Focus = FocusNode();
+  final _notesFocus = FocusNode();
   late DateTime _selectedDateTime;
   
   @override
@@ -89,6 +93,10 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
 
   @override
   void dispose() {
+    _transactionFocus.dispose();
+    _authorizationFocus.dispose();
+    _last4Focus.dispose();
+    _notesFocus.dispose();
     _transactionIdController.dispose();
     _authorizationCodeController.dispose();
     _last4DigitsController.dispose();
@@ -425,6 +433,9 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   Widget _buildTransactionField() {
     return TextFormField(
       controller: _transactionIdController,
+      focusNode: _transactionFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _authorizationFocus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'ID de transacción (voucher) *',
         hintText: 'Ej: 123456789012',
@@ -444,6 +455,9 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   Widget _buildAuthorizationField() {
     return TextFormField(
       controller: _authorizationCodeController,
+      focusNode: _authorizationFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _last4Focus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'Código de autorización (opcional)',
         hintText: 'Ej: 123456',
@@ -456,6 +470,9 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   Widget _buildLastDigitsField() {
     return TextFormField(
       controller: _last4DigitsController,
+      focusNode: _last4Focus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _notesFocus.requestFocus(),
       keyboardType: TextInputType.number,
       maxLength: 4,
       decoration: InputDecoration(
@@ -517,6 +534,9 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
   Widget _buildNotesField() {
     return TextFormField(
       controller: _notesController,
+      focusNode: _notesFocus,
+      textInputAction: TextInputAction.newline,
+      keyboardType: TextInputType.multiline,
       maxLines: 3,
       decoration: InputDecoration(
         labelText: 'Notas / Comentarios',

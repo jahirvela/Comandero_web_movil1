@@ -231,6 +231,8 @@ class _OrderHistoryViewState extends State<OrderHistoryView> {
       ),
       child: TextField(
         controller: _searchController,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => FocusScope.of(context).unfocus(),
         onChanged: (value) {
           setState(() {
             searchQuery = value;

@@ -46,6 +46,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   final _discountController = TextEditingController();
   final _tipController = TextEditingController();
   final _tipPercentageController = TextEditingController();
+  final _discountFocus = FocusNode();
+  final _tipAmtFocus = FocusNode();
+  final _tipPctFocus = FocusNode();
   bool _submitted = false;
 
   double get _originalBillTotal => widget.bill.calculatedTotal;
@@ -73,6 +76,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
 
   @override
   void dispose() {
+    _discountFocus.dispose();
+    _tipAmtFocus.dispose();
+    _tipPctFocus.dispose();
     for (final entry in _entries) {
       entry.dispose();
     }
@@ -178,6 +184,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   Widget _buildDiscountField(bool isTablet) {
     return TextFormField(
       controller: _discountController,
+      focusNode: _discountFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _tipAmtFocus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'Descuento global (%)',
         prefixIcon: const Icon(Icons.percent),
@@ -380,6 +389,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
         Expanded(
           child: TextFormField(
             controller: _tipController,
+            focusNode: _tipAmtFocus,
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (_) => _tipPctFocus.requestFocus(),
             decoration: InputDecoration(
               labelText: 'Propina global \$',
               prefixIcon: const Icon(Icons.volunteer_activism),
@@ -393,6 +405,10 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
         Expanded(
           child: TextFormField(
             controller: _tipPercentageController,
+            focusNode: _tipPctFocus,
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (_) =>
+                FocusScope.of(context).nextFocus(),
             decoration: InputDecoration(
               labelText: 'Propina global %',
               prefixIcon: const Icon(Icons.percent),
@@ -501,6 +517,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   Widget _buildAmountField(_MixedPaymentEntry entry) {
     return TextFormField(
       controller: entry.amountCtrl,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) =>
+          FocusScope.of(context).nextFocus(),
       decoration: InputDecoration(
         labelText: 'Monto *',
         prefixIcon: const Icon(Icons.attach_money),
@@ -554,6 +573,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
             const SizedBox(height: 12),
             TextFormField(
               controller: entry.referenceCtrl,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) =>
+                  FocusScope.of(context).nextFocus(),
               decoration: InputDecoration(
                 labelText: 'Referencia / voucher (opcional)',
                 prefixIcon: const Icon(Icons.receipt_long),
@@ -578,6 +600,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           children: [
             TextFormField(
               controller: entry.bankCtrl,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) =>
+                  FocusScope.of(context).nextFocus(),
               decoration: InputDecoration(
                 labelText: 'Banco (opcional)',
                 prefixIcon: const Icon(Icons.account_balance),
@@ -590,6 +615,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
             const SizedBox(height: 8),
             TextFormField(
               controller: entry.referenceCtrl,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) =>
+                  FocusScope.of(context).nextFocus(),
               decoration: InputDecoration(
                 labelText: 'Referencia / clave *',
                 prefixIcon: const Icon(Icons.link),
@@ -625,6 +653,8 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   Widget _buildNotesField(_MixedPaymentEntry entry) {
     return TextFormField(
       controller: entry.notesCtrl,
+      textInputAction: TextInputAction.newline,
+      keyboardType: TextInputType.multiline,
       decoration: InputDecoration(
         labelText: 'Observaciones (opcional)',
         prefixIcon: const Icon(Icons.note_alt_outlined),

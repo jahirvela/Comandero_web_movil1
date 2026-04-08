@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../services/auth_storage.dart';
-import 'package:dio/dio.dart';
 import '../models/captain_model.dart';
 import '../models/order_model.dart';
 import '../models/payment_model.dart';
@@ -11,14 +9,15 @@ import '../services/ordenes_service.dart';
 import '../services/pagos_service.dart';
 import '../services/bill_repository.dart';
 import '../services/kitchen_alerts_service.dart';
+import '../services/api_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 
 class CaptainController extends ChangeNotifier {
   final MesasService _mesasService = MesasService();
   final OrdenesService _ordenesService = OrdenesService();
-  final BillRepository _billRepository = BillRepository();
-  final AuthStorage _storage = AuthStorage();
+  final BillRepository _billRepository;
+  final ApiService _api = ApiService();
   KitchenAlertsService? _kitchenAlertsService;
   
   // Estado de las alertas
@@ -187,13 +186,13 @@ class CaptainController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error al cargar mesas: $e');
-      // Si falla, mantener lista vacía
-      _tables = [];
+      // Mantener último estado para evitar vaciado de UI por error transitorio.
       notifyListeners();
     }
   }
 
-  CaptainController() {
+  CaptainController({required BillRepository billRepository})
+      : _billRepository = billRepository {
     _initializeData();
     // Configurar Socket.IO después de un delay para asegurar que esté conectado
     Future.delayed(const Duration(milliseconds: 2000), () {
@@ -495,37 +494,33 @@ class CaptainController extends ChangeNotifier {
 
     // Escuchar eventos de pagos (para estadísticas y actualizar cuentas por cobrar)
     socketService.onPaymentCreated((data) {
-      try {
-        final billId = data['billId'] as String?;
-        if (billId != null) {
-          _billRepository.removeBill(billId);
-          _updateBillsList();
+      Future.microtask(() async {
+        try {
+          await _billRepository.loadBills();
+          loadRealStats();
+          notifyListeners();
+        } catch (e) {
+          print('Error al procesar pago creado en capitán: $e');
         }
-        loadRealStats();
-        notifyListeners();
-      } catch (e) {
-        print('Error al procesar pago creado en capitán: $e');
-      }
+      });
     });
-    
+
     // Escuchar cuando se envía una cuenta desde el mesero
     socketService.on('cuenta.enviada', (data) {
       try {
         print('📄 Capitán: Cuenta recibida en tiempo real');
-        // El BillRepository ya maneja esto automáticamente si está escuchando
-        // Solo necesitamos actualizar nuestra lista local
-        _updateBillsList();
-        notifyListeners();
+        Future.microtask(() async {
+          try {
+            await _billRepository.loadBills();
+            notifyListeners();
+          } catch (e) {
+            print('❌ Error al sincronizar cuentas en capitán: $e');
+          }
+        });
       } catch (e) {
         print('❌ Error al procesar cuenta enviada en capitán: $e');
       }
     });
-  }
-  
-  // Actualizar lista de bills desde el repositorio
-  void _updateBillsList() {
-    // El repositorio ya tiene las bills actualizadas, solo notificamos
-    notifyListeners();
   }
 
   void _initializeData() {
@@ -1015,19 +1010,8 @@ class CaptainController extends ChangeNotifier {
     try {
       final alertaIdInt = int.tryParse(alertId);
       if (alertaIdInt != null) {
-        final token = await _storage.read('accessToken');
-        if (token != null) {
-          final dio = Dio(BaseOptions(
-            baseUrl: ApiConfig.baseUrl,
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          ));
-          
-          await dio.patch('/alertas/$alertaIdInt/leida');
-          print('✅ Capitán: Alerta $alertId marcada como leída en BD');
-        }
+        await _api.patch('/alertas/$alertaIdInt/leida');
+        print('✅ Capitán: Alerta $alertId marcada como leída en BD');
       }
     } catch (e) {
       print('⚠️ Capitán: Error al marcar alerta como leída (continuando): $e');
@@ -1048,19 +1032,8 @@ class CaptainController extends ChangeNotifier {
     
     // Marcar todas las alertas como leídas en el backend
     try {
-      final token = await _storage.read('accessToken');
-      if (token != null) {
-        final dio = Dio(BaseOptions(
-          baseUrl: ApiConfig.baseUrl,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-        ));
-        
-        await dio.post('/alertas/marcar-todas-leidas');
-        print('✅ Capitán: Todas las alertas marcadas como leídas en BD');
-      }
+      await _api.post('/alertas/marcar-todas-leidas');
+      print('✅ Capitán: Todas las alertas marcadas como leídas en BD');
     } catch (e) {
       print('⚠️ Capitán: Error al marcar todas las alertas como leídas (continuando): $e');
       // Continuar aunque falle
@@ -1079,20 +1052,8 @@ class CaptainController extends ChangeNotifier {
   Future<void> _loadPendingAlerts() async {
     try {
       print('📥 Capitán: Cargando alertas pendientes desde la BD...');
-      
-      final dio = Dio(BaseOptions(
-        baseUrl: ApiConfig.baseUrl,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      ));
-      
-      final token = await _storage.read('accessToken');
-      if (token != null) {
-        dio.options.headers['Authorization'] = 'Bearer $token';
-      }
-      
-      final response = await dio.get('/alertas');
+
+      final response = await _api.get('/alertas');
       
       if (response.statusCode == 200) {
         final responseData = response.data;
@@ -1287,7 +1248,7 @@ class CaptainController extends ChangeNotifier {
       print('✅ Capitán: ${_activeOrders.length} órdenes activas cargadas');
     } catch (e) {
       print('❌ Capitán: Error al cargar órdenes: $e');
-      _activeOrders = [];
+      // Mantener órdenes ya cargadas para no vaciar vista ante fallo puntual.
       notifyListeners();
     }
   }

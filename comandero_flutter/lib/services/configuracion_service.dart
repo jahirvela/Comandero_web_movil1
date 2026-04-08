@@ -1,7 +1,5 @@
 import 'package:dio/dio.dart';
-import '../config/api_config.dart';
 import 'api_service.dart';
-import 'auth_storage.dart';
 
 /// Tipo de conexión del cajón: por impresora térmica, por red (IP) o USB directo.
 enum CajonTipoConexion {
@@ -135,18 +133,12 @@ class ConfiguracionService {
   /// Obtener configuración actual. Cualquier rol autenticado puede leer.
   /// Usa timeout de 12s para que la pantalla no espere 45s si el servidor no responde.
   Future<ConfiguracionModel> getConfiguracion() async {
-    final token = await AuthStorage().read('accessToken');
-    final dio = Dio(BaseOptions(
-      baseUrl: ApiConfig.baseUrl,
-      connectTimeout: _configTimeout,
-      receiveTimeout: _configTimeout,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      },
-    ));
-    final response = await dio.get('/configuracion');
+    final response = await _api.get(
+      '/configuracion',
+      options: Options(
+        receiveTimeout: _configTimeout,
+      ),
+    );
     if (response.statusCode == 200 && response.data != null) {
       final data = response.data is Map ? response.data as Map<String, dynamic> : null;
       if (data != null) return ConfiguracionModel.fromJson(data);

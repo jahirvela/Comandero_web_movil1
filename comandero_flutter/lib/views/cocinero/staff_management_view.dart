@@ -1197,6 +1197,9 @@ class _StaffManagementViewState extends State<StaffManagementView> {
                   children: [
                     TextField(
                       controller: nameController,
+                      textInputAction: TextInputAction.next,
+                      onSubmitted: (_) =>
+                          FocusScope.of(dialogContext).nextFocus(),
                       decoration: const InputDecoration(
                         labelText: 'Nombre completo *',
                         border: OutlineInputBorder(),
@@ -1206,6 +1209,9 @@ class _StaffManagementViewState extends State<StaffManagementView> {
                     const SizedBox(height: 16),
                     TextField(
                       controller: phoneController,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) =>
+                          FocusScope.of(dialogContext).unfocus(),
                       keyboardType: TextInputType.phone,
                       decoration: const InputDecoration(
                         labelText: 'Teléfono de contacto *',

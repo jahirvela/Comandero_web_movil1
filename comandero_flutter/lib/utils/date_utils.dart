@@ -148,9 +148,8 @@ class AppDateUtils {
             // Parsear como hora local directamente
             try {
               parsedDate = DateTime.parse(fechaLimpia);
-              // Asegurar que sea hora local (no UTC)
               if (parsedDate.isUtc) {
-                parsedDate = parsedDate.toLocal();
+                parsedDate = _utcToCdmx(parsedDate);
               }
             } catch (e) {
               print('⚠️ AppDateUtils: Error al parsear fecha ISO: $fechaLimpia, error: $e');
@@ -210,70 +209,12 @@ class AppDateUtils {
   }
   
   /// Verifica si una fecha UTC está en horario de verano de CDMX
-  /// Horario de verano: aproximadamente de abril a octubre
+  /// CDMX (America/Mexico_City) actualmente no aplica horario de verano
+  /// en operación general; mantener false evita desfases de +1h en reportes.
   static bool _isDaylightSavingTime(DateTime utcDate) {
-    final year = utcDate.year;
-    final month = utcDate.month;
-    
-    // Reglas de horario de verano en México:
-    // - Comienza: primer domingo de abril a las 2:00 AM CDMX (8:00 AM UTC)
-    // - Termina: último domingo de octubre a las 2:00 AM CDMX (7:00 AM UTC el día anterior)
-    
-    if (month < 4 || month > 10) {
-      // Noviembre a marzo: definitivamente horario estándar
-      return false;
-    } else if (month > 4 && month < 10) {
-      // Mayo a septiembre: definitivamente horario de verano
-      return true;
-    } else if (month == 4) {
-      // Abril: verificar si ya pasó el primer domingo
-      final firstSunday = _getFirstSundayOfMonth(year, 4);
-      // 2:00 AM CDMX = 8:00 AM UTC (UTC-6) o 7:00 AM UTC (UTC-5)
-      // Usar 8:00 AM UTC como referencia (antes del cambio a horario de verano)
-      final dstStart = DateTime.utc(year, 4, firstSunday, 8);
-      return utcDate.isAfter(dstStart) || utcDate.isAtSameMomentAs(dstStart);
-    } else { // month == 10
-      // Octubre: verificar si aún no ha pasado el último domingo
-      final lastSunday = _getLastSundayOfMonth(year, 10);
-      // 2:00 AM CDMX = 7:00 AM UTC (antes del cambio de vuelta a estándar)
-      final dstEnd = DateTime.utc(year, 10, lastSunday, 7);
-      return utcDate.isBefore(dstEnd);
-    }
+    return false;
   }
   
-  /// Obtiene el primer domingo de un mes
-  static int _getFirstSundayOfMonth(int year, int month) {
-    final firstDay = DateTime.utc(year, month, 1);
-    final weekday = firstDay.weekday; // 1 = lunes, 7 = domingo
-    // Calcular días hasta el primer domingo
-    // Si es domingo (7), el primer domingo es el día 1
-    // Si es lunes (1), el primer domingo es el día 7
-    // Si es martes (2), el primer domingo es el día 6
-    // etc.
-    if (weekday == 7) {
-      return 1; // El día 1 es domingo
-    } else {
-      return 8 - weekday; // Días hasta el siguiente domingo
-    }
-  }
-  
-  /// Obtiene el último domingo de un mes
-  static int _getLastSundayOfMonth(int year, int month) {
-    // Obtener el último día del mes
-    final lastDay = DateTime.utc(year, month + 1, 0);
-    final weekday = lastDay.weekday; // 1 = lunes, 7 = domingo
-    // Retroceder hasta el domingo
-    // Si es domingo (7), ese es el último domingo
-    // Si es lunes (1), retroceder 1 día
-    // Si es martes (2), retroceder 2 días
-    // etc.
-    if (weekday == 7) {
-      return lastDay.day; // El último día es domingo
-    } else {
-      return lastDay.day - weekday; // Retroceder hasta el domingo anterior
-    }
-  }
-
   /// Parsea una fecha del backend (UTC) y la convierte a la hora local del dispositivo.
   /// Útil para mostrar "Última actualización" y que coincida con la hora del sistema del usuario.
   static DateTime parseUtcToDeviceLocal(dynamic fecha) {
@@ -306,21 +247,27 @@ class AppDateUtils {
     return utcDate.toIso8601String();
   }
 
+  /// Reloj de pared en CDMX para mostrar y exportar (CSV/PDF, tickets).
+  /// Si [fecha] es UTC (p. ej. tras serialización), convierte con la misma
+  /// regla que [nowCdmx]; si ya es hora local/CDMX del parser, no se altera.
+  static DateTime toCdmxWallForReport(DateTime fecha) {
+    if (fecha.isUtc) return _utcToCdmx(fecha);
+    return fecha;
+  }
+
+  /// Mismo día calendario en CDMX (filtrar cierres u operaciones "de hoy").
+  static bool isSameCalendarDayCdmx(DateTime a, DateTime b) {
+    final ca = toCdmxWallForReport(a);
+    final cb = toCdmxWallForReport(b);
+    return ca.year == cb.year && ca.month == cb.month && ca.day == cb.day;
+  }
+
   /// Formatea una fecha para mostrar en la interfaz
   /// Formato: dd/MM/yyyy HH:mm
-  /// Siempre muestra la hora en zona local (CDMX)
+  /// Hora en CDMX cuando el instante viene en UTC; si ya es local/CDMX, sin cambio.
   static String formatDateTime(DateTime fecha) {
-    // Si la fecha es UTC, convertir a hora local del sistema
-    // Si ya es local, usar directamente
-    DateTime localDate;
-    if (fecha.isUtc) {
-      // Convertir de UTC a hora local del sistema
-      localDate = fecha.toLocal();
-    } else {
-      // Ya es hora local, usar directamente
-      localDate = fecha;
-    }
-    
+    final localDate = toCdmxWallForReport(fecha);
+
     final day = localDate.day.toString().padLeft(2, '0');
     final month = localDate.month.toString().padLeft(2, '0');
     final year = localDate.year;
@@ -331,9 +278,9 @@ class AppDateUtils {
   }
 
   /// Formatea fecha y hora con AM/PM (ej: 13/03/2026 8:30 PM).
-  /// Usa hora local; para reportes y tickets evita confusiones de zona horaria.
+  /// CDMX cuando el instante es UTC; coherente con [nowCdmx] y cierres de caja.
   static String formatDateTimeWithAmPm(DateTime fecha) {
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     final day = localDate.day.toString().padLeft(2, '0');
     final month = localDate.month.toString().padLeft(2, '0');
     final year = localDate.year;
@@ -350,8 +297,7 @@ class AppDateUtils {
   /// Formatea solo la fecha (sin hora)
   /// Formato: dd/MM/yyyy
   static String formatDate(DateTime fecha) {
-    // Asegurar que la fecha esté en hora local
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     
     final day = localDate.day.toString().padLeft(2, '0');
     final month = localDate.month.toString().padLeft(2, '0');
@@ -363,8 +309,7 @@ class AppDateUtils {
   /// Formatea solo la hora
   /// Formato: HH:mm
   static String formatTime(DateTime fecha) {
-    // Asegurar que la fecha esté en hora local
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     
     final hour = localDate.hour.toString().padLeft(2, '0');
     final minute = localDate.minute.toString().padLeft(2, '0');
@@ -375,8 +320,7 @@ class AppDateUtils {
   /// Formatea la hora con segundos
   /// Formato: HH:mm:ss
   static String formatTimeWithSeconds(DateTime fecha) {
-    // Asegurar que la fecha esté en hora local
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     
     final hour = localDate.hour.toString().padLeft(2, '0');
     final minute = localDate.minute.toString().padLeft(2, '0');
@@ -388,8 +332,7 @@ class AppDateUtils {
   /// Formatea fecha con nombre del día y mes
   /// Formato: Lunes 15 de Enero 2024
   static String formatDateLong(DateTime fecha) {
-    // Asegurar que la fecha esté en hora local
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     
     final diasSemana = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     final meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
@@ -404,8 +347,7 @@ class AppDateUtils {
   /// Formatea fecha con nombre del mes corto
   /// Formato: 15 Ene 2024
   static String formatDateShort(DateTime fecha) {
-    // Asegurar que la fecha esté en hora local
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     
     final meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 
                    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -420,7 +362,7 @@ class AppDateUtils {
   /// IMPORTANTE: Usa hora CDMX para cálculos precisos
   static String getTimeAgo(DateTime fecha) {
     final now = AppDateUtils.nowCdmx();
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     final difference = now.difference(localDate);
 
     if (difference.isNegative) {
@@ -447,10 +389,10 @@ class AppDateUtils {
 
   /// Formato corto unificado para "hace cuánto" en toda la app.
   /// Evita mostrar "1260 min"; convierte a "Hace 21 h" o "Hace X días".
-  /// Usa [now] como referencia (default DateTime.now() para consistencia).
+  /// Usa [now] como referencia (default [nowCdmx] para operación en CDMX).
   static String formatTimeAgoShort(DateTime from, {DateTime? now}) {
-    final n = now ?? DateTime.now();
-    final localFrom = from.isUtc ? from.toLocal() : from;
+    final n = now ?? nowCdmx();
+    final localFrom = toCdmxWallForReport(from);
     final diff = n.difference(localFrom);
     if (diff.isNegative || diff.inSeconds < 60) return 'Recién';
     if (diff.inMinutes < 60) return 'Hace ${diff.inMinutes} min';
@@ -475,33 +417,32 @@ class AppDateUtils {
 
   /// Verifica si una fecha es de hoy (en zona CDMX)
   static bool isToday(DateTime fecha) {
-    final now = AppDateUtils.nowCdmx();
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
-    return localDate.year == now.year && 
-           localDate.month == now.month && 
-           localDate.day == now.day;
+    return isSameCalendarDayCdmx(fecha, nowCdmx());
   }
 
   /// Verifica si una fecha es de ayer (en zona CDMX)
   static bool isYesterday(DateTime fecha) {
-    final now = AppDateUtils.nowCdmx();
-    final yesterday = now.subtract(const Duration(days: 1));
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
-    return localDate.year == yesterday.year && 
-           localDate.month == yesterday.month && 
-           localDate.day == yesterday.day;
+    final yesterday = nowCdmx().subtract(const Duration(days: 1));
+    return isSameCalendarDayCdmx(fecha, yesterday);
   }
 
-  /// Obtiene el inicio del día (00:00:00) en hora local
+  /// Inicio del día calendario (00:00:00) en componentes CDMX.
   static DateTime startOfDay(DateTime fecha) {
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
+    final localDate = toCdmxWallForReport(fecha);
     return DateTime(localDate.year, localDate.month, localDate.day);
   }
 
-  /// Obtiene el fin del día (23:59:59) en hora local
+  /// Fin del día calendario (23:59:59.999) en componentes CDMX.
   static DateTime endOfDay(DateTime fecha) {
-    final localDate = fecha.isUtc ? fecha.toLocal() : fecha;
-    return DateTime(localDate.year, localDate.month, localDate.day, 23, 59, 59, 999);
+    final localDate = toCdmxWallForReport(fecha);
+    return DateTime(
+      localDate.year,
+      localDate.month,
+      localDate.day,
+      23,
+      59,
+      59,
+      999,
+    );
   }
 }
-

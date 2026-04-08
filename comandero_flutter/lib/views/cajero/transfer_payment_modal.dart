@@ -49,6 +49,13 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   final _bankController = TextEditingController();
   final _referenceController = TextEditingController();
   final _notesController = TextEditingController();
+  final _discountFocus = FocusNode();
+  final _amountFocus = FocusNode();
+  final _bankFocus = FocusNode();
+  final _referenceFocus = FocusNode();
+  final _tipFocus = FocusNode();
+  final _tipPctFocus = FocusNode();
+  final _notesFocus = FocusNode();
 
   bool _submitted = false;
 
@@ -74,6 +81,13 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
 
   @override
   void dispose() {
+    _discountFocus.dispose();
+    _amountFocus.dispose();
+    _bankFocus.dispose();
+    _referenceFocus.dispose();
+    _tipFocus.dispose();
+    _tipPctFocus.dispose();
+    _notesFocus.dispose();
     _amountController.dispose();
     _discountController.dispose();
     _tipController.dispose();
@@ -314,6 +328,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   Widget _buildDiscountField(bool isTablet) {
     return TextFormField(
       controller: _discountController,
+      focusNode: _discountFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _amountFocus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'Descuento (%)',
         prefixIcon: const Icon(Icons.percent),
@@ -336,6 +353,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   Widget _buildAmountField(bool isTablet) {
     return TextFormField(
       controller: _amountController,
+      focusNode: _amountFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _bankFocus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'Monto *',
         prefixIcon: const Icon(Icons.attach_money),
@@ -360,6 +380,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   Widget _buildBankField(bool isTablet) {
     return TextFormField(
       controller: _bankController,
+      focusNode: _bankFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _referenceFocus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'Banco (opcional)',
         hintText: 'Ej. BBVA, Santander...',
@@ -375,6 +398,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   Widget _buildReferenceField(bool isTablet) {
     return TextFormField(
       controller: _referenceController,
+      focusNode: _referenceFocus,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => _tipFocus.requestFocus(),
       decoration: InputDecoration(
         labelText: 'Referencia / clave de rastreo *',
         prefixIcon: const Icon(Icons.link),
@@ -398,6 +424,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
         Expanded(
           child: TextFormField(
             controller: _tipController,
+            focusNode: _tipFocus,
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (_) => _tipPctFocus.requestFocus(),
             decoration: InputDecoration(
               labelText: 'Propina \$ (opcional)',
               prefixIcon: const Icon(Icons.volunteer_activism),
@@ -413,6 +442,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
         Expanded(
           child: TextFormField(
             controller: _tipPercentageController,
+            focusNode: _tipPctFocus,
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (_) => _notesFocus.requestFocus(),
             decoration: InputDecoration(
               labelText: 'Propina %',
               prefixIcon: const Icon(Icons.percent),
@@ -436,6 +468,9 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   Widget _buildNotesField(bool isTablet) {
     return TextFormField(
       controller: _notesController,
+      focusNode: _notesFocus,
+      textInputAction: TextInputAction.newline,
+      keyboardType: TextInputType.multiline,
       decoration: InputDecoration(
         labelText: 'Observaciones (opcional)',
         prefixIcon: const Icon(Icons.note_alt_outlined),

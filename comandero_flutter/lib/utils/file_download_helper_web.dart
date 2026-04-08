@@ -1,5 +1,6 @@
-import 'dart:html' as html;
 import 'dart:convert';
+import 'dart:html' as html;
+import 'dart:typed_data';
 
 /// Helper para descargar archivos en Flutter (Web)
 class FileDownloadHelper {
@@ -22,6 +23,20 @@ class FileDownloadHelper {
       html.Url.revokeObjectUrl(url);
     } catch (e) {
       throw Exception('Error al descargar archivo CSV: $e');
+    }
+  }
+
+  /// Descarga un PDF (bytes).
+  static Future<void> downloadPdf(Uint8List bytes, String filename) async {
+    try {
+      final blob = html.Blob([bytes], 'application/pdf');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      html.AnchorElement(href: url)
+        ..setAttribute('download', filename)
+        ..click();
+      html.Url.revokeObjectUrl(url);
+    } catch (e) {
+      throw Exception('Error al descargar PDF: $e');
     }
   }
 }

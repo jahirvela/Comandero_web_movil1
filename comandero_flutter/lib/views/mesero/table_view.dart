@@ -582,6 +582,8 @@ class TableView extends StatelessWidget {
             children: [
               TextField(
                 controller: quantityController,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => FocusScope.of(ctx).nextFocus(),
                 decoration: const InputDecoration(
                   labelText: 'Cantidad',
                   border: OutlineInputBorder(),
@@ -592,6 +594,8 @@ class TableView extends StatelessWidget {
               const SizedBox(height: 16),
               TextField(
                 controller: noteController,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => FocusScope.of(ctx).unfocus(),
                 decoration: const InputDecoration(
                   labelText: 'Nota (opcional)',
                   border: OutlineInputBorder(),
@@ -1483,6 +1487,8 @@ class TableView extends StatelessWidget {
             const SizedBox(height: 16),
             TextField(
               controller: customersController,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 labelText: 'Número de personas',

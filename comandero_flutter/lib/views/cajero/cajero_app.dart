@@ -673,6 +673,7 @@ class CajeroApp extends StatelessWidget {
         final efectivo = stats['totalCash'] ?? 0.0;
         final tarjetaDebito = stats['totalDebit'] ?? 0.0;
         final tarjetaCredito = stats['totalCredit'] ?? 0.0;
+        final transferencia = stats['totalTransfer'] ?? 0.0;
 
         return Card(
           elevation: 2,
@@ -751,51 +752,69 @@ class CajeroApp extends StatelessWidget {
                 LayoutBuilder(
                   builder: (context, constraints) {
                     if (constraints.maxWidth > 600) {
-                      return Row(
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(
-                            child: _buildConsumptionCard(
-                              'Ventas en Local',
-                              ventasLocal,
-                              Colors.green,
-                              isTablet,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Ventas en Local',
+                                  ventasLocal,
+                                  Colors.green,
+                                  isTablet,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Ventas Para llevar',
+                                  ventasParaLlevar,
+                                  Colors.blue,
+                                  isTablet,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Efectivo',
+                                  efectivo,
+                                  Colors.amber.shade700,
+                                  isTablet,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildConsumptionCard(
-                              'Ventas Para llevar',
-                              ventasParaLlevar,
-                              Colors.blue,
-                              isTablet,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildConsumptionCard(
-                              'Efectivo',
-                              efectivo,
-                              Colors.amber.shade700,
-                              isTablet,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildConsumptionCard(
-                              'Tarjeta Débito',
-                              tarjetaDebito,
-                              Colors.purple.shade300,
-                              isTablet,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildConsumptionCard(
-                              'Tarjeta Crédito',
-                              tarjetaCredito,
-                              Colors.purple.shade400,
-                              isTablet,
-                            ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Tarjeta Débito',
+                                  tarjetaDebito,
+                                  Colors.purple.shade300,
+                                  isTablet,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Tarjeta Crédito',
+                                  tarjetaCredito,
+                                  Colors.purple.shade400,
+                                  isTablet,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Transferencia',
+                                  transferencia,
+                                  Colors.teal.shade600,
+                                  isTablet,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       );
@@ -846,13 +865,26 @@ class CajeroApp extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 8),
-                          Expanded(
-                            child: _buildConsumptionCard(
-                              'Crédito',
-                              tarjetaCredito,
-                              Colors.purple.shade400,
-                              isTablet,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Crédito',
+                                  tarjetaCredito,
+                                  Colors.purple.shade400,
+                                  isTablet,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildConsumptionCard(
+                                  'Transferencia',
+                                  transferencia,
+                                  Colors.teal.shade600,
+                                  isTablet,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       );
@@ -2719,6 +2751,8 @@ class _CashOpenModalState extends State<_CashOpenModal> {
             const SizedBox(height: 24),
             TextFormField(
               controller: _efectivoInicialController,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(
                 labelText: 'Efectivo inicial *',
                 hintText: '5000',
@@ -2731,6 +2765,9 @@ class _CashOpenModalState extends State<_CashOpenModal> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _notaController,
+              textInputAction: TextInputAction.done,
+              keyboardType: TextInputType.multiline,
+              onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
               decoration: const InputDecoration(
                 labelText: 'Nota (opcional)',
                 prefixIcon: Icon(Icons.note),
@@ -2843,13 +2880,17 @@ class _CashCloseModalState extends State<_CashCloseModal> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      child: Container(
-        width: widget.isTablet ? 600 : double.infinity,
-        padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: widget.isTablet ? 600 : 520,
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -2921,6 +2962,8 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             // Campos del formulario
             TextFormField(
               controller: _efectivoContadoController,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(
                 labelText: 'Efectivo contado hoy *',
                 hintText: '5000',
@@ -2932,6 +2975,8 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _totalTarjetaController,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(
                 labelText: 'Total tarjeta *',
                 hintText: '2000',
@@ -2943,6 +2988,8 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _otrosIngresosController,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(
                 labelText: 'Otros ingresos',
                 hintText: '500',
@@ -2954,6 +3001,8 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _otrosIngresosTextoController,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(
                 labelText: 'Describe los otros ingresos (opcional)',
                 prefixIcon: Icon(Icons.description),
@@ -2962,6 +3011,9 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _notaCajeroController,
+              textInputAction: TextInputAction.done,
+              keyboardType: TextInputType.multiline,
+              onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
               decoration: const InputDecoration(
                 labelText: 'Nota (opcional)',
                 prefixIcon: Icon(Icons.note),
@@ -3097,7 +3149,8 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                 ),
               ],
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );
