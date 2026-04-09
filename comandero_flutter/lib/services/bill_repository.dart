@@ -43,7 +43,8 @@ double _totalOrdenDesdeMap(Map<String, dynamic> ordenData) {
   return (ordenData['total'] as num?)?.toDouble() ?? 0.0;
 }
 
-/// Cuenta liquidada en caja: solo si hay pagos **aplicados** que cubren el total (no basta el nombre de estado).
+/// Cuenta liquidada en caja: solo pagos **aplicados** que cubren el total.
+/// No basta el nombre de estado `pagada` en BD: el cajero debe ver el bill hasta que existan pagos.
 bool ordenLiquidadadaConPagos(
   Map<String, dynamic> ordenData,
   double pagadoAplicado,
@@ -159,7 +160,8 @@ class BillRepository extends ChangeNotifier {
         if (det != null) ordenPorId[id] = det;
       }
 
-      // Quitar cuentas pendientes solo si: cancelación, o TODAS las órdenes están pagadas al 100 %.
+      // Quitar cuentas pendientes solo si: cancelación, o TODAS las órdenes liquidadas
+      // con pagos aplicados (misma regla que producción: no basta estado "pagada" en BD).
       _bills.removeWhere((bill) {
         if (bill.status == BillStatus.pending) {
           final ids = _ordenIdsEnBill(bill);
@@ -175,15 +177,15 @@ class BillRepository extends ChangeNotifier {
             }
           }
 
-          final todasTotalmenteCobradas = ids.every((id) {
+          final todasLiquidadasConPagos = ids.every((id) {
             final od = ordenPorId[id];
             if (od == null) return false;
             final pag = pagadoPorOrden[id] ?? 0;
             return ordenLiquidadadaConPagos(od, pag);
           });
-          if (todasTotalmenteCobradas) {
+          if (todasLiquidadasConPagos) {
             print(
-              '🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Todas las órdenes cobradas al 100%',
+              '🗑️ BillRepository: Eliminando bill pendiente ${bill.id} - Liquidadas con pagos aplicados',
             );
             return true;
           }
@@ -312,7 +314,7 @@ class BillRepository extends ChangeNotifier {
         final pagadoAqui = pagadoPorOrden[ordenId] ?? 0;
         if (ordenLiquidadadaConPagos(ordenData, pagadoAqui)) {
           print(
-            '⏭️ BillRepository: Saltando orden $ordenId - Ya está cobrada al 100% (estado o pagos aplicados)',
+            '⏭️ BillRepository: Saltando orden $ordenId - Liquidada con pagos aplicados',
           );
           continue;
         }

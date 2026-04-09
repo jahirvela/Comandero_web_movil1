@@ -577,21 +577,28 @@ class MeseroController extends ChangeNotifier {
         '📋 Estados disponibles en backend: ${estados.map((e) => e['nombre']).toList()}',
       );
 
-      // Buscar estado "cerrada", "enviada", "cobrada" o similar
-      final estadoCerrada = estados.firstWhere((e) {
-        final nombre = (e['nombre'] as String?)?.toLowerCase() ?? '';
-        return nombre.contains('cerrada') ||
-            nombre.contains('enviada') ||
-            nombre.contains('cobrada') ||
-            nombre.contains('entregada') ||
-            nombre.contains('pagada');
-      }, orElse: () => {'id': null});
+      // Enviar cuenta al cajero ≠ cobrada: nunca usar estado "pagada" aquí (orden del catálogo
+      // podía hacer firstWhere caer en pagada y romper la vista del cajero). Prioridad explícita.
+      Map<String, dynamic>? estadoElegido;
+      final preferidos = ['cerrada', 'enviada', 'cobrada', 'entregada'];
+      for (final clave in preferidos) {
+        for (final e in estados) {
+          final map = e as Map<String, dynamic>;
+          final nombre = (map['nombre'] as String?)?.toLowerCase() ?? '';
+          if (nombre.contains(clave)) {
+            estadoElegido = map;
+            break;
+          }
+        }
+        if (estadoElegido != null) break;
+      }
 
-      final estadoId = estadoCerrada['id'] as int?;
+      final estadoId = estadoElegido?['id'] as int?;
       if (estadoId != null) {
         await _ordenesService.cambiarEstado(ordenId, estadoId);
+        final nombreEstado = estadoElegido!['nombre'] ?? '?';
         print(
-          '✅ Orden $ordenId marcada como "${estadoCerrada['nombre']}" en backend (ID: $estadoId)',
+          '✅ Orden $ordenId marcada como "$nombreEstado" en backend (ID: $estadoId)',
         );
         return true;
       } else {
