@@ -1157,11 +1157,17 @@ class _StaffManagementViewState extends State<StaffManagementView> {
         helpText: 'Seleccionar hora',
         cancelText: 'Cancelar',
         confirmText: 'Aceptar',
+        initialEntryMode: TimePickerEntryMode.dial,
         builder: (context, child) {
-          return Localizations.override(
+          if (child == null) return const SizedBox.shrink();
+          final localized = Localizations.override(
             context: context,
             locale: const Locale('es', 'MX'),
-            child: child!,
+            child: child,
+          );
+          return MediaQuery(
+            data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+            child: localized,
           );
         },
       );

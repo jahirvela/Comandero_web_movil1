@@ -120,6 +120,8 @@ class OrderItem {
   final String name;
   final int quantity;
   final String station;
+  /// Nombre legible de categoría/estación desde el backend (p. ej. "Cafetería").
+  final String stationLabel;
   final String notes;
 
   OrderItem({
@@ -127,6 +129,7 @@ class OrderItem {
     required this.name,
     required this.quantity,
     required this.station,
+    this.stationLabel = '',
     this.notes = '',
   });
 
@@ -136,6 +139,7 @@ class OrderItem {
       name: json['name'],
       quantity: json['quantity'],
       station: json['station'],
+      stationLabel: json['stationLabel'] as String? ?? '',
       notes: json['notes'] ?? '',
     );
   }
@@ -146,6 +150,7 @@ class OrderItem {
       'name': name,
       'quantity': quantity,
       'station': station,
+      'stationLabel': stationLabel,
       'notes': notes,
     };
   }
@@ -155,6 +160,7 @@ class OrderItem {
     String? name,
     int? quantity,
     String? station,
+    String? stationLabel,
     String? notes,
   }) {
     return OrderItem(
@@ -162,6 +168,7 @@ class OrderItem {
       name: name ?? this.name,
       quantity: quantity ?? this.quantity,
       station: station ?? this.station,
+      stationLabel: stationLabel ?? this.stationLabel,
       notes: notes ?? this.notes,
     );
   }
@@ -244,6 +251,25 @@ class KitchenStation {
   static const String consomes = 'consomes';
   static const String bebidas = 'bebidas';
 
+  /// Etiqueta para UI: prioriza el nombre de categoría del ítem; si no, claves fijas o texto legible.
+  static String displayLabelForOrderItem(OrderItem item) {
+    final raw = item.stationLabel.trim();
+    if (raw.isNotEmpty) return raw;
+    return getStationName(item.station);
+  }
+
+  static String _humanizeStationKey(String key) {
+    if (key.isEmpty) return 'Sin estación';
+    return key
+        .split('_')
+        .where((w) => w.isNotEmpty)
+        .map(
+          (w) =>
+              '${w[0].toUpperCase()}${w.length > 1 ? w.substring(1).toLowerCase() : ''}',
+        )
+        .join(' ');
+  }
+
   static String getStationName(String station) {
     switch (station) {
       case tacos:
@@ -253,7 +279,7 @@ class KitchenStation {
       case bebidas:
         return 'Bebidas';
       default:
-        return 'Sin estación';
+        return _humanizeStationKey(station);
     }
   }
 

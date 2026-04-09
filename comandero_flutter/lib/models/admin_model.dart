@@ -1241,6 +1241,11 @@ class CashCloseModel {
   final int? cierreId; // ID real del cierre en la BD (opcional, solo para manuales)
   final String? comentarioRevision; // Comentario del administrador al revisar (para aclaraciones/rechazos)
   final double efectivoInicial; // Efectivo inicial de la apertura de caja
+  /// `apertura` | `cierre` desde backend; null = legado (se infiere por montos).
+  final String? eventoTipo;
+  final String? turnoCodigo;
+  final String? turnoLabel;
+  final int? cajeroId;
 
   CashCloseModel({
     required this.id,
@@ -1264,6 +1269,10 @@ class CashCloseModel {
     this.cierreId,
     this.comentarioRevision,
     this.efectivoInicial = 0.0,
+    this.eventoTipo,
+    this.turnoCodigo,
+    this.turnoLabel,
+    this.cajeroId,
   });
 
   // Helper estático para parsear fechas
@@ -1297,6 +1306,10 @@ class CashCloseModel {
       cierreId: json['cierreId'] as int?,
       comentarioRevision: json['comentarioRevision'] as String?,
       efectivoInicial: (json['efectivoInicial'] as num?)?.toDouble() ?? 0.0,
+      eventoTipo: json['eventoTipo'] as String?,
+      turnoCodigo: json['turnoCodigo'] as String?,
+      turnoLabel: json['turnoLabel'] as String?,
+      cajeroId: (json['cajeroId'] as num?)?.toInt(),
     );
   }
 
@@ -1323,6 +1336,10 @@ class CashCloseModel {
       'cierreId': cierreId,
       'comentarioRevision': comentarioRevision,
       'efectivoInicial': efectivoInicial,
+      'eventoTipo': eventoTipo,
+      'turnoCodigo': turnoCodigo,
+      'turnoLabel': turnoLabel,
+      'cajeroId': cajeroId,
     };
   }
 
@@ -1348,6 +1365,10 @@ class CashCloseModel {
     int? cierreId,
     String? comentarioRevision,
     double? efectivoInicial,
+    String? eventoTipo,
+    String? turnoCodigo,
+    String? turnoLabel,
+    int? cajeroId,
   }) {
     return CashCloseModel(
       id: id ?? this.id,
@@ -1371,6 +1392,10 @@ class CashCloseModel {
       cierreId: cierreId ?? this.cierreId,
       comentarioRevision: comentarioRevision ?? this.comentarioRevision,
       efectivoInicial: efectivoInicial ?? this.efectivoInicial,
+      eventoTipo: eventoTipo ?? this.eventoTipo,
+      turnoCodigo: turnoCodigo ?? this.turnoCodigo,
+      turnoLabel: turnoLabel ?? this.turnoLabel,
+      cajeroId: cajeroId ?? this.cajeroId,
     );
   }
 }

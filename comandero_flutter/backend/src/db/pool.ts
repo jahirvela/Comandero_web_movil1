@@ -22,6 +22,23 @@ const rawPool = mysql.createPool({
 
 const UTC_SESSION = "SET time_zone = '+00:00'";
 
+const RETRYABLE_DB_ERRORS = new Set([
+  'ECONNRESET',
+  'PROTOCOL_CONNECTION_LOST',
+  'ETIMEDOUT',
+  'EPIPE',
+]);
+
+const isReadOnlySql = (sql: string): boolean => {
+  const normalized = sql.trim().toLowerCase();
+  return (
+    normalized.startsWith('select') ||
+    normalized.startsWith('show') ||
+    normalized.startsWith('describe') ||
+    normalized.startsWith('explain')
+  );
+};
+
 /**
  * Pool que fuerza cada conexión a usar UTC.
  * Así NOW() y CURRENT_TIMESTAMP en MySQL guardan hora UTC y la hora se muestra
@@ -42,12 +59,23 @@ export const pool = {
     sql: string,
     values?: any
   ): Promise<[T, mysql.FieldPacket[]]> => {
-    const conn = await rawPool.getConnection();
+    const run = async (): Promise<[T, mysql.FieldPacket[]]> => {
+      const conn = await rawPool.getConnection();
+      try {
+        await conn.query(UTC_SESSION);
+        return conn.query(sql, values) as Promise<[T, mysql.FieldPacket[]]>;
+      } finally {
+        conn.release();
+      }
+    };
     try {
-      await conn.query(UTC_SESSION);
-      return conn.query(sql, values) as Promise<[T, mysql.FieldPacket[]]>;
-    } finally {
-      conn.release();
+      return await run();
+    } catch (error: any) {
+      const canRetry =
+        isReadOnlySql(sql) && RETRYABLE_DB_ERRORS.has(String(error?.code ?? ''));
+      if (!canRetry) throw error;
+      logger.warn({ err: error, code: error?.code }, 'Reintentando query de lectura por error transitorio de conexión MySQL');
+      return run();
     }
   },
   execute: async <T extends mysql.RowDataPacket[] | ResultSetHeader>(

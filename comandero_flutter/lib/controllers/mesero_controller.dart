@@ -3714,6 +3714,7 @@ class MeseroController extends ChangeNotifier {
           id: billId,
           tableNumber: null, // null para órdenes "para llevar"
           ordenId: lastOrdenId,
+          ordenIds: ordenIdsList.isNotEmpty ? ordenIdsList : null,
           items: allBillItems,
           subtotal: totalConsumo,
           tax: 0.0,
@@ -4210,6 +4211,8 @@ class MeseroController extends ChangeNotifier {
           tableNumber: selectedTable.number,
           mesaCodigo: selectedTable.codigo,
           ordenId: lastOrdenId,
+          // Siempre lista explícita si hay órdenes (cajero/loadBills/restore usan effectiveOrdenIds).
+          ordenIds: ordenIdsList.isNotEmpty ? ordenIdsList : null,
           items: allBillItems, // Mantener items planos para compatibilidad
           subtotal: totalConsumo,
           tax: 0.0,

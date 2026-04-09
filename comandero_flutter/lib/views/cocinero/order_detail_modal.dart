@@ -321,7 +321,7 @@ class OrderDetailModal {
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
-              item.station,
+              KitchenStation.displayLabelForOrderItem(item),
               style: TextStyle(
                 fontSize: isTablet ? 12.0 : 10.0,
                 color: AppColors.textSecondary,

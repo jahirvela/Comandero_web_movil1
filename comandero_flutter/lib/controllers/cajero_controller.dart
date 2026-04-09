@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
@@ -15,6 +17,7 @@ import '../services/configuracion_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
+import '../utils/cash_session_utils.dart';
 
 /// Débito/crédito desde nombre de forma en BD (p. ej. `tarjeta_debito`).
 String? _cardMethodDesdeFormaPagoBackend(String? formaNombre) {
@@ -26,6 +29,11 @@ String? _cardMethodDesdeFormaPagoBackend(String? formaNombre) {
 }
 
 /// Respaldo cuando la forma es genérica "tarjeta" pero la referencia indica el tipo.
+bool _ordenCanceladaNombre(Map<String, dynamic> ordenData) {
+  final est = (ordenData['estadoNombre'] as String? ?? '').toLowerCase();
+  return est.contains('cancel');
+}
+
 String? _cardMethodDesdeReferencia(String? ref) {
   if (ref == null || ref.isEmpty) return null;
   final r = ref.toLowerCase();
@@ -183,13 +191,7 @@ class CajeroController extends ChangeNotifier {
 
     // Escuchar alertas de pago
     socketService.onAlertaPago((data) {
-      try {
-        // Recargar pagos cuando hay alertas
-        _payments = List.from(_paymentRepository.payments);
-        notifyListeners();
-      } catch (e) {
-        print('Error al procesar alerta de pago: $e');
-      }
+      unawaited(_loadPaymentsFromBackend());
     });
 
     // Escuchar alertas de caja
@@ -207,7 +209,7 @@ class CajeroController extends ChangeNotifier {
     socketService.onPaymentUpdated((data) {
       Future.microtask(() async {
         try {
-          _payments = List.from(_paymentRepository.payments);
+          await _loadPaymentsFromBackend();
           await _billRepository.loadBills();
           _bills = _billRepository.pendingBills;
           notifyListeners();
@@ -258,7 +260,7 @@ class CajeroController extends ChangeNotifier {
             '💳 Cajero: Pago creado recibido${ordenId != null ? ' - Orden $ordenId' : ''} — sincronizando cuentas',
           );
 
-          _payments = List.from(_paymentRepository.payments);
+          await _loadPaymentsFromBackend();
           await _billRepository.loadBills();
           _bills = _billRepository.pendingBills;
           notifyListeners();
@@ -401,95 +403,73 @@ class CajeroController extends ChangeNotifier {
         _ivaHabilitado = config.ivaHabilitado;
       } catch (_) {}
 
-      // Guardar las bills pendientes existentes antes de cargar
-      final billsPendientesExistentes = _bills
-          .where((b) => b.status == BillStatus.pending)
-          .toList();
+      // Fuente de verdad: repo compartido (mesero/gerente-mesero puede haber añadido cuentas sin pasar por _bills del cajero).
+      final billsPendientesExistentes =
+          List<BillModel>.from(_billRepository.pendingBills);
 
       // Cargar bills desde el backend (esto puede agregar nuevas, pero preservará las pendientes)
       await _billRepository.loadBills();
 
-      // Obtener todas las bills después de cargar
-      final todasLasBills = _billRepository.bills;
-
-      // CRÍTICO: Restaurar bills pendientes que fueron eliminadas incorrectamente
-      // PERO solo si las órdenes NO están pagadas O fueron creadas recientemente (enviadas al cajero)
-      // Esto asegura que las bills creadas vía cuenta.enviada no desaparezcan
-      // pero evita restaurar bills de órdenes ya cobradas anteriormente
+      // Restaurar bills pendientes quitadas por loadBills solo si **no** están liquidadas
+      // por pagos aplicados (todas las órdenes del bill). No usar solo el estado "pagada".
       int billsRestauradas = 0;
 
-      // Misma fuente que loadBills (incluye cerradas / por cobrar)
       final ordenesService = OrdenesService();
       final ordenes = await ordenesService.getOrdenesParaCajero();
-      final ahora = date_utils.AppDateUtils.nowCdmx();
+      final pagosRefresh = await PagosService().getPagos();
+      final pagadoMapRefresh = montoPagadoAplicadoPorOrden(pagosRefresh);
+
+      Map<String, dynamic>? ordenMapPorId(int id) {
+        for (final o in ordenes) {
+          if (o is! Map) continue;
+          final m = Map<String, dynamic>.from(o);
+          if ((m['id'] as num?)?.toInt() == id) return m;
+        }
+        return null;
+      }
 
       for (final billExistente in billsPendientesExistentes) {
-        // Verificar si la bill ya no existe en el repositorio
-        if (!todasLasBills.any((b) => b.id == billExistente.id)) {
-          // Verificar si la orden está pagada y fue creada hace más de 5 minutos
-          // (lo que indicaría que ya fue cobrada anteriormente, no recién enviada)
-          bool debeRestaurar = true;
-
-          if (billExistente.ordenId != null) {
-            final ordenData = ordenes.firstWhere(
-              (o) => o['id'] == billExistente.ordenId,
-              orElse: () => <String, dynamic>{},
-            );
-
-            if (ordenData.isNotEmpty) {
-              final estadoNombre =
-                  (ordenData['estadoNombre'] as String?)?.toLowerCase() ?? '';
-
-              if (estadoNombre.contains('pagada')) {
-                // Verificar cuándo fue creada la orden
-                final creadoEnStr = ordenData['creadoEn'] as String?;
-                if (creadoEnStr != null) {
-                  try {
-                    final creadoEn = date_utils.AppDateUtils.parseToLocal(
-                      creadoEnStr,
-                    );
-                    final diferenciaMinutos = ahora
-                        .difference(creadoEn)
-                        .inMinutes;
-
-                    // Si la orden fue creada hace más de 5 minutos y está pagada,
-                    // significa que ya fue cobrada anteriormente, NO restaurar
-                    if (diferenciaMinutos > 5) {
-                      debeRestaurar = false;
-                      print(
-                        '⚠️ Cajero: NO restaurando bill ${billExistente.id} - Orden ${billExistente.ordenId} pagada hace más de 5 minutos (fue cobrada anteriormente)',
-                      );
-                    } else {
-                      // Orden pagada pero creada recientemente, probablemente fue enviada al cajero
-                      print(
-                        '✅ Cajero: Restaurando bill ${billExistente.id} - Orden ${billExistente.ordenId} pagada pero creada recientemente (enviada al cajero)',
-                      );
-                    }
-                  } catch (e) {
-                    // Si no se puede parsear la fecha, restaurar por seguridad
-                    print(
-                      '⚠️ Cajero: No se pudo parsear fecha de orden ${billExistente.ordenId}, restaurando bill por seguridad',
-                    );
-                  }
-                } else {
-                  // Sin fecha de creación, NO restaurar si está pagada
-                  debeRestaurar = false;
-                  print(
-                    '⚠️ Cajero: NO restaurando bill ${billExistente.id} - Orden ${billExistente.ordenId} pagada sin fecha de creación',
-                  );
-                }
-              }
-            }
+        if (_billRepository.bills.any((b) => b.id == billExistente.id)) {
+          continue;
+        }
+        final ids = billExistente.effectiveOrdenIds;
+        // Sin IDs de orden no podemos comprobar liquidación en API: conservar la cuenta local.
+        if (ids.isEmpty) {
+          _billRepository.addBill(billExistente);
+          billsRestauradas++;
+          print(
+            '🔄 Cajero: Restaurando bill pendiente sin ordenIds resolubles: ${billExistente.id}',
+          );
+          continue;
+        }
+        var todasLiquidadas = true;
+        for (final oid in ids) {
+          final od = ordenMapPorId(oid);
+          if (od == null) {
+            // Fuera del listado (p. ej. límite API): no asumir cobrada
+            todasLiquidadas = false;
+            break;
           }
-
-          if (debeRestaurar) {
-            // Esta bill pendiente fue eliminada incorrectamente, restaurarla
-            _billRepository.addBill(billExistente);
-            billsRestauradas++;
-            print(
-              '🔄 Cajero: Restaurando bill pendiente eliminada: ${billExistente.id}',
-            );
+          if (_ordenCanceladaNombre(od)) {
+            continue;
           }
+          final pag = pagadoMapRefresh[oid] ?? 0.0;
+          if (!ordenLiquidadadaConPagos(od, pag)) {
+            todasLiquidadas = false;
+            break;
+          }
+        }
+
+        if (!todasLiquidadas) {
+          _billRepository.addBill(billExistente);
+          billsRestauradas++;
+          print(
+            '🔄 Cajero: Restaurando bill pendiente eliminada: ${billExistente.id}',
+          );
+        } else {
+          print(
+            '⚠️ Cajero: NO restaurando ${billExistente.id} — órdenes liquidadas por pagos aplicados',
+          );
         }
       }
 
@@ -525,6 +505,13 @@ class CajeroController extends ChangeNotifier {
 
   // Estado de los cierres de caja
   List<CashCloseModel> _cashClosures = [];
+  /// `diario` | `turnos` (configuración del negocio).
+  String _cajaModo = 'diario';
+  String get cajaModo => _cajaModo;
+  bool get cajaPorTurnos => _cajaModo == 'turnos';
+  List<CajaTurnoSlotModel> _cajaTurnos = [];
+  /// Turnos definidos en admin (si modo turnos y lista vacía, se usan valores por defecto al abrir caja).
+  List<CajaTurnoSlotModel> get cajaTurnos => _cajaTurnos;
 
   // Factura seleccionada
   BillModel? _selectedBill;
@@ -625,58 +612,113 @@ class CajeroController extends ChangeNotifier {
     }).toList();
   }
 
+  /// Número de mesa para mostrar (prioriza código legible, ej. "M12").
+  int? _tableNumberFromOrdenMap(Map<String, dynamic> orden) {
+    final codigo = orden['mesaCodigo']?.toString().trim();
+    if (codigo != null && codigo.isNotEmpty) {
+      final digits = RegExp(r'\d+').firstMatch(codigo);
+      if (digits != null) return int.tryParse(digits.group(0)!);
+    }
+    final mid = orden['mesaId'];
+    if (mid is int) return mid;
+    return int.tryParse(mid?.toString() ?? '');
+  }
+
+  /// Mapa ordenId → orden (una sola petición; evita N+1 y timeouts en historial).
+  Future<Map<int, Map<String, dynamic>>> _ordenesMapParaPagos() async {
+    final ordenesService = OrdenesService();
+    final raw = await ordenesService.getOrdenesParaCajero();
+    final map = <int, Map<String, dynamic>>{};
+    for (final o in raw) {
+      if (o is! Map) continue;
+      final m = Map<String, dynamic>.from(o);
+      final id = m['id'];
+      final oid = id is int ? id : int.tryParse(id?.toString() ?? '');
+      if (oid != null) map[oid] = m;
+    }
+    return map;
+  }
+
+  /// Recarga pagos desde el API (historial de cobros, resúmenes). Mismo flujo para cajero y gerente/cajero.
+  Future<void> reloadPaymentsFromBackend() => _loadPaymentsFromBackend();
+
   /// Carga los pagos desde el backend y actualiza el repositorio y _payments.
-  /// Enriquece con nombre del mesero (creadoPorNombre) y mesa desde la orden.
+  /// Enriquece con nombre del mesero y mesa desde caché de órdenes (sin N+1).
   Future<void> _loadPaymentsFromBackend() async {
     try {
       final pagosData = await _pagosService.getPagos();
+      final ordenById = await _ordenesMapParaPagos();
       final ordenesService = OrdenesService();
+      final neededOrdenIds = <int>{};
+      for (final pagoData in pagosData) {
+        if (pagoData is! Map) continue;
+        final row = Map<String, dynamic>.from(pagoData);
+        final oidRaw = row['ordenId'];
+        final oid = oidRaw is int ? oidRaw : int.tryParse(oidRaw?.toString() ?? '');
+        if (oid != null) neededOrdenIds.add(oid);
+      }
+      for (final oid in neededOrdenIds) {
+        if (ordenById.containsKey(oid)) continue;
+        try {
+          final o = await ordenesService.getOrden(oid);
+          if (o != null) ordenById[oid] = o;
+        } catch (_) {}
+      }
       final payments = <PaymentModel>[];
       for (final pagoData in pagosData) {
         try {
-          final ordenId = pagoData['ordenId'] as int?;
+          if (pagoData is! Map) continue;
+          final row = Map<String, dynamic>.from(pagoData);
+          final estado = (row['estado'] as String?)?.toLowerCase().trim() ?? '';
+          // Historial de cobros: solo pagos efectivamente aplicados.
+          if (estado != 'aplicado') continue;
+
+          final ordenIdRaw = row['ordenId'];
+          final ordenId = ordenIdRaw is int
+              ? ordenIdRaw
+              : int.tryParse(ordenIdRaw?.toString() ?? '');
+
           String? waiterName;
           int? tableNumber;
+          bool takeaway = false;
           if (ordenId != null) {
-            try {
-              final orden = await ordenesService.getOrden(ordenId);
-              if (orden != null) {
-                waiterName = (orden['creadoPorNombre'] as String?) ??
-                    (orden['creadoPorUsuarioNombre'] as String?);
-                final mesaId = orden['mesaId'];
-                if (mesaId != null) {
-                  tableNumber = mesaId is int ? mesaId : int.tryParse(mesaId.toString());
-                }
-              }
-            } catch (e) {
-              print('⚠️ Cajero: Error al obtener orden $ordenId: $e');
+            final orden = ordenById[ordenId];
+            if (orden != null) {
+              waiterName = (orden['creadoPorNombre'] as String?)?.trim().isNotEmpty == true
+                  ? orden['creadoPorNombre'] as String?
+                  : (orden['creadoPorUsuarioNombre'] as String?);
+              tableNumber = _tableNumberFromOrdenMap(orden);
+              final mid = orden['mesaId'];
+              takeaway = mid == null;
             }
           }
-          final formaPagoNombreRaw = pagoData['formaPagoNombre'] as String? ?? '';
+
+          final formaPagoNombreRaw = row['formaPagoNombre'] as String? ?? '';
           final formaPagoNombre = formaPagoNombreRaw.toLowerCase();
           String paymentType = 'cash';
           if (formaPagoNombre.contains('tarjeta') ||
               formaPagoNombre.contains('card')) {
             paymentType = 'card';
-          } else if (formaPagoNombre.contains('transfer')) {
+          } else if (formaPagoNombre.contains('transfer') ||
+              formaPagoNombre.contains('spei')) {
             paymentType = 'transfer';
           } else if (formaPagoNombre.contains('mixto') ||
               formaPagoNombre.contains('mixed')) {
             paymentType = 'mixed';
           }
-          final refStr = pagoData['referencia'] as String?;
+          final refStr = row['referencia'] as String?;
           String? cardMethod;
           if (paymentType == 'card') {
             cardMethod = _cardMethodDesdeFormaPagoBackend(formaPagoNombreRaw) ??
                 _cardMethodDesdeReferencia(refStr) ??
                 'debito';
           }
-          final fechaPago = pagoData['fechaPago'] ?? pagoData['creadoEn'];
+          final fechaPago = row['fechaPago'] ?? row['creadoEn'];
           final payment = PaymentModel(
-            id: pagoData['id'].toString(),
+            id: row['id'].toString(),
             type: paymentType,
-            totalAmount: (pagoData['monto'] as num?)?.toDouble() ?? 0.0,
-            billId: 'BILL-${ordenId ?? pagoData['id']}',
+            totalAmount: (row['monto'] as num?)?.toDouble() ?? 0.0,
+            billId: 'BILL-${ordenId ?? row['id']}',
             timestamp: date_utils.AppDateUtils.parseToLocal(fechaPago),
             cashierName: 'Sistema',
             ordenId: ordenId,
@@ -685,17 +727,19 @@ class CajeroController extends ChangeNotifier {
             cardMethod: cardMethod,
             reference: refStr,
             notes: refStr,
-            voucherPrinted:
-                (pagoData['estado'] as String?)?.toLowerCase() == 'aplicado',
+            voucherPrinted: estado == 'aplicado',
+            isTakeaway: takeaway,
           );
           payments.add(payment);
         } catch (e) {
-          print('⚠️ Cajero: Error al mapear pago ${pagoData['id']}: $e');
+          print('⚠️ Cajero: Error al mapear pago: $e');
         }
       }
+      payments.sort((a, b) => b.timestamp.compareTo(a.timestamp));
       _paymentRepository.addPayments(payments);
       _payments = List.from(_paymentRepository.payments);
       print('✅ Cajero: ${payments.length} pagos cargados desde backend');
+      notifyListeners();
     } catch (e) {
       print('❌ Cajero: Error al cargar pagos desde backend: $e');
     }
@@ -704,6 +748,17 @@ class CajeroController extends ChangeNotifier {
   // Cargar cierres de caja desde el backend
   Future<void> loadCashClosures() async {
     try {
+      try {
+        final cfg = await _configuracionService.getConfiguracion();
+        _cajaModo = cfg.caja.modo == 'turnos' ? 'turnos' : 'diario';
+        _cajaTurnos = cfg.caja.turnos.isNotEmpty
+            ? List<CajaTurnoSlotModel>.from(cfg.caja.turnos)
+            : (_cajaModo == 'turnos'
+                ? List<CajaTurnoSlotModel>.from(
+                    ConfiguracionCajaModel.turnosPorDefecto(),
+                  )
+                : <CajaTurnoSlotModel>[]);
+      } catch (_) {}
       print('🔄 Cajero: Cargando cierres de caja desde backend...');
       final cierresService = CierresService();
       // Cargar cierres de los últimos 7 días para asegurar que incluya la apertura de hoy
@@ -882,6 +937,7 @@ class CajeroController extends ChangeNotifier {
         ordenId: ordenId,
         waiterName: waiterNameForHistory,
         tableNumber: tableNumberForHistory,
+        isTakeaway: billForMeta?.isTakeaway ?? payment.isTakeaway,
       );
 
       // Preparar datos del pago para el backend
@@ -1010,6 +1066,7 @@ class CajeroController extends ChangeNotifier {
 
       // Actualizar repositorio local
       _paymentRepository.addPayment(paymentEnriched);
+      unawaited(_loadPaymentsFromBackend());
       
       // Solo eliminar el bill si keepBillOpen es false (último pago)
       if (!keepBillOpen) {
@@ -1203,6 +1260,8 @@ class CajeroController extends ChangeNotifier {
     required double efectivoInicial,
     String? nota,
     String? usuario,
+    String? turnoCodigo,
+    String? turnoLabel,
   }) async {
     try {
       print('💰 Cajero: Iniciando apertura de caja con efectivo inicial: $efectivoInicial');
@@ -1227,6 +1286,9 @@ class CajeroController extends ChangeNotifier {
         notaCajero: nota,
         auditLog: [],
         efectivoInicial: efectivoInicial,
+        eventoTipo: 'apertura',
+        turnoCodigo: turnoCodigo,
+        turnoLabel: turnoLabel,
       );
 
       print('💰 Cajero: Enviando apertura al backend...');
@@ -1289,15 +1351,118 @@ class CajeroController extends ChangeNotifier {
     }
   }
 
-  // Enviar cierre de caja
-  Future<void> sendCashClose(CashCloseModel cashClose) async {
+  bool _isSameOperationalDayCdmx(DateTime when, DateTime ref) {
+    return when.year == ref.year && when.month == ref.month && when.day == ref.day;
+  }
+
+  bool _isShiftCloseEvent(CashCloseModel c) => c.eventoTipo == 'cierre';
+  bool _isGeneralCloseEvent(CashCloseModel c) => c.eventoTipo == 'cierre_dia';
+
+  /// Cierre de turno real: no apertura (ni legada como `cierre`), ni fila calculada `calc-*`.
+  bool _isRealShiftCloseRecord(CashCloseModel c) {
+    if (c.eventoTipo != 'cierre') return false;
+    if (c.id.startsWith('calc-')) return false;
+    if (esAperturaCaja(c)) return false;
+    return true;
+  }
+
+  Future<bool> _shouldAutoCreateGeneralCloseAfterShift() async {
+    if (!cajaPorTurnos) return false;
+    if ((_cajaTurnos).isEmpty) return false;
+
+    final now = date_utils.AppDateUtils.nowCdmx();
+    final existingGeneral = _cashClosures.any(
+      (c) => _isGeneralCloseEvent(c) && _isSameOperationalDayCdmx(c.fecha, now),
+    );
+    if (existingGeneral) return false;
+
+    final todayShiftCloses = _cashClosures
+        .where((c) => _isRealShiftCloseRecord(c) && _isSameOperationalDayCdmx(c.fecha, now))
+        .toList();
+
+    final closedTurnCodes = todayShiftCloses
+        .map((c) => (c.turnoCodigo ?? '').trim())
+        .where((c) => c.isNotEmpty)
+        .toSet();
+
+    final expectedTurnCodes = _cajaTurnos
+        .map((t) => t.codigo.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet();
+
+    if (expectedTurnCodes.isEmpty) return false;
+    final completedAllTurns = expectedTurnCodes.every(closedTurnCodes.contains);
+    return completedAllTurns;
+  }
+
+  CashCloseModel _buildAutomaticGeneralClose({
+    required List<CashCloseModel> todayShiftCloses,
+    required String usuario,
+  }) {
+    final now = date_utils.AppDateUtils.nowCdmx();
+    final totalEfectivo = todayShiftCloses.fold<double>(0, (acc, c) => acc + c.efectivo);
+    final totalTarjeta = todayShiftCloses.fold<double>(0, (acc, c) => acc + c.tarjeta);
+    // total_pagos por turno es la fuente de verdad en BD; otrosIngresos al listar suele venir en 0.
+    final totalNetoTurnos =
+        todayShiftCloses.fold<double>(0, (acc, c) => acc + c.totalNeto);
+    var totalOtros = totalNetoTurnos - totalEfectivo - totalTarjeta;
+    if (totalOtros.abs() < 0.005) totalOtros = 0;
+
+    return CashCloseModel(
+      id: 'close_day_auto_${now.millisecondsSinceEpoch}',
+      fecha: now,
+      periodo: 'Día',
+      usuario: usuario,
+      totalNeto: totalNetoTurnos,
+      efectivo: totalEfectivo,
+      tarjeta: totalTarjeta,
+      propinasTarjeta: 0,
+      propinasEfectivo: 0,
+      pedidosParaLlevar: 0,
+      estado: CashCloseStatus.pending,
+      efectivoContado: totalEfectivo,
+      totalTarjeta: totalTarjeta,
+      otrosIngresos: totalOtros,
+      totalDeclarado: totalNetoTurnos,
+      notaCajero:
+          'Cierre general automático del día generado al cerrar el último turno.',
+      eventoTipo: 'cierre_dia',
+      turnoCodigo: 'dia',
+      turnoLabel: 'Cierre del día',
+      auditLog: [],
+    );
+  }
+
+  // Enviar cierre de caja. Retorna true si además se generó cierre general automático.
+  Future<bool> sendCashClose(CashCloseModel cashClose) async {
     try {
       final cierresService = CierresService();
       // Enviar al backend
       final cierreCreado = await cierresService.crearCierreCaja(cashClose);
       // Agregar a la lista local
       _cashClosures.insert(0, cierreCreado);
+      await loadCashClosures();
+
+      var autoGeneratedGeneralClose = false;
+      if (_isShiftCloseEvent(cierreCreado) &&
+          await _shouldAutoCreateGeneralCloseAfterShift()) {
+        final now = date_utils.AppDateUtils.nowCdmx();
+        final todayShiftCloses = _cashClosures
+            .where((c) => _isRealShiftCloseRecord(c) && _isSameOperationalDayCdmx(c.fecha, now))
+            .toList();
+        if (todayShiftCloses.isNotEmpty) {
+          final autoGeneral = _buildAutomaticGeneralClose(
+            todayShiftCloses: todayShiftCloses,
+            usuario: cierreCreado.usuario,
+          );
+          await cierresService.crearCierreCaja(autoGeneral);
+          await loadCashClosures();
+          autoGeneratedGeneralClose = true;
+        }
+      }
+
       notifyListeners();
+      return autoGeneratedGeneralClose;
     } catch (e) {
       print('Error al enviar cierre de caja: $e');
       // Aún así agregar localmente para que el usuario vea el cierre
@@ -1337,7 +1502,7 @@ class CajeroController extends ChangeNotifier {
       fechaReferencia = apertura.fecha;
     }
 
-    // Buscar el último cierre de caja con ventas del día (más reciente que la apertura)
+    // Buscar el último cierre de caja con ventas del día (mismo turno si aplica)
     final hoy = date_utils.AppDateUtils.nowCdmx();
     final cierresConVentas = _cashClosures.where((cierre) {
       final esHoy =
@@ -1347,6 +1512,12 @@ class CajeroController extends ChangeNotifier {
 
       // Verificar que sea un cierre con ventas (no una apertura)
       final esCierreConVentas = cierre.totalNeto > 0;
+
+      if (cajaPorTurnos && apertura != null) {
+        final ta = apertura.turnoCodigo ?? '';
+        final tc = cierre.turnoCodigo ?? '';
+        if (ta != tc) return false;
+      }
 
       return esHoy && esCierreConVentas;
     }).toList();
@@ -1502,6 +1673,16 @@ class CajeroController extends ChangeNotifier {
     return _bills.where((bill) => bill.status == BillStatus.paid).toList();
   }
 
+  /// Comparación de cobros por reloj de pared CDMX (evita listas vacías por zona del dispositivo).
+  bool _pagoEnRangoHistorial(
+    PaymentModel payment,
+    DateTime inicioWallInclusive,
+    DateTime finWallInclusive,
+  ) {
+    final t = date_utils.AppDateUtils.toCdmxWallForReport(payment.timestamp);
+    return !t.isBefore(inicioWallInclusive) && !t.isAfter(finWallInclusive);
+  }
+
   // Obtener historial completo de cobros (por período o rango personalizado)
   Map<String, dynamic> getCollectionHistory({
     String? periodo,
@@ -1509,74 +1690,96 @@ class CajeroController extends ChangeNotifier {
     DateTime? fechaFinCustom,
   }) {
     final now = date_utils.AppDateUtils.nowCdmx();
-    DateTime fechaInicio;
-    DateTime fechaFin = now;
+    final nw = date_utils.AppDateUtils.toCdmxWallForReport(now);
+    DateTime fechaInicioWall;
+    DateTime fechaFinWall;
 
-    // Determinar rango de fechas según el período
+    // Determinar rango en componentes CDMX (mismo criterio que reportes admin)
     switch (periodo) {
       case 'personalizado':
         if (fechaInicioCustom != null && fechaFinCustom != null) {
-          fechaInicio = DateTime(fechaInicioCustom.year, fechaInicioCustom.month, fechaInicioCustom.day);
-          fechaFin = DateTime(fechaFinCustom.year, fechaFinCustom.month, fechaFinCustom.day, 23, 59, 59, 999);
-          if (fechaFin.isBefore(fechaInicio)) {
-            final temp = fechaInicio;
-            fechaInicio = fechaFin;
-            fechaFin = DateTime(temp.year, temp.month, temp.day, 23, 59, 59, 999);
+          var a = DateTime(
+            fechaInicioCustom.year,
+            fechaInicioCustom.month,
+            fechaInicioCustom.day,
+          );
+          var b = DateTime(
+            fechaFinCustom.year,
+            fechaFinCustom.month,
+            fechaFinCustom.day,
+            23,
+            59,
+            59,
+            999,
+          );
+          if (b.isBefore(a)) {
+            final t = a;
+            a = DateTime(b.year, b.month, b.day);
+            b = DateTime(t.year, t.month, t.day, 23, 59, 59, 999);
           }
+          fechaInicioWall = a;
+          fechaFinWall = b;
         } else {
-          fechaInicio = DateTime(now.year, now.month, now.day);
+          fechaInicioWall = DateTime(nw.year, nw.month, nw.day);
+          fechaFinWall = DateTime(nw.year, nw.month, nw.day, 23, 59, 59, 999);
         }
         break;
       case 'ayer':
-        // Solo el día de ayer: desde 00:00 ayer hasta antes de 00:00 hoy
-        fechaInicio = DateTime(now.year, now.month, now.day - 1);
-        fechaFin = DateTime(now.year, now.month, now.day); // exclusivo: no incluir hoy
+        final hoy0 = DateTime(nw.year, nw.month, nw.day);
+        fechaInicioWall = hoy0.subtract(const Duration(days: 1));
+        fechaFinWall = DateTime(
+          fechaInicioWall.year,
+          fechaInicioWall.month,
+          fechaInicioWall.day,
+          23,
+          59,
+          59,
+          999,
+        );
         break;
       case 'semana':
-        // Últimos 7 días hasta ahora
-        fechaInicio = now.subtract(const Duration(days: 7));
+        // Semana calendario (lunes-domingo), no "últimos 7 días".
+        final hoy0 = DateTime(nw.year, nw.month, nw.day);
+        final inicioSemana = hoy0.subtract(Duration(days: hoy0.weekday - 1));
+        fechaInicioWall = inicioSemana;
+        fechaFinWall = DateTime(
+          inicioSemana.year,
+          inicioSemana.month,
+          inicioSemana.day + 6,
+          23,
+          59,
+          59,
+          999,
+        );
         break;
       case 'mes':
-        // Últimos 30 días (evita desborde de día/mes, ej. 31 mar -> feb)
-        fechaInicio = now.subtract(const Duration(days: 30));
+        // Mes calendario actual (1 al último día del mes), no "últimos 30 días".
+        fechaInicioWall = DateTime(nw.year, nw.month, 1);
+        fechaFinWall = DateTime(nw.year, nw.month + 1, 0, 23, 59, 59, 999);
         break;
       case 'hoy':
       default:
-        fechaInicio = DateTime(now.year, now.month, now.day);
-        // Para "hoy", buscar la última apertura de caja del día
+        fechaInicioWall = DateTime(nw.year, nw.month, nw.day);
+        fechaFinWall = DateTime(nw.year, nw.month, nw.day, 23, 59, 59, 999);
         final apertura = getTodayCashOpening();
-        if (apertura != null && apertura.fecha.isAfter(fechaInicio)) {
-          fechaInicio = apertura.fecha;
-        }
-        // Buscar el último cierre de caja con ventas del día
-        final cierresConVentas = _cashClosures.where((cierre) {
-          final esHoy =
-              cierre.fecha.year == now.year &&
-              cierre.fecha.month == now.month &&
-              cierre.fecha.day == now.day;
-          final esCierreConVentas = cierre.totalNeto > 0;
-          return esHoy && esCierreConVentas;
-        }).toList();
-        if (cierresConVentas.isNotEmpty) {
-          cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
-          final ultimoCierre = cierresConVentas.first;
-          if (ultimoCierre.fecha.isAfter(fechaInicio)) {
-            fechaInicio = ultimoCierre.fecha;
+        if (apertura != null) {
+          final ap = date_utils.AppDateUtils.toCdmxWallForReport(apertura.fecha);
+          if (ap.isAfter(fechaInicioWall)) {
+            fechaInicioWall = ap;
           }
         }
         break;
     }
 
-    // Filtrar pagos según el rango de fechas (inicio inclusivo)
-    final isAyer = periodo == 'ayer';
-    final filteredPayments = _payments.where((payment) {
-      final t = payment.timestamp;
-      final despuesOIgualInicio = !t.isBefore(fechaInicio);
-      if (!despuesOIgualInicio) return false;
-      // Ayer: fin exclusivo (antes de las 00:00 de hoy). Resto: fin inclusivo (hasta fechaFin).
-      if (isAyer) return t.isBefore(fechaFin);
-      return !t.isAfter(fechaFin);
-    }).toList();
+    final filteredPayments = _payments
+        .where(
+          (payment) => _pagoEnRangoHistorial(
+                payment,
+                fechaInicioWall,
+                fechaFinWall,
+              ),
+        )
+        .toList();
 
     // Agrupar por método de pago
     final efectivoPayments = <Map<String, dynamic>>[];
@@ -1600,7 +1803,9 @@ class CajeroController extends ChangeNotifier {
       final waiterName = payment.waiterName ?? bill?.waiterName;
       final mesaInfo = payment.tableNumber != null
           ? 'Mesa ${payment.tableNumber}'
-          : (bill?.isTakeaway == true ? 'Para llevar' : 'Para llevar');
+          : (payment.isTakeaway || bill?.isTakeaway == true
+              ? 'Para llevar'
+              : 'En local');
 
       final paymentInfo = {
         'id': payment.id,
@@ -1726,81 +1931,13 @@ class CajeroController extends ChangeNotifier {
   // Una apertura se identifica por: efectivoInicial > 0 y totalNeto = 0 (o muy bajo)
   // Nota: No usamos pedidosParaLlevar porque se mapea incorrectamente desde el backend (usa numeroOrdenes)
   CashCloseModel? getTodayCashOpening() {
-    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
-    final hoy = date_utils.AppDateUtils.now();
-    print('🔍 Cajero.getTodayCashOpening: Buscando apertura para hoy ${hoy.year}-${hoy.month}-${hoy.day} (hora: ${hoy.hour}:${hoy.minute})');
-    print('🔍 Cajero.getTodayCashOpening: Total de cierres cargados: ${_cashClosures.length}');
-    
-    // Buscar aperturas del día de hoy o del día anterior (para manejar zonas horarias)
-    // Una apertura es válida si fue creada hoy o si fue creada ayer después de las 6pm
-    final inicioHoy = DateTime(hoy.year, hoy.month, hoy.day);
-    final ayer = hoy.subtract(const Duration(days: 1));
-    final inicioAyer18h = DateTime(ayer.year, ayer.month, ayer.day, 18); // 6pm de ayer
-    
-    final aperturas = _cashClosures.where((cierre) {
-      // Verificar que sea del día de hoy (comparar año, mes y día)
-      final esHoy =
-          cierre.fecha.year == hoy.year &&
-          cierre.fecha.month == hoy.month &&
-          cierre.fecha.day == hoy.day;
-      
-      // También considerar como "hoy" si fue creado ayer después de las 6pm
-      // (esto maneja el caso de zonas horarias y cierres nocturnos)
-      final esAyerNoche = cierre.fecha.isAfter(inicioAyer18h) && cierre.fecha.isBefore(inicioHoy);
-
-      // Verificar que sea una apertura: tiene efectivo inicial y no tiene ventas significativas
-      // No usamos pedidosParaLlevar porque se mapea con numeroOrdenes del backend
-      final esApertura =
-          cierre.efectivoInicial > 0 &&
-          (cierre.totalNeto == 0 || cierre.totalNeto < 1.0);
-
-      print('🔍 Cajero.getTodayCashOpening: Cierre ${cierre.id} - Fecha: ${cierre.fecha.year}-${cierre.fecha.month}-${cierre.fecha.day} ${cierre.fecha.hour}:${cierre.fecha.minute}, esHoy: $esHoy, esAyerNoche: $esAyerNoche, efectivoInicial: ${cierre.efectivoInicial}, totalNeto: ${cierre.totalNeto}, esApertura: $esApertura');
-
-      return (esHoy || esAyerNoche) && esApertura;
-    }).toList();
-
-    // Retornar la más reciente (última apertura del día)
-    if (aperturas.isEmpty) return null;
-
-    aperturas.sort((a, b) => b.fecha.compareTo(a.fecha));
-    return aperturas.first;
+    return resolveActiveCashOpening(
+      _cashClosures,
+      modoTurnos: cajaPorTurnos,
+    );
   }
 
-  // Verificar si la caja está abierta hoy
-  bool isCashRegisterOpen() {
-    final apertura = getTodayCashOpening();
-    if (apertura == null) return false; // No hay apertura, caja cerrada
-
-    // Usar AppDateUtils.now() para asegurar que estamos comparando con la misma zona horaria
-    final hoy = date_utils.AppDateUtils.now();
-    // Buscar cierres de caja del día con ventas significativas (totalNeto > 0)
-    // que sean más recientes que la apertura
-    final cierresConVentas = _cashClosures.where((cierre) {
-      final esHoy =
-          cierre.fecha.year == hoy.year &&
-          cierre.fecha.month == hoy.month &&
-          cierre.fecha.day == hoy.day;
-
-      // Verificar que sea un cierre con ventas (no una apertura)
-      final esCierreConVentas =
-          cierre.totalNeto > 0 &&
-          cierre.fecha.isAfter(apertura.fecha); // Más reciente que la apertura
-
-      return esHoy && esCierreConVentas;
-    }).toList();
-
-    // Si hay un cierre con ventas más reciente que la apertura, la caja está cerrada
-    if (cierresConVentas.isNotEmpty) {
-      // Ordenar por fecha descendente para obtener el más reciente
-      cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
-      final cierreMasReciente = cierresConVentas.first;
-      // Si el cierre más reciente tiene ventas, la caja está cerrada
-      return cierreMasReciente.totalNeto <= 0;
-    }
-
-    // Si no hay cierres con ventas, la caja está abierta
-    return true;
-  }
+  bool isCashRegisterOpen() => getTodayCashOpening() != null;
 
   // Calcular cambio para pago en efectivo
   // Cambio = efectivo recibido - total (sin restar propina)
@@ -1900,6 +2037,14 @@ class CajeroController extends ChangeNotifier {
     return totalConIva - _subtotalFromTotalConIva(totalConIva);
   }
 
+  static String _csvTipoEventoCierre(CashCloseModel c) {
+    if (c.eventoTipo == 'apertura') return 'apertura';
+    if (c.eventoTipo == 'cierre') return 'cierre';
+    if (c.efectivoInicial > 0 && c.totalNeto < 1) return 'apertura';
+    if (c.totalNeto >= 1) return 'cierre';
+    return '';
+  }
+
   // Exportar cierres de caja a CSV
   Future<void> exportCashClosuresToCSV() async {
     try {
@@ -1926,11 +2071,11 @@ class CajeroController extends ChangeNotifier {
       // Encabezados (con columnas IVA cuando está habilitado)
       if (showIva) {
         csvLines.add(
-          'Fecha,Hora,Cajero,Subtotal,IVA (16%),Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+          'Fecha,Hora,Cajero,Tipo,Turno,Subtotal,IVA (16%),Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
         );
       } else {
         csvLines.add(
-          'Fecha,Hora,Cajero,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+          'Fecha,Hora,Cajero,Tipo,Turno,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
         );
       }
 
@@ -1944,6 +2089,9 @@ class CajeroController extends ChangeNotifier {
         final notas = (cierre.notaCajero ?? '')
             .replaceAll(',', ';')
             .replaceAll('\n', ' ');
+        final tipoStr = _csvTipoEventoCierre(cierre);
+        final turnoStr = (cierre.turnoLabel ?? cierre.turnoCodigo ?? '')
+            .replaceAll(',', ';');
 
         if (showIva) {
           final subtotal = _subtotalFromTotalConIva(cierre.totalNeto);
@@ -1953,6 +2101,8 @@ class CajeroController extends ChangeNotifier {
               fechaStr,
               horaStr,
               cierre.usuario,
+              tipoStr,
+              turnoStr,
               subtotal.toStringAsFixed(2),
               iva.toStringAsFixed(2),
               cierre.totalNeto.toStringAsFixed(2),
@@ -1971,6 +2121,8 @@ class CajeroController extends ChangeNotifier {
               fechaStr,
               horaStr,
               cierre.usuario,
+              tipoStr,
+              turnoStr,
               cierre.totalNeto.toStringAsFixed(2),
               cierre.efectivo.toStringAsFixed(2),
               cierre.tarjeta.toStringAsFixed(2),
@@ -2121,6 +2273,9 @@ class CajeroController extends ChangeNotifier {
                         pdf_widgets.Text(
                           'Fecha: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(apertura.fecha)}',
                         ),
+                        if (apertura.turnoLabel != null &&
+                            apertura.turnoLabel!.trim().isNotEmpty)
+                          pdf_widgets.Text('Turno: ${apertura.turnoLabel}'),
                         if (apertura.notaCajero != null &&
                             apertura.notaCajero!.isNotEmpty)
                           pdf_widgets.Text('Notas: ${apertura.notaCajero}'),
@@ -2248,6 +2403,24 @@ class CajeroController extends ChangeNotifier {
                                 ),
                               ),
                             ),
+                            pdf_widgets.Padding(
+                              padding: const pdf_widgets.EdgeInsets.all(5),
+                              child: pdf_widgets.Text(
+                                'Tipo',
+                                style: pdf_widgets.TextStyle(
+                                  fontWeight: pdf_widgets.FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            pdf_widgets.Padding(
+                              padding: const pdf_widgets.EdgeInsets.all(5),
+                              child: pdf_widgets.Text(
+                                'Turno',
+                                style: pdf_widgets.TextStyle(
+                                  fontWeight: pdf_widgets.FontWeight.bold,
+                                ),
+                              ),
+                            ),
                             if (_ivaHabilitado) ...[
                               pdf_widgets.Padding(
                                 padding: const pdf_widgets.EdgeInsets.all(5),
@@ -2325,6 +2498,25 @@ class CajeroController extends ChangeNotifier {
                                 padding: const pdf_widgets.EdgeInsets.all(5),
                                 child: pdf_widgets.Text(
                                   cierre.usuario,
+                                  style: const pdf_widgets.TextStyle(
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              ),
+                              pdf_widgets.Padding(
+                                padding: const pdf_widgets.EdgeInsets.all(5),
+                                child: pdf_widgets.Text(
+                                  _csvTipoEventoCierre(cierre),
+                                  style: const pdf_widgets.TextStyle(
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              ),
+                              pdf_widgets.Padding(
+                                padding: const pdf_widgets.EdgeInsets.all(5),
+                                child: pdf_widgets.Text(
+                                  (cierre.turnoLabel ?? cierre.turnoCodigo ?? '')
+                                      .trim(),
                                   style: const pdf_widgets.TextStyle(
                                     fontSize: 9,
                                   ),

@@ -445,4 +445,44 @@ class AppDateUtils {
       999,
     );
   }
+
+  /// Medianoche del día calendario CDMX como instante **UTC** (negocio en UTC-6 fijo).
+  static DateTime cdmxCalendarDayStartUtc(int year, int month, int day) {
+    return DateTime.utc(year, month, day, 6, 0, 0, 0);
+  }
+
+  /// Último milisegundo del día calendario CDMX como instante **UTC**.
+  static DateTime cdmxCalendarDayEndUtc(int year, int month, int day) {
+    return cdmxCalendarDayStartUtc(year, month, day)
+        .add(const Duration(days: 1))
+        .subtract(const Duration(milliseconds: 1));
+  }
+
+  /// Límites UTC del día calendario CDMX que contiene el reloj de pared [wall].
+  static ({DateTime startUtc, DateTime endUtc}) cdmxCalendarDayBoundsUtcFromWall(
+    DateTime wall,
+  ) {
+    final w = toCdmxWallForReport(wall);
+    final y = w.year;
+    final m = w.month;
+    final d = w.day;
+    return (
+      startUtc: cdmxCalendarDayStartUtc(y, m, d),
+      endUtc: cdmxCalendarDayEndUtc(y, m, d),
+    );
+  }
+
+  /// Convierte un instante descrito como reloj de pared CDMX (componentes) a UTC para el API.
+  static DateTime cdmxWallClockToUtc(DateTime wall) {
+    final w = toCdmxWallForReport(wall);
+    return DateTime.utc(
+      w.year,
+      w.month,
+      w.day,
+      w.hour,
+      w.minute,
+      w.second,
+      w.millisecond,
+    ).add(const Duration(hours: 6));
+  }
 }

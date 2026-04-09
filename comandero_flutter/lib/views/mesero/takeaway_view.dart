@@ -343,67 +343,103 @@ class _TakeawayViewState extends State<TakeawayView> {
               ],
             ),
             
-            // Botones de acción: Reimprimir comanda (cocina) + Enviar alerta y Cerrar cuenta (si aplica)
+            // Botones de acción: en pantallas estrechas ocupan todo el ancho y apilan; si no, Wrap.
             const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                // Reimprimir comanda (cocina) para esta orden
-                OutlinedButton.icon(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final narrow = constraints.maxWidth < 560;
+                final labelFs = isTablet ? 14.0 : 12.0;
+                final labelFsCompact = isTablet ? 13.0 : 11.0;
+                final padH = isTablet ? 14.0 : 10.0;
+                final padV = isTablet ? 10.0 : 8.0;
+
+                final reimprimir = OutlinedButton.icon(
                   onPressed: () => _reimprimirComanda(context, order, isTablet),
                   icon: Icon(Icons.receipt_long, size: isTablet ? 18.0 : 16.0),
                   label: Text(
-                    'Reimprimir comanda',
-                    style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
+                    narrow ? 'Reimprimir' : 'Reimprimir comanda',
+                    style: TextStyle(
+                      fontSize: narrow ? labelFsCompact : labelFs,
+                    ),
                   ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.primary,
                     side: BorderSide(color: AppColors.primary),
                     padding: EdgeInsets.symmetric(
-                      horizontal: isTablet ? 14.0 : 10.0,
-                      vertical: isTablet ? 10.0 : 8.0,
+                      horizontal: padH,
+                      vertical: padV,
                     ),
                   ),
-                ),
-                if (_canShowActions(rawStatus)) ...[
-                  const SizedBox(width: 8),
-                  // Botón de Enviar Alerta
-                  ElevatedButton.icon(
-                    onPressed: () => _showAlertModalForOrder(context, order),
-                    icon: const Icon(Icons.warning_amber_rounded),
-                    label: Text(
-                      'Enviar alerta',
-                      style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.warning,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isTablet ? 16.0 : 12.0,
-                        vertical: isTablet ? 10.0 : 8.0,
-                      ),
+                );
+
+                final enviarAlerta = ElevatedButton.icon(
+                  onPressed: () => _showAlertModalForOrder(context, order),
+                  icon: const Icon(Icons.warning_amber_rounded),
+                  label: Text(
+                    narrow ? 'Alerta' : 'Enviar alerta',
+                    style: TextStyle(
+                      fontSize: narrow ? labelFsCompact : labelFs,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  // Botón de Cerrar Cuenta
-                  ElevatedButton.icon(
-                    onPressed: () => _showCloseAccountDialog(context, order, controller, isTablet),
-                    icon: Icon(Icons.attach_money, size: isTablet ? 18.0 : 16.0),
-                    label: Text(
-                      'Cerrar Cuenta',
-                      style: TextStyle(fontSize: isTablet ? 14.0 : 12.0),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.success,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isTablet ? 16.0 : 12.0,
-                        vertical: isTablet ? 10.0 : 8.0,
-                      ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.warning,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 16.0 : 12.0,
+                      vertical: padV,
                     ),
                   ),
-                ],
-              ],
+                );
+
+                final cerrarCuenta = ElevatedButton.icon(
+                  onPressed: () =>
+                      _showCloseAccountDialog(context, order, controller, isTablet),
+                  icon: Icon(Icons.attach_money, size: isTablet ? 18.0 : 16.0),
+                  label: Text(
+                    narrow ? 'Cerrar cuenta' : 'Cerrar Cuenta',
+                    style: TextStyle(
+                      fontSize: narrow ? labelFsCompact : labelFs,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 16.0 : 12.0,
+                      vertical: padV,
+                    ),
+                  ),
+                );
+
+                if (!_canShowActions(rawStatus)) {
+                  return narrow
+                      ? SizedBox(width: double.infinity, child: reimprimir)
+                      : Align(
+                          alignment: Alignment.centerRight,
+                          child: reimprimir,
+                        );
+                }
+
+                if (narrow) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      reimprimir,
+                      SizedBox(height: isTablet ? 10.0 : 8.0),
+                      enviarAlerta,
+                      SizedBox(height: isTablet ? 10.0 : 8.0),
+                      cerrarCuenta,
+                    ],
+                  );
+                }
+
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: [reimprimir, enviarAlerta, cerrarCuenta],
+                );
+              },
             ),
           ],
         ),

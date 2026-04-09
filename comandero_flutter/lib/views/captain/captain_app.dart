@@ -14,6 +14,7 @@ import 'alert_to_kitchen_modal.dart';
 import '../../widgets/refresh_on_resume.dart';
 import '../../services/socket_service.dart';
 import '../../services/bill_repository.dart';
+import 'captain_cash_supervision_section.dart';
 
 /// Usa el mismo [BillRepository] que cajero/gerente para que las cuentas por cobrar no diverjan.
 class CaptainApp extends StatelessWidget {
@@ -50,6 +51,7 @@ class _CaptainAppBodyState extends State<_CaptainAppBody> {
     final captain = context.read<CaptainController>();
     await cocinero.loadOrders();
     await captain.loadTables();
+    await captain.loadCashSupervision();
 
     final socketService = SocketService();
     if (!socketService.isConnected) {
@@ -234,6 +236,9 @@ class _CaptainAppBodyState extends State<_CaptainAppBody> {
         children: [
           // Tarjetas de resumen
           _buildSummaryCards(captainController, isTablet),
+          const SizedBox(height: 24),
+
+          const CaptainCashSupervisionSection(),
           const SizedBox(height: 24),
 
           // Layout principal: Alertas a la izquierda, Órdenes/Cuentas a la derecha

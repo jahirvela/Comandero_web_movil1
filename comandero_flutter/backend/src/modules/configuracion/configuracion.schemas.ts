@@ -15,9 +15,22 @@ export const actualizarConfiguracionCajonSchema = z.object({
   device: z.string().max(255).nullable().optional(),
 });
 
+const turnoConfigSchema = z.object({
+  codigo: z.string().min(1).max(32),
+  nombre: z.string().min(1).max(80),
+  inicio: z.string().regex(/^\d{1,2}:\d{2}$/),
+  fin: z.string().regex(/^\d{1,2}:\d{2}$/),
+});
+
+export const actualizarConfiguracionCajaSchema = z.object({
+  modo: z.enum(['diario', 'turnos']).optional(),
+  turnos: z.array(turnoConfigSchema).max(8).optional(),
+});
+
 export const actualizarConfiguracionSchema = z.object({
   ivaHabilitado: z.boolean().optional(),
   cajon: actualizarConfiguracionCajonSchema.optional(),
+  caja: actualizarConfiguracionCajaSchema.optional(),
 });
 
 export type ActualizarConfiguracionBody = z.infer<typeof actualizarConfiguracionSchema>;

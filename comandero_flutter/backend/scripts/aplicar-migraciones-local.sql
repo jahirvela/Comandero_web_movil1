@@ -263,6 +263,131 @@ PREPARE stmt9 FROM @sql9;
 EXECUTE stmt9;
 DEALLOCATE PREPARE stmt9;
 
+-- -----------------------------------------------------------------------------
+-- 10) Caja por turnos y cierre del día: configuración, caja_cierre, índice fecha
+--     (idempotente: seguro ejecutar en local, QA y remoto vía npm run migrate:*)
+-- -----------------------------------------------------------------------------
+
+-- Quitar UNIQUE por fecha (varios cierres/aperturas el mismo día)
+SET @exist_ux := (SELECT COUNT(*) FROM information_schema.statistics
+               WHERE table_schema = DATABASE()
+               AND table_name = 'caja_cierre'
+               AND index_name = 'ux_caja_fecha');
+SET @sql_ux := IF(@exist_ux > 0,
+                   'ALTER TABLE caja_cierre DROP INDEX ux_caja_fecha',
+                   'SELECT 1');
+PREPARE stmt_ux FROM @sql_ux;
+EXECUTE stmt_ux;
+DEALLOCATE PREPARE stmt_ux;
+
+SET @exist_ixc := (SELECT COUNT(*) FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                AND table_name = 'caja_cierre'
+                AND index_name = 'ix_caja_fecha');
+SET @sql_ixc := IF(@exist_ixc = 0,
+                    'ALTER TABLE caja_cierre ADD INDEX ix_caja_fecha (fecha)',
+                    'SELECT 1');
+PREPARE stmt_ixc FROM @sql_ixc;
+EXECUTE stmt_ixc;
+DEALLOCATE PREPARE stmt_ixc;
+
+-- configuracion: modo caja y JSON de turnos
+SET @sql_caja_modo := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'configuracion' AND COLUMN_NAME = 'caja_modo') = 0,
+  'ALTER TABLE configuracion ADD COLUMN caja_modo VARCHAR(16) NOT NULL DEFAULT ''diario'' COMMENT ''diario | turnos'' AFTER iva_habilitado',
+  'SELECT 1'
+);
+PREPARE stmt_caja_modo FROM @sql_caja_modo;
+EXECUTE stmt_caja_modo;
+DEALLOCATE PREPARE stmt_caja_modo;
+
+SET @sql_caja_tj := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'configuracion' AND COLUMN_NAME = 'caja_turnos_json') = 0,
+  'ALTER TABLE configuracion ADD COLUMN caja_turnos_json JSON NULL COMMENT ''turnos {codigo,nombre,inicio,fin} CDMX'' AFTER caja_modo',
+  'SELECT 1'
+);
+PREPARE stmt_caja_tj FROM @sql_caja_tj;
+EXECUTE stmt_caja_tj;
+DEALLOCATE PREPARE stmt_caja_tj;
+
+-- caja_cierre: evento (apertura | cierre | cierre_dia), turno, otros ingresos declarados
+SET @sql_ev := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_cierre' AND COLUMN_NAME = 'evento_tipo') = 0,
+  'ALTER TABLE caja_cierre ADD COLUMN evento_tipo VARCHAR(24) NULL COMMENT ''apertura | cierre | cierre_dia'' AFTER comentario_revision',
+  'SELECT 1'
+);
+PREPARE stmt_ev FROM @sql_ev;
+EXECUTE stmt_ev;
+DEALLOCATE PREPARE stmt_ev;
+
+-- Si evento_tipo ya existía como VARCHAR(16), ampliar
+SET @ev_type := (SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_cierre' AND COLUMN_NAME = 'evento_tipo' LIMIT 1);
+SET @sql_ev_w := IF(@ev_type IS NOT NULL AND @ev_type LIKE 'varchar(16)%',
+  'ALTER TABLE caja_cierre MODIFY COLUMN evento_tipo VARCHAR(24) NULL COMMENT ''apertura | cierre | cierre_dia''',
+  'SELECT 1');
+PREPARE stmt_ev_w FROM @sql_ev_w;
+EXECUTE stmt_ev_w;
+DEALLOCATE PREPARE stmt_ev_w;
+
+SET @sql_tc := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_cierre' AND COLUMN_NAME = 'turno_codigo') = 0,
+  'ALTER TABLE caja_cierre ADD COLUMN turno_codigo VARCHAR(32) NULL AFTER evento_tipo',
+  'SELECT 1'
+);
+PREPARE stmt_tc FROM @sql_tc;
+EXECUTE stmt_tc;
+DEALLOCATE PREPARE stmt_tc;
+
+SET @sql_tl := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_cierre' AND COLUMN_NAME = 'turno_label') = 0,
+  'ALTER TABLE caja_cierre ADD COLUMN turno_label VARCHAR(120) NULL AFTER turno_codigo',
+  'SELECT 1'
+);
+PREPARE stmt_tl FROM @sql_tl;
+EXECUTE stmt_tl;
+DEALLOCATE PREPARE stmt_tl;
+
+SET @sql_oi := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_cierre' AND COLUMN_NAME = 'otros_ingresos') = 0,
+  'ALTER TABLE caja_cierre ADD COLUMN otros_ingresos DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER total_tarjeta',
+  'SELECT 1'
+);
+PREPARE stmt_oi FROM @sql_oi;
+EXECUTE stmt_oi;
+DEALLOCATE PREPARE stmt_oi;
+
+SET @sql_oit := IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_cierre' AND COLUMN_NAME = 'otros_ingresos_texto') = 0,
+  'ALTER TABLE caja_cierre ADD COLUMN otros_ingresos_texto VARCHAR(500) NULL AFTER otros_ingresos',
+  'SELECT 1'
+);
+PREPARE stmt_oit FROM @sql_oit;
+EXECUTE stmt_oit;
+DEALLOCATE PREPARE stmt_oit;
+
+-- Legado: clasificar filas sin evento_tipo
+UPDATE caja_cierre
+SET evento_tipo = 'apertura'
+WHERE (evento_tipo IS NULL OR evento_tipo = '')
+  AND COALESCE(efectivo_inicial, 0) > 0
+  AND (
+    total_pagos IS NULL
+    OR total_pagos < 1
+  )
+  AND COALESCE(total_efectivo, 0) + COALESCE(total_tarjeta, 0) < 1;
+
+UPDATE caja_cierre
+SET evento_tipo = 'cierre'
+WHERE evento_tipo IS NULL OR evento_tipo = '';
+
 -- =============================================================================
 -- Fin de migraciones. Reinicia el backend y prueba en local.
 -- =============================================================================

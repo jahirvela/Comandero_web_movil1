@@ -1816,7 +1816,7 @@ class CocineroApp extends StatelessWidget {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  KitchenStation.getStationName(item.station),
+                  KitchenStation.displayLabelForOrderItem(item),
                   style: TextStyle(
                     fontSize: isTablet ? 11.0 : 9.0,
                     color: AppColors.textSecondary,
@@ -2387,8 +2387,8 @@ class CocineroApp extends StatelessWidget {
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Text(
-                                      KitchenStation.getStationName(
-                                        item.station,
+                                      KitchenStation.displayLabelForOrderItem(
+                                        item,
                                       ),
                                       style: TextStyle(
                                         fontSize: isTablet ? 10.0 : 8.0,

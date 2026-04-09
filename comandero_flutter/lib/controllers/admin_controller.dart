@@ -224,6 +224,7 @@ class AdminController extends ChangeNotifier {
   // Configuración (IVA México CDMX y cajón de dinero)
   bool _ivaHabilitado = false;
   ConfiguracionCajonModel _configuracionCajon = ConfiguracionCajonModel();
+  ConfiguracionCajaModel _configuracionCaja = ConfiguracionCajaModel();
   bool _isSavingConfiguracion = false;
   String? _configuracionError;
 
@@ -304,6 +305,7 @@ class AdminController extends ChangeNotifier {
   List<OrderModel> get dailyConsumption => _dailyConsumption;
   bool get ivaHabilitado => _ivaHabilitado;
   ConfiguracionCajonModel get configuracionCajon => _configuracionCajon;
+  ConfiguracionCajaModel get configuracionCaja => _configuracionCaja;
   bool get isSavingConfiguracion => _isSavingConfiguracion;
   String? get configuracionError => _configuracionError;
   List<ImpresoraModel> get impresoras => _impresoras;
@@ -846,6 +848,7 @@ class AdminController extends ChangeNotifier {
       var config = await _configuracionService.getConfiguracion();
       _ivaHabilitado = config.ivaHabilitado;
       _configuracionCajon = config.cajon;
+      _configuracionCaja = config.caja;
       notifyListeners();
     } catch (e) {
       print('Error al cargar configuración (reintentando en 600ms): $e');
@@ -854,6 +857,7 @@ class AdminController extends ChangeNotifier {
         final config = await _configuracionService.getConfiguracion();
         _ivaHabilitado = config.ivaHabilitado;
         _configuracionCajon = config.cajon;
+        _configuracionCaja = config.caja;
         _configuracionError = null;
         notifyListeners();
       } catch (e2) {
@@ -861,8 +865,26 @@ class AdminController extends ChangeNotifier {
         _configuracionError = _mensajeAmigableConfig(e2);
         _ivaHabilitado = false;
         _configuracionCajon = ConfiguracionCajonModel();
+        _configuracionCaja = ConfiguracionCajaModel();
         notifyListeners();
       }
+    }
+  }
+
+  /// Actualizar configuración de caja (modo diario/turnos y turnos definidos).
+  Future<void> actualizarConfiguracionCaja(Map<String, dynamic> caja) async {
+    try {
+      _isSavingConfiguracion = true;
+      _configuracionError = null;
+      notifyListeners();
+      final config = await _configuracionService.actualizarConfiguracionCaja(caja);
+      _configuracionCaja = config.caja;
+    } catch (e) {
+      print('Error al actualizar configuración de caja: $e');
+      _configuracionError = _mensajeAmigableConfig(e);
+    } finally {
+      _isSavingConfiguracion = false;
+      notifyListeners();
     }
   }
 

@@ -12,13 +12,25 @@ import '../services/kitchen_alerts_service.dart';
 import '../services/api_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
+import '../utils/cash_session_utils.dart';
+import '../models/admin_model.dart';
+import '../services/cierres_service.dart';
+import '../services/configuracion_service.dart';
 
 class CaptainController extends ChangeNotifier {
   final MesasService _mesasService = MesasService();
   final OrdenesService _ordenesService = OrdenesService();
   final BillRepository _billRepository;
   final ApiService _api = ApiService();
+  final CierresService _cierresService = CierresService();
+  final ConfiguracionService _configuracionService = ConfiguracionService();
   KitchenAlertsService? _kitchenAlertsService;
+
+  /// Cierres/aperturas recientes (supervisión; mismo criterio de turnos que cajero).
+  List<CashCloseModel> _cashClosures = [];
+  bool _isLoadingCashSupervision = false;
+  String _cajaModo = 'diario';
+  List<CajaTurnoSlotModel> _cajaTurnos = [];
   
   // Estado de las alertas
   List<CaptainAlert> _alerts = [];
@@ -57,6 +69,61 @@ class CaptainController extends ChangeNotifier {
   String get selectedOrderStatus => _selectedOrderStatus;
   String get selectedPriority => _selectedPriority;
   List<BillModel> get pendingBills => _billRepository.pendingBills;
+
+  List<CashCloseModel> get cashClosures => _cashClosures;
+  bool get isLoadingCashSupervision => _isLoadingCashSupervision;
+  bool get cajaPorTurnos => _cajaModo == 'turnos';
+  List<CajaTurnoSlotModel> get cajaTurnos => _cajaTurnos;
+  String get cajaModoLabel => _cajaModo == 'turnos' ? 'Por turnos' : 'Diario';
+
+  /// Apertura vigente hoy (respeta modo por turnos).
+  CashCloseModel? get todayActiveCashOpening => resolveActiveCashOpening(
+        _cashClosures,
+        modoTurnos: cajaPorTurnos,
+      );
+
+  /// Eventos de caja del día (CDMX), más recientes primero.
+  List<CashCloseModel> get cashClosuresToday {
+    final hoy = date_utils.AppDateUtils.nowCdmx();
+    final list = _cashClosures
+        .where(
+          (c) => date_utils.AppDateUtils.isSameCalendarDayCdmx(c.fecha, hoy),
+        )
+        .toList();
+    list.sort((a, b) => b.fecha.compareTo(a.fecha));
+    return list;
+  }
+
+  /// Recarga configuración de caja + lista de cierres (capitán ve todos los cajeros).
+  Future<void> loadCashSupervision() async {
+    try {
+      _isLoadingCashSupervision = true;
+      notifyListeners();
+      try {
+        final cfg = await _configuracionService.getConfiguracion();
+        _cajaModo = cfg.caja.modo == 'turnos' ? 'turnos' : 'diario';
+        _cajaTurnos = cfg.caja.turnos.isNotEmpty
+            ? List<CajaTurnoSlotModel>.from(cfg.caja.turnos)
+            : (_cajaModo == 'turnos'
+                ? List<CajaTurnoSlotModel>.from(
+                    ConfiguracionCajaModel.turnosPorDefecto(),
+                  )
+                : <CajaTurnoSlotModel>[]);
+      } catch (_) {}
+      final ahora = date_utils.AppDateUtils.now();
+      final fechaInicio = ahora.subtract(const Duration(days: 7));
+      final cierres = await _cierresService.listarCierresCaja(
+        fechaInicio: fechaInicio,
+        fechaFin: ahora,
+      );
+      _cashClosures = cierres;
+    } catch (e) {
+      print('⚠️ Capitán: Error al cargar supervisión de caja: $e');
+    } finally {
+      _isLoadingCashSupervision = false;
+      notifyListeners();
+    }
+  }
 
   String _normalize(String value) {
     return value
@@ -521,13 +588,32 @@ class CaptainController extends ChangeNotifier {
         print('❌ Error al procesar cuenta enviada en capitán: $e');
       }
     });
+
+    socketService.onCashClosureCreated((dynamic _) {
+      try {
+        Future.microtask(() => loadCashSupervision());
+      } catch (e) {
+        print('Error al procesar cierre creado en capitán: $e');
+      }
+    });
+    socketService.onCashClosureUpdated((dynamic _) {
+      try {
+        Future.microtask(() => loadCashSupervision());
+      } catch (e) {
+        print('Error al procesar cierre actualizado en capitán: $e');
+      }
+    });
   }
 
   void _initializeData() {
     _billRepository.addListener(_onBillsChanged);
     _billRepository.loadBills();
 
-    Future.wait([loadTables(), loadActiveOrders()]).then((_) {
+    Future.wait([
+      loadTables(),
+      loadActiveOrders(),
+      loadCashSupervision(),
+    ]).then((_) {
       loadRealStats();
       notifyListeners();
     });

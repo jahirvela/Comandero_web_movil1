@@ -433,7 +433,41 @@ export const crearInsumo = async ({
         unidadContenido: unidadContenido?.trim() || null
       }
       );
-      return result.insertId;
+      const insertId = result.insertId;
+      // Kárdex: registrar entrada inicial sin volver a sumar stock (ya quedó en INSERT).
+      if (insertId > 0 && cantidadActual > 0) {
+        await conn.execute(
+          `
+          INSERT INTO movimiento_inventario (
+            inventario_item_id,
+            tipo,
+            cantidad,
+            costo_unitario,
+            motivo,
+            origen,
+            referencia_orden_id,
+            creado_por_usuario_id
+          )
+          VALUES (
+            :inventarioItemId,
+            'entrada',
+            :cantidad,
+            :costoUnitario,
+            :motivo,
+            NULL,
+            NULL,
+            NULL
+          )
+          `,
+          {
+            inventarioItemId: insertId,
+            cantidad: cantidadActual,
+            costoUnitario: costoUnitario ?? null,
+            motivo: 'Stock inicial (alta de insumo)'
+          }
+        );
+      }
+      return insertId;
     });
   } catch (error: any) {
     // Si la columna no existe después de intentar crearla, dar un error más claro
@@ -544,17 +578,8 @@ export const actualizarInsumo = async (
 };
 
 export const desactivarInsumo = async (id: number) => {
-  // Eliminar físicamente el registro para permitir recrear con el mismo nombre
-  // Primero eliminar referencias en movimiento_inventario
-  await pool.execute(
-    `
-    DELETE FROM movimiento_inventario
-    WHERE inventario_item_id = :id
-    `,
-    { id }
-  );
-  
-  // Eliminar referencias en producto_ingrediente (si existe la tabla)
+  // IMPORTANTE: preservar historial (kárdex). No borrar movimiento_inventario.
+  // Limpiar recetas relacionadas para evitar referencias activas a insumo inactivo.
   try {
     const [deleteResult] = await pool.execute<ResultSetHeader>(
       `
@@ -571,11 +596,17 @@ export const desactivarInsumo = async (id: number) => {
     // Si la tabla no existe o hay error, continuar
     console.warn('Error al eliminar referencias en producto_ingrediente:', error.message);
   }
-  
-  // Finalmente eliminar el registro del inventario
+
+  // Desactivar en vez de eliminar para mantener trazabilidad e historial de movimientos.
+  // Se renombra para liberar la restricción unique de nombre y permitir alta futura.
   await pool.execute(
     `
-    DELETE FROM inventario_item
+    UPDATE inventario_item
+    SET
+      activo = 0,
+      nombre = CONCAT(nombre, ' [INACTIVO-', id, ']'),
+      codigo_barras = NULL,
+      actualizado_en = NOW()
     WHERE id = :id
     `,
     { id }
@@ -718,10 +749,10 @@ export const listarMovimientos = async (params?: ListarMovimientosParams) => {
     `
     SELECT
       m.*,
-      i.nombre AS item_nombre,
-      i.unidad
+      COALESCE(i.nombre, CONCAT('Insumo #', m.inventario_item_id, ' (inactivo/eliminado)')) AS item_nombre,
+      COALESCE(i.unidad, '') AS unidad
     FROM movimiento_inventario m
-    JOIN inventario_item i ON i.id = m.inventario_item_id
+    LEFT JOIN inventario_item i ON i.id = m.inventario_item_id
     ${where}
     ORDER BY m.creado_en DESC
     LIMIT ${limit}

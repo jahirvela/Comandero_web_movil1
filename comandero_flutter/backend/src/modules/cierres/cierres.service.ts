@@ -33,6 +33,14 @@ export const crearNuevoCierreCaja = async (
     const totalPagos = input.totalPagos ?? (input.totalEfectivo ?? 0) + (input.totalTarjeta ?? 0) + (input.otrosIngresos ?? 0);
     const totalEfectivo = input.totalEfectivo ?? input.efectivoFinal ?? 0;
     const totalTarjeta = input.totalTarjeta ?? 0;
+    let eventoTipo: 'apertura' | 'cierre' | 'cierre_dia' = input.eventoTipo ?? 'cierre';
+    if (
+      input.eventoTipo == null &&
+      totalPagos < 0.01 &&
+      input.efectivoInicial > 0
+    ) {
+      eventoTipo = 'apertura';
+    }
 
     // La fecha viene parseada del schema, la convertimos a Date si es necesario
     const fechaParseada = input.fecha instanceof Date ? input.fecha : new Date(input.fecha);
@@ -48,11 +56,14 @@ export const crearNuevoCierreCaja = async (
       otrosIngresosTexto: input.otrosIngresosTexto ?? null,
       notaCajero: input.notaCajero ?? null,
       efectivoContado: input.efectivoContado ?? null,
-      totalDeclarado: input.totalDeclarado ?? null
+      totalDeclarado: input.totalDeclarado ?? null,
+      eventoTipo,
+      turnoCodigo: input.turnoCodigo ?? null,
+      turnoLabel: input.turnoLabel ?? null,
     };
 
     const cierre = await crearCierreCaja(cierreInput, usuarioId);
-    logger.info({ cierreId: cierre.id, usuarioId }, 'Cierre de caja creado exitosamente');
+    logger.info({ cierreId: cierre.cierreId ?? cierre.id, usuarioId }, 'Cierre de caja creado exitosamente');
     return cierre;
   } catch (error: any) {
     logger.error({ err: error }, 'Error al crear cierre de caja');

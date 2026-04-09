@@ -19,7 +19,8 @@ bool _pagoCuentaParaSaldo(dynamic p) {
   return e == 'aplicado';
 }
 
-Map<int, double> _montoPagadoAplicadoPorOrden(List<dynamic> pagos) {
+/// Suma de pagos con estado `aplicado` por orden (uso compartido cajero / repositorio).
+Map<int, double> montoPagadoAplicadoPorOrden(List<dynamic> pagos) {
   final acum = <int, double>{};
   for (final p in pagos) {
     if (!_pagoCuentaParaSaldo(p)) continue;
@@ -38,23 +39,16 @@ bool _ordenCancelada(Map<String, dynamic> ordenData) {
   return est.contains('cancel');
 }
 
-bool _ordenMarcadaPagada(Map<String, dynamic> ordenData) {
-  final est =
-      (ordenData['estadoNombre'] as String? ?? '').toLowerCase();
-  return est.contains('pagad');
-}
-
 double _totalOrdenDesdeMap(Map<String, dynamic> ordenData) {
   return (ordenData['total'] as num?)?.toDouble() ?? 0.0;
 }
 
-/// Cobrada al 100 %: estado pagada en BD o suma de pagos aplicados >= total de la orden.
-bool _ordenTotalmenteCobrada(
+/// Cuenta liquidada en caja: solo si hay pagos **aplicados** que cubren el total (no basta el nombre de estado).
+bool ordenLiquidadadaConPagos(
   Map<String, dynamic> ordenData,
   double pagadoAplicado,
 ) {
   if (_ordenCancelada(ordenData)) return false;
-  if (_ordenMarcadaPagada(ordenData)) return true;
   final total = _totalOrdenDesdeMap(ordenData);
   if (total <= 0.009) {
     return pagadoAplicado > 0.009;
@@ -118,8 +112,19 @@ class BillRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Cargar bills desde el backend (órdenes pendientes de pago)
-  Future<void> loadBills() async {
+  /// Evita carreras cuando [loadBills] se dispara en paralelo (p. ej. init cajero + post-frame refresh).
+  Future<void>? _loadBillsInFlight;
+
+  /// Cargar bills desde el backend (órdenes pendientes de pago)
+  Future<void> loadBills() {
+    if (_loadBillsInFlight != null) return _loadBillsInFlight!;
+    _loadBillsInFlight = _loadBillsInternal().whenComplete(() {
+      _loadBillsInFlight = null;
+    });
+    return _loadBillsInFlight!;
+  }
+
+  Future<void> _loadBillsInternal() async {
     try {
       // Para cajero: órdenes incluyendo "cerrada" (cuentas enviadas por mesero, por cobrar)
       final ordenesFut = _ordenesService.getOrdenesParaCajero();
@@ -127,7 +132,7 @@ class BillRepository extends ChangeNotifier {
       final ordenes = await ordenesFut;
       final pagos = await pagosFut;
 
-      final pagadoPorOrden = _montoPagadoAplicadoPorOrden(pagos);
+      final pagadoPorOrden = montoPagadoAplicadoPorOrden(pagos);
 
       // Índice id -> orden (lista cajero + detalle para ids que no vienen en listado, p. ej. pagada)
       final idsNecesarios = <int>{};
@@ -174,7 +179,7 @@ class BillRepository extends ChangeNotifier {
             final od = ordenPorId[id];
             if (od == null) return false;
             final pag = pagadoPorOrden[id] ?? 0;
-            return _ordenTotalmenteCobrada(od, pag);
+            return ordenLiquidadadaConPagos(od, pag);
           });
           if (todasTotalmenteCobradas) {
             print(
@@ -305,7 +310,7 @@ class BillRepository extends ChangeNotifier {
         }
 
         final pagadoAqui = pagadoPorOrden[ordenId] ?? 0;
-        if (_ordenTotalmenteCobrada(ordenData, pagadoAqui)) {
+        if (ordenLiquidadadaConPagos(ordenData, pagadoAqui)) {
           print(
             '⏭️ BillRepository: Saltando orden $ordenId - Ya está cobrada al 100% (estado o pagos aplicados)',
           );

@@ -3,6 +3,7 @@ import {
   obtenerConfiguracion,
   actualizarIvaHabilitado,
   actualizarConfiguracionCajon,
+  actualizarConfiguracionCaja,
 } from './configuracion.repository.js';
 import { actualizarConfiguracionSchema } from './configuracion.schemas.js';
 import {
@@ -21,12 +22,15 @@ export const patchConfiguracionController = async (req: Request, res: Response) 
   if (!parsed.success) {
     return res.status(400).json({ error: 'Datos inválidos', details: parsed.error.flatten() });
   }
-  const { ivaHabilitado, cajon } = parsed.data;
+  const { ivaHabilitado, cajon, caja } = parsed.data;
   if (ivaHabilitado !== undefined) {
     await actualizarIvaHabilitado(ivaHabilitado);
   }
   if (cajon !== undefined && Object.keys(cajon).length > 0) {
     await actualizarConfiguracionCajon(cajon);
+  }
+  if (caja !== undefined && Object.keys(caja).length > 0) {
+    await actualizarConfiguracionCaja(caja);
   }
   const config = await obtenerConfiguracion();
   res.json(config);

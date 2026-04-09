@@ -416,7 +416,7 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
                 const Icon(Icons.calendar_today, size: 20),
                 const SizedBox(width: 10),
                 Text(
-                  date_utils.AppDateUtils.formatDateTime(_selectedDateTime),
+                  _formatDateTimeDual(_selectedDateTime),
                   style: TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: widget.isTablet ? 14 : 12,
@@ -597,11 +597,17 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
       helpText: 'Seleccionar hora',
       cancelText: 'Cancelar',
       confirmText: 'Aceptar',
+      initialEntryMode: TimePickerEntryMode.dial,
       builder: (context, child) {
-        return Localizations.override(
+        if (child == null) return const SizedBox.shrink();
+        final localized = Localizations.override(
           context: context,
           locale: const Locale('es', 'MX'),
-          child: child!,
+          child: child,
+        );
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+          child: localized,
         );
       },
     );
@@ -619,6 +625,22 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
         time.minute,
       ); // Sin isUtc: true = hora local
     });
+  }
+
+  String _formatDateTimeDual(DateTime dateTime) {
+    final localDate = date_utils.AppDateUtils.toCdmxWallForReport(dateTime);
+    final day = localDate.day.toString().padLeft(2, '0');
+    final month = localDate.month.toString().padLeft(2, '0');
+    final year = localDate.year;
+    final hour24 = localDate.hour.toString().padLeft(2, '0');
+    final minute = localDate.minute.toString().padLeft(2, '0');
+    final hour12 = localDate.hour == 0
+        ? 12
+        : localDate.hour > 12
+            ? localDate.hour - 12
+            : localDate.hour;
+    final amPm = localDate.hour < 12 ? 'AM' : 'PM';
+    return '$day/$month/$year $hour24:$minute ($hour12:$minute $amPm)';
   }
 
   void _confirmPayment() async {

@@ -107,7 +107,7 @@ class CierresService {
       final d = cierre.fecha;
       final fechaYmd =
           '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-      final dataToSend = {
+      final dataToSend = <String, dynamic>{
         'fecha': fechaYmd,
         'efectivoInicial': cierre.efectivoInicial,
         'efectivoFinal': cierre.efectivoContado,
@@ -120,6 +120,12 @@ class CierresService {
         'otrosIngresosTexto': cierre.otrosIngresosTexto,
         'efectivoContado': cierre.efectivoContado,
         'totalDeclarado': cierre.totalDeclarado,
+        if (cierre.eventoTipo != null && cierre.eventoTipo!.isNotEmpty)
+          'eventoTipo': cierre.eventoTipo,
+        if (cierre.turnoCodigo != null && cierre.turnoCodigo!.isNotEmpty)
+          'turnoCodigo': cierre.turnoCodigo,
+        if (cierre.turnoLabel != null && cierre.turnoLabel!.isNotEmpty)
+          'turnoLabel': cierre.turnoLabel,
       };
       
       print('📤 CierresService.crearCierreCaja: Enviando datos al backend...');
@@ -140,13 +146,13 @@ class CierresService {
         } else {
           print('⚠️ CierresService.crearCierreCaja: response.data["data"] es null');
         }
-      } else {
-        print('⚠️ CierresService.crearCierreCaja: Status code inesperado: ${response.statusCode}');
       }
-
-      // Si no se puede mapear, devolver el cierre original
-      print('⚠️ CierresService.crearCierreCaja: Devolviendo cierre original');
-      return cierre;
+      final backendMessage = response.data is Map<String, dynamic>
+          ? (response.data['message'] ?? response.data['error'])
+          : null;
+      throw Exception(
+        'No se pudo crear el cierre (${response.statusCode}). ${backendMessage ?? 'Respuesta inválida del servidor'}',
+      );
     } catch (e, stackTrace) {
       print('❌ Error al crear cierre de caja: $e');
       print('❌ Stack trace: $stackTrace');
@@ -247,9 +253,23 @@ class CierresService {
     final totalPagos = totalVentas;
     
     // Obtener nombre del cajero
-    final cajeroNombre = data['cajeroNombre'] as String? ?? 
-                        data['creadoPorUsuarioNombre'] as String? ?? 
-                        'Sin asignar';
+    final cajeroNombre = data['cajeroNombre'] as String? ??
+        data['cajero_nombre'] as String? ??
+        data['creadoPorUsuarioNombre'] as String? ??
+        'Sin asignar';
+
+    final cajeroIdRaw = data['cajeroId'] ?? data['cajero_id'];
+    final int? cajeroIdParsed = cajeroIdRaw is num
+        ? cajeroIdRaw.toInt()
+        : int.tryParse(cajeroIdRaw?.toString() ?? '');
+
+    final dynamic eventoRaw = data['eventoTipo'] ?? data['evento_tipo'];
+    final String? eventoTipo = eventoRaw is String && eventoRaw.isNotEmpty
+        ? eventoRaw
+        : null;
+
+    final turnoCodigo = (data['turnoCodigo'] ?? data['turno_codigo']) as String?;
+    final turnoLabel = (data['turnoLabel'] ?? data['turno_label']) as String?;
     
     // Obtener estado - por defecto 'pending' si no se especifica
     final statusRaw = (data['status'] as String?)?.toLowerCase() ?? 'pending';
@@ -287,6 +307,10 @@ class CierresService {
       cierreId: cierreIdReal,
       comentarioRevision: data['comentarioRevision'] as String?,
       efectivoInicial: efectivoInicial,
+      eventoTipo: eventoTipo,
+      turnoCodigo: turnoCodigo,
+      turnoLabel: turnoLabel,
+      cajeroId: cajeroIdParsed,
     );
   }
 }

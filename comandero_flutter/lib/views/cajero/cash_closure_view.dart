@@ -3,9 +3,25 @@ import 'package:provider/provider.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cash_ui_responsive.dart';
 import '../../models/admin_model.dart';
 import '../../utils/date_utils.dart' as date_utils;
 import '../../services/cierres_service.dart';
+
+String _tipoEventoCierreEtiquetaCajero(CashCloseModel c) {
+  if (c.eventoTipo == 'apertura') return 'Apertura de caja';
+  if (c.eventoTipo == 'cierre_dia') return 'Cierre general del día';
+  if (c.eventoTipo == 'cierre') return 'Cierre de caja';
+  if (c.efectivoInicial > 0 && c.totalNeto < 1) return 'Apertura de caja';
+  if (c.totalNeto >= 1) return 'Cierre de caja';
+  return '';
+}
+
+String _turnoLineCajero(CashCloseModel c) {
+  final a = (c.turnoLabel ?? '').trim();
+  if (a.isNotEmpty) return a;
+  return (c.turnoCodigo ?? '').trim();
+}
 
 class CashClosureView extends StatefulWidget {
   const CashClosureView({super.key});
@@ -18,6 +34,76 @@ class _CashClosureViewState extends State<CashClosureView> {
   String selectedPeriod = 'Día';
   String selectedStatus = 'Todos';
   DateTime? selectedDate; // Fecha seleccionada del calendario
+
+  bool _matchesAnyStatus(CashCloseModel closure, List<String> aliases) {
+    final estado = closure.estado.toLowerCase().trim();
+    return aliases.contains(estado);
+  }
+
+  bool _matchesSelectedStatus(CashCloseModel closure) {
+    if (selectedStatus == 'Todos') return true;
+    switch (selectedStatus) {
+      case 'Pendiente':
+        return _matchesAnyStatus(closure, ['pending', 'pendiente']);
+      case 'Aprobado':
+        return _matchesAnyStatus(closure, ['approved', 'aprobado']);
+      case 'Rechazado':
+        return _matchesAnyStatus(closure, ['rejected', 'rechazado']);
+      case 'Aclaración':
+        return _matchesAnyStatus(closure, ['clarification', 'aclaracion']);
+      default:
+        return true;
+    }
+  }
+
+  List<CashCloseModel> _getFilteredClosures(List<CashCloseModel> closures) {
+    return closures.where((closure) {
+      bool periodMatch = true;
+      if (selectedDate != null) {
+        final closureDate = DateTime(
+          closure.fecha.year,
+          closure.fecha.month,
+          closure.fecha.day,
+        );
+        final selectedDateOnly = DateTime(
+          selectedDate!.year,
+          selectedDate!.month,
+          selectedDate!.day,
+        );
+        periodMatch = closureDate.isAtSameMomentAs(selectedDateOnly);
+      } else {
+        final now = date_utils.AppDateUtils.nowCdmx();
+        final closureDate = DateTime(
+          closure.fecha.year,
+          closure.fecha.month,
+          closure.fecha.day,
+        );
+        final today = DateTime(now.year, now.month, now.day);
+
+        switch (selectedPeriod) {
+          case 'Día':
+            periodMatch = closureDate.isAtSameMomentAs(today);
+            break;
+          case 'Semana':
+            final daysFromMonday = today.weekday - 1;
+            final weekStart = today.subtract(Duration(days: daysFromMonday));
+            final weekEnd = weekStart.add(const Duration(days: 6));
+            periodMatch =
+                closureDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
+                closureDate.isBefore(weekEnd.add(const Duration(days: 1)));
+            break;
+          case 'Mes':
+            periodMatch =
+                closureDate.year == today.year && closureDate.month == today.month;
+            break;
+          default:
+            periodMatch = true;
+        }
+      }
+
+      return periodMatch && _matchesSelectedStatus(closure);
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -155,7 +241,7 @@ class _CashClosureViewState extends State<CashClosureView> {
         final closures = controller.cashClosures;
         final pendingClosures = controller.getPendingClosures();
         final approvedClosures = closures
-            .where((c) => c.estado == 'aprobado')
+            .where((c) => _matchesAnyStatus(c, ['aprobado', 'approved']))
             .length;
         final totalAmount = closures.fold<double>(
           0,
@@ -506,78 +592,7 @@ class _CashClosureViewState extends State<CashClosureView> {
     return Consumer<CajeroController>(
       builder: (context, controller, child) {
         final closures = controller.cashClosures;
-        final filteredClosures = closures.where((closure) {
-          // Filtro por período/fecha
-          bool periodMatch = true;
-          if (selectedDate != null) {
-            // Si hay una fecha seleccionada, filtrar por esa fecha específica
-            final closureDate = DateTime(
-              closure.fecha.year,
-              closure.fecha.month,
-              closure.fecha.day,
-            );
-            final selectedDateOnly = DateTime(
-              selectedDate!.year,
-              selectedDate!.month,
-              selectedDate!.day,
-            );
-            periodMatch = closureDate.isAtSameMomentAs(selectedDateOnly);
-          } else {
-            // Filtro por período predefinido
-            final now = date_utils.AppDateUtils.nowCdmx();
-            final closureDate = DateTime(
-              closure.fecha.year,
-              closure.fecha.month,
-              closure.fecha.day,
-            );
-            final today = DateTime(now.year, now.month, now.day);
-            
-            switch (selectedPeriod) {
-              case 'Día':
-                periodMatch = closureDate.isAtSameMomentAs(today);
-                break;
-              case 'Semana':
-                // Calcular inicio de la semana (lunes)
-                final daysFromMonday = today.weekday - 1; // 0 = lunes, 6 = domingo
-                final weekStart = today.subtract(Duration(days: daysFromMonday));
-                final weekEnd = weekStart.add(const Duration(days: 6));
-                // Verificar si la fecha del cierre está entre el inicio y fin de semana (inclusive)
-                periodMatch = closureDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
-                              closureDate.isBefore(weekEnd.add(const Duration(days: 1)));
-                break;
-              case 'Mes':
-                periodMatch = closureDate.year == today.year &&
-                             closureDate.month == today.month;
-                break;
-              default:
-                periodMatch = true;
-            }
-          }
-
-          // Filtro por estado
-          bool statusMatch = true;
-          if (selectedStatus != 'Todos') {
-            final estadoLower = closure.estado.toLowerCase();
-            switch (selectedStatus) {
-              case 'Pendiente':
-                statusMatch = estadoLower == 'pending';
-                break;
-              case 'Aprobado':
-                statusMatch = estadoLower == 'approved';
-                break;
-              case 'Rechazado':
-                statusMatch = estadoLower == 'rejected';
-                break;
-              case 'Aclaración':
-                statusMatch = estadoLower == 'clarification';
-                break;
-              default:
-                statusMatch = true;
-            }
-          }
-
-          return periodMatch && statusMatch;
-        }).toList();
+        final filteredClosures = _getFilteredClosures(closures);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -671,89 +686,44 @@ class _CashClosureViewState extends State<CashClosureView> {
           borderRadius: BorderRadius.circular(12),
           color: statusColor.withValues(alpha: 0.05),
         ),
-        child: Padding(
-          padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header del corte
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _formatClosureId(closure.id),
-                        style: TextStyle(
-                          fontSize: isTablet ? 18.0 : 16.0,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Período: ${closure.periodo}',
-                        style: TextStyle(
-                          fontSize: isTablet ? 14.0 : 12.0,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: statusColor.withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              statusIcon,
-                              style: TextStyle(
-                                fontSize: isTablet ? 12.0 : 10.0,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _translateStatus(closure.estado),
-                              style: TextStyle(
-                                fontSize: isTablet ? 12.0 : 10.0,
-                                fontWeight: FontWeight.w500,
-                                color: statusColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        controller.formatCurrency(closure.totalNeto),
-                        style: TextStyle(
-                          fontSize: isTablet ? 16.0 : 14.0,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final maxW = constraints.maxWidth;
+            final narrowDetails = maxW < CashUiResponsive.tabletMin;
+            final compactBtns = CashUiResponsive.isCompactLayout(maxW);
 
-              // Detalles del corte
-              Row(
+            Widget detailRow() {
+              if (narrowDetails) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildDetailItem(
+                      'Efectivo',
+                      controller.formatCurrency(closure.efectivo),
+                      Icons.money,
+                      AppColors.success,
+                      isTablet,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildDetailItem(
+                      'Tarjeta',
+                      controller.formatCurrency(closure.tarjeta),
+                      Icons.credit_card,
+                      AppColors.info,
+                      isTablet,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildDetailItem(
+                      'Otros',
+                      controller.formatCurrency(closure.otrosIngresos ?? 0),
+                      Icons.add,
+                      AppColors.warning,
+                      isTablet,
+                    ),
+                  ],
+                );
+              }
+              return Row(
                 children: [
                   Expanded(
                     child: _buildDetailItem(
@@ -785,91 +755,235 @@ class _CashClosureViewState extends State<CashClosureView> {
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 16),
+              );
+            }
 
-              // Información adicional
-              Row(
+            Widget metaLine() {
+              return Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Icon(
-                    Icons.access_time,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.access_time,
+                        size: isTablet ? 16.0 : 14.0,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        controller.formatDate(closure.fecha),
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    controller.formatDate(closure.fecha),
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Icon(
-                    Icons.person,
-                    size: isTablet ? 16.0 : 14.0,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    closure.usuario,
-                    style: TextStyle(
-                      fontSize: isTablet ? 14.0 : 12.0,
-                      color: AppColors.textSecondary,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.person,
+                        size: isTablet ? 16.0 : 14.0,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxW * 0.85),
+                        child: Text(
+                          closure.usuario,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: isTablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ),
-              const SizedBox(height: 16),
+              );
+            }
 
-              // Botones de acción
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        _showClosureDetails(closure, controller);
-                      },
-                      icon: const Icon(Icons.visibility),
-                      label: Text(
-                        'Ver Detalles',
-                        style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: BorderSide(
-                          color: AppColors.primary.withValues(alpha: 0.3),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
+            Widget actionButtons() {
+              final ver = OutlinedButton.icon(
+                onPressed: () {
+                  _showClosureDetails(closure, controller);
+                },
+                icon: const Icon(Icons.visibility),
+                label: Text(
+                  'Ver Detalles',
+                  style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: BorderSide(
+                    color: AppColors.primary.withValues(alpha: 0.3),
                   ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              );
+              final hist = ElevatedButton.icon(
+                onPressed: () {
+                  _showAuditLog(closure);
+                },
+                icon: const Icon(Icons.history),
+                label: Text(
+                  'Historial',
+                  style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.info,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              );
+              if (compactBtns) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ver,
+                    const SizedBox(height: 8),
+                    hist,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: ver),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        _showAuditLog(closure);
-                      },
-                      icon: const Icon(Icons.history),
-                      label: Text(
-                        'Historial',
-                        style: TextStyle(fontSize: isTablet ? 12.0 : 10.0),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.info,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                  Expanded(child: hist),
+                ],
+              );
+            }
+
+            return Padding(
+              padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header del corte
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _formatClosureId(closure.id),
+                              style: TextStyle(
+                                fontSize: isTablet ? 18.0 : 16.0,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Período: ${closure.periodo}',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            if (_tipoEventoCierreEtiquetaCajero(closure)
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                _tipoEventoCierreEtiquetaCajero(closure),
+                                style: TextStyle(
+                                  fontSize: isTablet ? 12.0 : 11.0,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                            if (_turnoLineCajero(closure).isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                'Turno: ${_turnoLineCajero(closure)}',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 12.0 : 11.0,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: statusColor.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  statusIcon,
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 12.0 : 10.0,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _translateStatus(closure.estado),
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 12.0 : 10.0,
+                                    fontWeight: FontWeight.w500,
+                                    color: statusColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            controller.formatCurrency(closure.totalNeto),
+                            style: TextStyle(
+                              fontSize: isTablet ? 16.0 : 14.0,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 16),
+
+                  // Detalles del corte
+                  detailRow(),
+                  const SizedBox(height: 16),
+
+                  // Información adicional
+                  metaLine(),
+                  const SizedBox(height: 16),
+
+                  // Botones de acción
+                  actionButtons(),
                 ],
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -1577,17 +1691,31 @@ class _CashClosureViewState extends State<CashClosureView> {
   }
 
   void _showStatisticsDialog(BuildContext context) {
+    final controller = context.read<CajeroController>();
+    final filteredClosures = _getFilteredClosures(controller.cashClosures);
+    final totalClosures = filteredClosures.length;
+    final approvedCount = filteredClosures
+        .where((c) => _matchesAnyStatus(c, ['aprobado', 'approved']))
+        .length;
+    final pendingCount = filteredClosures
+        .where((c) => _matchesAnyStatus(c, ['pendiente', 'pending']))
+        .length;
+    final totalAmount = filteredClosures.fold<double>(
+      0,
+      (sum, closure) => sum + closure.totalNeto,
+    );
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Estadísticas de Cortes'),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('• Total de cortes: 15'),
-            Text('• Cortes aprobados: 12'),
-            Text('• Cortes pendientes: 2'),
-            Text('• Total generado: \$45,000'),
+            Text('• Total de cortes: $totalClosures'),
+            Text('• Cortes aprobados: $approvedCount'),
+            Text('• Cortes pendientes: $pendingCount'),
+            Text('• Total generado: ${controller.formatCurrency(totalAmount)}'),
           ],
         ),
         actions: [

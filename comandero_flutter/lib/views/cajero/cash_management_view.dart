@@ -5,6 +5,7 @@ import '../../controllers/auth_controller.dart';
 import '../../services/cierres_service.dart';
 import '../../services/pagos_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cash_ui_responsive.dart';
 import '../../utils/date_utils.dart' as date_utils;
 
 class CashManagementView extends StatefulWidget {
@@ -413,10 +414,16 @@ class _CashManagementViewState extends State<CashManagementView> {
               const SizedBox(height: 16),
               Divider(color: AppColors.border),
               const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow =
+                      constraints.maxWidth < CashUiResponsive.tabletMin;
+                  final turnoLine = () {
+                    final a = (apertura.turnoLabel ?? '').trim();
+                    if (a.isNotEmpty) return a;
+                    return (apertura.turnoCodigo ?? '').trim();
+                  }();
+                  final efectivoCol = Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
@@ -436,9 +443,11 @@ class _CashManagementViewState extends State<CashManagementView> {
                         ),
                       ),
                     ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  );
+                  final fechaCol = Column(
+                    crossAxisAlignment: narrow
+                        ? CrossAxisAlignment.start
+                        : CrossAxisAlignment.end,
                     children: [
                       Text(
                         'Fecha y Hora',
@@ -457,8 +466,83 @@ class _CashManagementViewState extends State<CashManagementView> {
                         ),
                       ),
                     ],
-                  ),
-                ],
+                  );
+                  if (narrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        efectivoCol,
+                        if (turnoLine.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.schedule,
+                                size: 18,
+                                color: AppColors.textSecondary,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Turno: $turnoLine',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 13.0 : 12.0,
+                                    color: AppColors.textSecondary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        fechaCol,
+                      ],
+                    );
+                  }
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: efectivoCol),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (turnoLine.isNotEmpty) ...[
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Icon(
+                                    Icons.schedule,
+                                    size: 16,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      turnoLine,
+                                      textAlign: TextAlign.end,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: isTablet ? 12.0 : 11.0,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            fechaCol,
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
               if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
                 const SizedBox(height: 12),

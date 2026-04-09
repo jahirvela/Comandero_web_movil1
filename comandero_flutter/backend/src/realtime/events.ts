@@ -188,6 +188,7 @@ export const emitCashClosureCreated = (cierre: any) => {
   logger.info({ cierreId: cierre.id }, 'Emitiendo evento cierre.creado');
   io.emit('cierre.creado', cierre);
   io.to(getSocketRooms.role('cajero')).emit('cierre.creado', cierre);
+  io.to(getSocketRooms.role('gerente')).emit('cierre.creado', cierre);
   io.to(getSocketRooms.role('administrador')).emit('cierre.creado', cierre);
   io.to(getSocketRooms.role('capitan')).emit('cierre.creado', cierre);
 };
@@ -197,6 +198,7 @@ export const emitCashClosureUpdated = (cierre: any) => {
   logger.info({ cierreId: cierre.id }, 'Emitiendo evento cierre.actualizado');
   io.emit('cierre.actualizado', cierre);
   io.to(getSocketRooms.role('cajero')).emit('cierre.actualizado', cierre);
+  io.to(getSocketRooms.role('gerente')).emit('cierre.actualizado', cierre);
   io.to(getSocketRooms.role('administrador')).emit('cierre.actualizado', cierre);
   io.to(getSocketRooms.role('capitan')).emit('cierre.actualizado', cierre);
 };

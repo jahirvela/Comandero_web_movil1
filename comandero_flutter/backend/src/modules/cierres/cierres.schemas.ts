@@ -34,6 +34,9 @@ export const crearCierreCajaSchema = z.object({
   notaCajero: z.string().max(500).nullable().optional(),
   efectivoContado: z.coerce.number().nonnegative().optional(),
   totalDeclarado: z.coerce.number().nonnegative().optional(),
+  eventoTipo: z.enum(['apertura', 'cierre', 'cierre_dia']).optional(),
+  turnoCodigo: z.string().max(32).nullable().optional(),
+  turnoLabel: z.string().max(120).nullable().optional(),
 });
 
 export type CrearCierreCajaInput = z.infer<typeof crearCierreCajaSchema>;

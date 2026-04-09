@@ -14,6 +14,8 @@ class PaymentModel {
   final String? reference;
   final String? bankName;
   final int? tableNumber;
+  /// Para historial de cobros cuando ya no existe el bill (mesa vs para llevar).
+  final bool isTakeaway;
   // Metadata para historial (no depender del BillRepository después de cobrar)
   final int? ordenId;
   final List<int>? ordenIds; // Para cuentas agrupadas (imprimir ticket completo)
@@ -44,6 +46,7 @@ class PaymentModel {
     this.reference,
     this.bankName,
     this.tableNumber,
+    this.isTakeaway = false,
     this.ordenId,
     this.ordenIds,
     this.waiterName,
@@ -74,6 +77,7 @@ class PaymentModel {
       reference: json['reference'],
       bankName: json['bankName'],
       tableNumber: json['tableNumber'],
+      isTakeaway: json['isTakeaway'] == true,
       ordenId: (json['ordenId'] as num?)?.toInt(),
       ordenIds: json['ordenIds'] != null
           ? (json['ordenIds'] as List).map((e) => (e as num).toInt()).toList()
@@ -109,6 +113,7 @@ class PaymentModel {
       'reference': reference,
       'bankName': bankName,
       'tableNumber': tableNumber,
+      'isTakeaway': isTakeaway,
       'ordenId': ordenId,
       'ordenIds': ordenIds,
       'waiterName': waiterName,
@@ -139,6 +144,7 @@ class PaymentModel {
     String? reference,
     String? bankName,
     int? tableNumber,
+    bool? isTakeaway,
     int? ordenId,
     String? waiterName,
     String? billId,
@@ -166,6 +172,7 @@ class PaymentModel {
       reference: reference ?? this.reference,
       bankName: bankName ?? this.bankName,
       tableNumber: tableNumber ?? this.tableNumber,
+      isTakeaway: isTakeaway ?? this.isTakeaway,
       ordenId: ordenId ?? this.ordenId,
       waiterName: waiterName ?? this.waiterName,
       billId: billId ?? this.billId,
@@ -258,6 +265,15 @@ class BillModel {
     }
     if (tableNumber != null) return 'Mesa $tableNumber';
     return 'N/A';
+  }
+
+  /// IDs de órdenes de esta cuenta (lista explícita, orden principal o parseo desde [id]).
+  List<int> get effectiveOrdenIds {
+    if (ordenIds != null && ordenIds!.isNotEmpty) {
+      return List<int>.from(ordenIds!);
+    }
+    if (ordenId != null) return [ordenId!];
+    return ordenIdsFromBillIdInt;
   }
 
   double get calculatedTotal {

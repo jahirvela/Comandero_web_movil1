@@ -32,12 +32,31 @@ export interface ConfiguracionCajon {
   device: string | null;
 }
 
+export interface CajaTurnoConfig {
+  codigo: string;
+  nombre: string;
+  inicio: string;
+  fin: string;
+}
+
+export interface ConfiguracionCaja {
+  modo: 'diario' | 'turnos';
+  turnos: CajaTurnoConfig[];
+}
+
 export interface Configuracion {
   ivaHabilitado: boolean;
   cajon: ConfiguracionCajon;
+  caja: ConfiguracionCaja;
 }
 
 const ROW_ID = 1;
+
+const CAJA_DEFAULT: ConfiguracionCaja = {
+  modo: 'diario',
+  turnos: []
+};
+
 const CAJON_DEFAULT: ConfiguracionCajon = {
   habilitado: false,
   impresoraId: null,
@@ -70,7 +89,41 @@ export const obtenerConfiguracion = async (): Promise<Configuracion> => {
   );
   const row = rows[0];
   if (!row) {
-    return { ivaHabilitado: false, cajon: CAJON_DEFAULT };
+    return { ivaHabilitado: false, cajon: CAJON_DEFAULT, caja: CAJA_DEFAULT };
+  }
+
+  let caja: ConfiguracionCaja = CAJA_DEFAULT;
+  try {
+    const [cajaRows] = await pool.query<
+      (RowDataPacket & { caja_modo?: string; caja_turnos_json?: unknown })[]
+    >(`SELECT caja_modo, caja_turnos_json FROM configuracion WHERE id = ?`, [ROW_ID]);
+    const cr = cajaRows[0];
+    if (cr && cr.caja_modo !== undefined) {
+      const modo = cr.caja_modo === 'turnos' ? 'turnos' : 'diario';
+      let turnos: CajaTurnoConfig[] = [];
+      const raw = cr.caja_turnos_json;
+      if (raw != null) {
+        try {
+          const parsed =
+            typeof raw === 'string' ? JSON.parse(raw) : (raw as CajaTurnoConfig[]);
+          if (Array.isArray(parsed)) {
+            turnos = parsed
+              .filter((t) => t && typeof t.codigo === 'string')
+              .map((t) => ({
+                codigo: String(t.codigo),
+                nombre: String(t.nombre ?? t.codigo),
+                inicio: String(t.inicio ?? '09:00'),
+                fin: String(t.fin ?? '18:00'),
+              }));
+          }
+        } catch {
+          turnos = [];
+        }
+      }
+      caja = { modo, turnos };
+    }
+  } catch {
+    // Columnas caja_* no existen (BD sin migración local)
   }
 
   let cajon: ConfiguracionCajon = CAJON_DEFAULT;
@@ -101,6 +154,7 @@ export const obtenerConfiguracion = async (): Promise<Configuracion> => {
   return {
     ivaHabilitado: Boolean(row.iva_habilitado),
     cajon,
+    caja,
   };
 };
 
@@ -110,6 +164,25 @@ export const actualizarIvaHabilitado = async (ivaHabilitado: boolean): Promise<v
      ON DUPLICATE KEY UPDATE iva_habilitado = VALUES(iva_habilitado)`,
     [ROW_ID, ivaHabilitado ? 1 : 0]
   );
+};
+
+export const actualizarConfiguracionCaja = async (caja: {
+  modo?: 'diario' | 'turnos';
+  turnos?: CajaTurnoConfig[];
+}): Promise<void> => {
+  const cols: string[] = [];
+  const vals: unknown[] = [];
+  if (caja.modo !== undefined) {
+    cols.push('caja_modo = ?');
+    vals.push(caja.modo);
+  }
+  if (caja.turnos !== undefined) {
+    cols.push('caja_turnos_json = ?');
+    vals.push(JSON.stringify(caja.turnos));
+  }
+  if (cols.length === 0) return;
+  vals.push(ROW_ID);
+  await pool.execute(`UPDATE configuracion SET ${cols.join(', ')} WHERE id = ?`, vals);
 };
 
 export const actualizarConfiguracionCajon = async (cajon: Partial<ConfiguracionCajon>): Promise<void> => {

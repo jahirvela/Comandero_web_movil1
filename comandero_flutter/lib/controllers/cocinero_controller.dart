@@ -1359,6 +1359,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
       // Determinar estación basada en categoría real (dinámica) y fallback por nombre.
       final categoriaNombre = (itemJson['categoriaNombre'] as String?) ??
           (itemJson['categoria'] as String?);
+      final stationLabel = categoriaNombre?.trim() ?? '';
       String station = _stationKeyFromCategory(categoriaNombre);
       final productName = baseName.toLowerCase();
       if (station == KitchenStation.tacos &&
@@ -1380,6 +1381,7 @@ class CocineroController extends ChangeNotifier with DebounceChangeNotifier {
         name: displayName,
         quantity: (itemJson['cantidad'] as num?)?.toInt() ?? 1,
         station: station,
+        stationLabel: stationLabel,
         notes:
             (itemJson['nota'] as String?) ??
             (itemJson['notas'] as String?) ??

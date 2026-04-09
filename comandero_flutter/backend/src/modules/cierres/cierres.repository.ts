@@ -44,6 +44,9 @@ export interface CierreCajaItem {
   notas?: string | null; // Notas/comentarios del cajero (opcional)
   comentarioRevision?: string | null; // Comentario del administrador al revisar (opcional)
   efectivoInicial?: number; // Efectivo inicial de la apertura de caja (opcional)
+  eventoTipo?: 'apertura' | 'cierre' | 'cierre_dia';
+  turnoCodigo?: string | null;
+  turnoLabel?: string | null;
 }
 
 export const listarCierresCaja = async (
@@ -204,13 +207,18 @@ export const listarCierresCaja = async (
               COALESCE(cc.total_pagos, cc.total_efectivo + cc.total_tarjeta, 0) AS total_ventas,
               COALESCE(cc.total_efectivo, 0) AS total_efectivo,
               COALESCE(cc.total_tarjeta, 0) AS total_tarjeta,
+              COALESCE(cc.otros_ingresos, 0) AS otros_ingresos,
+              cc.otros_ingresos_texto AS otros_ingresos_texto,
               cc.id AS cierre_id,
               cc.efectivo_inicial AS efectivo_inicial,
               cc.efectivo_final AS efectivo_final,
               cc.notas AS notas,
               cc.creado_en AS creado_en,
               COALESCE(cc.estado, 'pending') AS estado,
-              cc.comentario_revision AS comentario_revision
+              cc.comentario_revision AS comentario_revision,
+              cc.evento_tipo AS evento_tipo,
+              cc.turno_codigo AS turno_codigo,
+              cc.turno_label AS turno_label
             FROM caja_cierre cc
             LEFT JOIN usuario u_cc ON u_cc.id = cc.creado_por_usuario_id
             ${whereClauseCierre}
@@ -295,7 +303,11 @@ export const listarCierresCaja = async (
     const totalVentasManual = row.total_ventas != null ? Number(row.total_ventas) : 0;
     const totalEfectivoManual = row.total_efectivo != null ? Number(row.total_efectivo) : 0;
     const totalTarjetaManual = row.total_tarjeta != null ? Number(row.total_tarjeta) : 0;
-    
+    const otrosManual =
+      row.otros_ingresos != null && !Number.isNaN(Number(row.otros_ingresos))
+        ? Number(row.otros_ingresos)
+        : null;
+
     // Crear cierre manual (siempre independiente, no se combina)
     const cierreManual: CierreCajaItem = {
       id: idUnico,
@@ -307,7 +319,7 @@ export const listarCierresCaja = async (
       totalVentas: totalVentasManual,
       totalEfectivo: totalEfectivoManual,
       totalTarjeta: totalTarjetaManual,
-      totalOtros: cierreCalculado?.totalOtros ?? 0,
+      totalOtros: otrosManual ?? cierreCalculado?.totalOtros ?? 0,
       totalPropinas: cierreCalculado?.totalPropinas ?? (propinasDelDia.propinasEfectivo + propinasDelDia.propinasTarjeta),
       propinasEfectivo: propinasDelDia.propinasEfectivo,
       propinasTarjeta: propinasDelDia.propinasTarjeta,
@@ -317,6 +329,15 @@ export const listarCierresCaja = async (
       notas: row.notas ?? null, // Incluir las notas del cajero
       comentarioRevision: row.comentario_revision ?? null, // Comentario del administrador
       efectivoInicial: row.efectivo_inicial != null ? Number(row.efectivo_inicial) : undefined, // Efectivo inicial de la apertura
+      eventoTipo: row.evento_tipo === 'apertura'
+        ? 'apertura'
+        : row.evento_tipo === 'cierre_dia'
+          ? 'cierre_dia'
+          : row.evento_tipo === 'cierre'
+            ? 'cierre'
+            : undefined,
+      turnoCodigo: row.turno_codigo ?? null,
+      turnoLabel: row.turno_label ?? null,
     };
     
     cierresList.push(cierreManual);
@@ -377,25 +398,15 @@ export interface CrearCierreCajaInput {
   notaCajero?: string | null;
   efectivoContado?: number | null;
   totalDeclarado?: number | null;
-}
-
-export interface CierreCajaCreado {
-  id: number;
-  fecha: Date;
-  efectivoInicial: number;
-  efectivoFinal: number;
-  totalPagos: number | null;
-  totalEfectivo: number | null;
-  totalTarjeta: number | null;
-  creadoPorUsuarioId: number | null;
-  creadoEn: Date;
-  notas: string | null;
+  eventoTipo?: 'apertura' | 'cierre' | 'cierre_dia';
+  turnoCodigo?: string | null;
+  turnoLabel?: string | null;
 }
 
 export const crearCierreCaja = async (
   input: CrearCierreCajaInput,
   usuarioId?: number
-): Promise<CierreCajaCreado> => {
+): Promise<CierreCajaItem> => {
   // Combinar notas sin duplicados (evitar "Enviando cierre | Enviando cierre | ...")
   const parts = [
     input.notas,
@@ -408,10 +419,14 @@ export const crearCierreCaja = async (
   // Día operativo en CDMX (nunca usar toISOString().split('T')[0] sobre un Date: desplaza el día en UTC).
   const fechaStr = getDateOnlyMx(input.fecha) ?? todayMxString();
 
-  // IMPORTANTE: Usar INSERT ... ON DUPLICATE KEY UPDATE para manejar cierres duplicados
-  // creado_en siempre en UTC (sesión pool = +00:00), igual que en UPDATE → hora real del cierre al guardar.
-  const [result] = await pool.execute<ResultSetHeader>(
-    `
+  // Registrar cada evento por separado (apertura, cierre de turno, cierre general del día).
+  const eventoTipo = input.eventoTipo ?? 'cierre';
+
+  // creado_en siempre en UTC (sesión pool = +00:00), hora real del registro.
+  let result: ResultSetHeader;
+  try {
+    const [insertResult] = await pool.execute<ResultSetHeader>(
+      `
     INSERT INTO caja_cierre (
       fecha,
       efectivo_inicial,
@@ -419,10 +434,15 @@ export const crearCierreCaja = async (
       total_pagos,
       total_efectivo,
       total_tarjeta,
+      otros_ingresos,
+      otros_ingresos_texto,
       creado_por_usuario_id,
       notas,
       estado,
-      creado_en
+      creado_en,
+      evento_tipo,
+      turno_codigo,
+      turno_label
     )
     VALUES (
       :fecha,
@@ -431,92 +451,53 @@ export const crearCierreCaja = async (
       :totalPagos,
       :totalEfectivo,
       :totalTarjeta,
+      :otrosIngresos,
+      :otrosIngresosTexto,
       :usuarioId,
       :notas,
       'pending',
-      UTC_TIMESTAMP()
+      UTC_TIMESTAMP(),
+      :eventoTipo,
+      :turnoCodigo,
+      :turnoLabel
     )
-    ON DUPLICATE KEY UPDATE
-      efectivo_final = VALUES(efectivo_final),
-      total_pagos = VALUES(total_pagos),
-      total_efectivo = VALUES(total_efectivo),
-      total_tarjeta = VALUES(total_tarjeta),
-      notas = VALUES(notas),
-      estado = 'pending',
-      creado_por_usuario_id = VALUES(creado_por_usuario_id),
-      creado_en = UTC_TIMESTAMP()
     `,
-    {
-      fecha: fechaStr,
-      efectivoInicial: input.efectivoInicial,
-      efectivoFinal: input.efectivoFinal,
-      totalPagos: input.totalPagos ?? null,
-      totalEfectivo: input.totalEfectivo ?? null,
-      totalTarjeta: input.totalTarjeta ?? null,
-      usuarioId: usuarioId ?? null,
-      notas: notasCompletas
-    }
-  );
-
-  // Obtener el ID del cierre (puede ser insertId si es nuevo, o el ID existente si se actualizó)
-  let cierreId: number;
-  if (result.insertId > 0) {
-    // Es un nuevo registro
-    cierreId = result.insertId;
-  } else {
-    // Es una actualización, obtener el ID del cierre existente por fecha
-    const [existingRows] = await pool.query<RowDataPacket[]>(
-      `SELECT id FROM caja_cierre WHERE fecha = :fecha`,
-      { fecha: fechaStr }
+      {
+        fecha: fechaStr,
+        efectivoInicial: input.efectivoInicial,
+        efectivoFinal: input.efectivoFinal,
+        totalPagos: input.totalPagos ?? null,
+        totalEfectivo: input.totalEfectivo ?? null,
+        totalTarjeta: input.totalTarjeta ?? null,
+        otrosIngresos: input.otrosIngresos ?? 0,
+        otrosIngresosTexto: input.otrosIngresosTexto ?? null,
+        usuarioId: usuarioId ?? null,
+        notas: notasCompletas,
+        eventoTipo,
+        turnoCodigo: input.turnoCodigo ?? null,
+        turnoLabel: input.turnoLabel ?? null,
+      }
     );
-    if (existingRows.length > 0) {
-      cierreId = existingRows[0].id;
-    } else {
-      throw new Error('No se pudo obtener el ID del cierre');
+    result = insertResult;
+  } catch (error: any) {
+    if (error?.code === 'ER_DUP_ENTRY') {
+      throw new Error(
+        'La BD local aún tiene restricción única por fecha en caja_cierre. Ejecuta el script local fix-cierre-caja-unique.sql para habilitar cierres por turno.'
+      );
     }
+    throw error;
   }
 
-  // Obtener el cierre creado/actualizado
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `
-    SELECT 
-      id,
-      fecha,
-      efectivo_inicial AS efectivoInicial,
-      efectivo_final AS efectivoFinal,
-      total_pagos AS totalPagos,
-      total_efectivo AS totalEfectivo,
-      total_tarjeta AS totalTarjeta,
-      creado_por_usuario_id AS creadoPorUsuarioId,
-      creado_en AS creadoEn,
-      notas
-    FROM caja_cierre
-    WHERE id = :id
-    `,
-    { id: cierreId }
-  );
+  if (result.insertId <= 0) {
+    throw new Error('No se pudo crear el cierre de caja. Verifica índice único por fecha en BD local.');
+  }
+  const cierreId = result.insertId;
 
-  const row = rows[0];
-  // DATE = día operativo en columna `fecha`; el momento mostrado al usuario es creado_en (cierre real).
-  const inicioDiaIso = sqlDateColumnToMxStartIso(row.fecha);
-  const fechaDiaOperativo = inicioDiaIso
-    ? new Date(inicioDiaIso)
-    : new Date(row.fecha);
-  const creadoEnMx = utcToMx(row.creadoEn);
-  const fechaRespuesta = creadoEnMx?.toJSDate() ?? fechaDiaOperativo;
-  return {
-    id: row.id,
-    // Misma semántica que listar (manuales): `fecha` en la API = instante del cierre en CDMX vía creado_en
-    fecha: fechaRespuesta,
-    efectivoInicial: Number(row.efectivoInicial),
-    efectivoFinal: Number(row.efectivoFinal),
-    totalPagos: row.totalPagos ? Number(row.totalPagos) : null,
-    totalEfectivo: row.totalEfectivo ? Number(row.totalEfectivo) : null,
-    totalTarjeta: row.totalTarjeta ? Number(row.totalTarjeta) : null,
-    creadoPorUsuarioId: row.creadoPorUsuarioId,
-    creadoEn: creadoEnMx?.toJSDate() ?? new Date(row.creadoEn),
-    notas: row.notas
-  };
+  const detalle = await obtenerCierreCajaPorId(cierreId);
+  if (!detalle) {
+    throw new Error('Cierre creado pero no se pudo leer');
+  }
+  return detalle;
 };
 
 export const actualizarEstadoCierreCaja = async (
@@ -554,13 +535,18 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
       COALESCE(cc.total_pagos, cc.total_efectivo + cc.total_tarjeta, 0) AS total_ventas,
       COALESCE(cc.total_efectivo, 0) AS total_efectivo,
       COALESCE(cc.total_tarjeta, 0) AS total_tarjeta,
+      COALESCE(cc.otros_ingresos, 0) AS otros_ingresos,
+      cc.otros_ingresos_texto AS otros_ingresos_texto,
       cc.id AS cierre_id,
       cc.efectivo_inicial AS efectivo_inicial,
       cc.efectivo_final AS efectivo_final,
       cc.notas AS notas,
       cc.creado_en AS creado_en,
       cc.estado AS estado,
-      cc.comentario_revision AS comentario_revision
+      cc.comentario_revision AS comentario_revision,
+      cc.evento_tipo AS evento_tipo,
+      cc.turno_codigo AS turno_codigo,
+      cc.turno_label AS turno_label
     FROM caja_cierre cc
     LEFT JOIN usuario u_cc ON u_cc.id = cc.creado_por_usuario_id
     WHERE cc.id = :cierreId
@@ -633,7 +619,7 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
     totalVentas: Number(row.total_ventas),
     totalEfectivo: Number(row.total_efectivo),
     totalTarjeta: Number(row.total_tarjeta),
-    totalOtros: 0,
+    totalOtros: Number(row.otros_ingresos ?? 0),
     totalPropinas: propinasEfectivo + propinasTarjeta,
     propinasEfectivo,
     propinasTarjeta,
@@ -643,6 +629,15 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
     notas: row.notas ?? null,
     comentarioRevision: row.comentario_revision ?? null,
     efectivoInicial: row.efectivo_inicial != null ? Number(row.efectivo_inicial) : undefined,
+    eventoTipo: row.evento_tipo === 'apertura'
+      ? 'apertura'
+      : row.evento_tipo === 'cierre_dia'
+        ? 'cierre_dia'
+        : row.evento_tipo === 'cierre'
+          ? 'cierre'
+          : undefined,
+    turnoCodigo: row.turno_codigo ?? null,
+    turnoLabel: row.turno_label ?? null,
   };
 };
 

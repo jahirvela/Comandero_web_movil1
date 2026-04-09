@@ -10,6 +10,7 @@ import '../../services/bill_repository.dart';
 import '../../services/socket_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/date_utils.dart' as date_utils;
+import '../../utils/cash_ui_responsive.dart';
 import '../../widgets/logout_button.dart';
 import 'cash_closure_view.dart';
 import 'sales_reports_view.dart';
@@ -20,6 +21,7 @@ import 'card_payment_modal.dart';
 import 'transfer_payment_modal.dart';
 import 'mixed_payment_modal.dart';
 import '../../services/tickets_service.dart';
+import '../../services/configuracion_service.dart';
 
 /// Envuelve la vista principal del cajero y fuerza una recarga de cuentas por cobrar
 /// al mostrarse (lap, celular, tablet), para que en móvil siempre se carguen desde el API.
@@ -53,6 +55,7 @@ class _CajeroMainViewRefresherState extends State<_CajeroMainViewRefresher>
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshBills();
+      widget.controller.reloadPaymentsFromBackend();
     });
   }
 
@@ -78,6 +81,7 @@ class _CajeroMainViewRefresherState extends State<_CajeroMainViewRefresher>
     try {
       await widget.controller.refreshBills();
       await widget.controller.loadCashClosures();
+      await widget.controller.reloadPaymentsFromBackend();
 
       final socketService = SocketService();
       if (!socketService.isConnected) {
@@ -503,6 +507,13 @@ class CajeroApp extends StatelessWidget {
       builder: (context, ctrl, child) {
         final apertura = ctrl.getTodayCashOpening();
         final isOpen = ctrl.isCashRegisterOpen();
+        final cierreActual = _getLatestTodayClose(ctrl, apertura);
+        final notaVisible = (() {
+          final raw = isOpen ? apertura?.notaCajero : cierreActual?.notaCajero;
+          if (raw == null) return null;
+          final trimmed = raw.trim();
+          return trimmed.isEmpty ? null : trimmed;
+        })();
 
     return Card(
       elevation: 2,
@@ -591,7 +602,7 @@ class CajeroApp extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        'Apertura',
+                        isOpen ? 'Apertura' : 'Cierre',
                         style: TextStyle(
                           fontSize: isTablet ? 14.0 : 12.0,
                           color: AppColors.textSecondary,
@@ -599,7 +610,11 @@ class CajeroApp extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        date_utils.AppDateUtils.formatDateTimeWithAmPm(apertura.fecha),
+                        date_utils.AppDateUtils.formatDateTimeWithAmPm(
+                          isOpen
+                              ? apertura.fecha
+                              : (cierreActual?.fecha ?? apertura.fecha),
+                        ),
                         style: TextStyle(
                           fontSize: isTablet ? 14.0 : 12.0,
                           fontWeight: FontWeight.w500,
@@ -610,7 +625,7 @@ class CajeroApp extends StatelessWidget {
                   ),
                 ],
               ),
-              if (apertura.notaCajero != null && apertura.notaCajero!.isNotEmpty) ...[
+              if (notaVisible != null) ...[
                 const SizedBox(height: 12),
                 Container(
                   padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
@@ -629,7 +644,7 @@ class CajeroApp extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          apertura.notaCajero!,
+                          notaVisible,
                           style: TextStyle(
                             fontSize: isTablet ? 13.0 : 12.0,
                             color: AppColors.textSecondary,
@@ -657,6 +672,33 @@ class CajeroApp extends StatelessWidget {
     );
       },
     );
+  }
+
+  CashCloseModel? _getLatestTodayClose(
+    CajeroController ctrl,
+    CashCloseModel? apertura,
+  ) {
+    final now = date_utils.AppDateUtils.now();
+    final inicioHoy = DateTime(now.year, now.month, now.day);
+    final ayer = now.subtract(const Duration(days: 1));
+    final inicioAyer18h = DateTime(ayer.year, ayer.month, ayer.day, 18);
+
+    final cierres = ctrl.cashClosures.where((cierre) {
+      final esHoy =
+          cierre.fecha.year == now.year &&
+          cierre.fecha.month == now.month &&
+          cierre.fecha.day == now.day;
+      final esAyerNoche =
+          cierre.fecha.isAfter(inicioAyer18h) && cierre.fecha.isBefore(inicioHoy);
+      final esCierre = cierre.totalNeto > 0;
+      final esPosteriorApertura =
+          apertura == null || cierre.fecha.isAfter(apertura.fecha);
+      return (esHoy || esAyerNoche) && esCierre && esPosteriorApertura;
+    }).toList();
+
+    if (cierres.isEmpty) return null;
+    cierres.sort((a, b) => b.fecha.compareTo(a.fecha));
+    return cierres.first;
   }
 
   // Resumen de consumo del día (datos reales del día, se actualiza al hacer cobros)
@@ -2293,7 +2335,7 @@ extension _CajeroAppExtension on CajeroApp {
     showDialog(
       context: context,
       builder: (context) =>
-          _CashOpenModal(controller: controller, isTablet: isTablet),
+          _CashOpenModal(controller: controller),
     );
   }
 
@@ -2305,7 +2347,7 @@ extension _CajeroAppExtension on CajeroApp {
     showDialog(
       context: context,
       builder: (context) =>
-          _CashCloseModal(controller: controller, isTablet: isTablet),
+          _CashCloseModal(controller: controller),
     );
   }
 }
@@ -2694,9 +2736,8 @@ class _DashedLinePainter extends CustomPainter {
 // Modal de Apertura de Caja
 class _CashOpenModal extends StatefulWidget {
   final CajeroController controller;
-  final bool isTablet;
 
-  const _CashOpenModal({required this.controller, required this.isTablet});
+  const _CashOpenModal({required this.controller});
 
   @override
   State<_CashOpenModal> createState() => _CashOpenModalState();
@@ -2705,6 +2746,16 @@ class _CashOpenModal extends StatefulWidget {
 class _CashOpenModalState extends State<_CashOpenModal> {
   final _efectivoInicialController = TextEditingController();
   final _notaController = TextEditingController();
+  CajaTurnoSlotModel? _turnoElegido;
+
+  @override
+  void initState() {
+    super.initState();
+    final turnos = widget.controller.cajaTurnos;
+    if (widget.controller.cajaPorTurnos && turnos.isNotEmpty) {
+      _turnoElegido = turnos.first;
+    }
+  }
 
   @override
   void dispose() {
@@ -2715,90 +2766,150 @@ class _CashOpenModalState extends State<_CashOpenModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      child: Container(
-        width: widget.isTablet ? 500 : double.infinity,
-        padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final sw = MediaQuery.sizeOf(context).width;
+    final pad = CashUiResponsive.modalPadding(sw);
+    final titleSize = CashUiResponsive.modalTitleSize(sw);
+    final bodySize = CashUiResponsive.modalBodySize(sw);
+    final tablet = CashUiResponsive.isTabletOrWider(sw);
+    final compact = CashUiResponsive.isCompactLayout(sw);
+
+    Widget actionButtons() {
+      final cancel = OutlinedButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      );
+      final confirm = ElevatedButton.icon(
+        onPressed: _openCashRegister,
+        icon: const Icon(Icons.lock_open),
+        label: const Text('Abrir Caja'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: Colors.white,
+        ),
+      );
+      if (compact) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Apertura de Caja',
-                  style: TextStyle(
-                    fontSize: widget.isTablet ? 20.0 : 18.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
+            confirm,
             const SizedBox(height: 8),
-            Text(
-              'Registra el efectivo inicial para comenzar el día',
-              style: TextStyle(
-                fontSize: widget.isTablet ? 14.0 : 12.0,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 24),
-            TextFormField(
-              controller: _efectivoInicialController,
-              textInputAction: TextInputAction.next,
-              onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
-              decoration: const InputDecoration(
-                labelText: 'Efectivo inicial *',
-                hintText: '5000',
-                prefixIcon: Icon(Icons.money),
-                helperText: 'Cantidad de efectivo con la que inicias el día',
-              ),
-              keyboardType: TextInputType.number,
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _notaController,
-              textInputAction: TextInputAction.done,
-              keyboardType: TextInputType.multiline,
-              onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
-              decoration: const InputDecoration(
-                labelText: 'Nota (opcional)',
-                prefixIcon: Icon(Icons.note),
-                hintText: 'Observaciones sobre la apertura',
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _openCashRegister,
-                    icon: const Icon(Icons.lock_open),
-                    label: const Text('Abrir Caja'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+            cancel,
+          ],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: cancel),
+          const SizedBox(width: 16),
+          Expanded(child: confirm),
+        ],
+      );
+    }
+
+    return Dialog(
+      insetPadding: CashUiResponsive.dialogInsetPadding(sw),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: CashUiResponsive.dialogMaxWidth(sw),
+          maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        ),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(pad),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Apertura de Caja',
+                      style: TextStyle(
+                        fontSize: titleSize,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
                     ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Registra el efectivo inicial para comenzar el día',
+                style: TextStyle(
+                  fontSize: bodySize,
+                  color: AppColors.textSecondary,
                 ),
+              ),
+              const SizedBox(height: 24),
+              TextFormField(
+                controller: _efectivoInicialController,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                decoration: const InputDecoration(
+                  labelText: 'Efectivo inicial *',
+                  hintText: '5000',
+                  prefixIcon: Icon(Icons.money),
+                  helperText: 'Cantidad de efectivo con la que inicias el día',
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _notaController,
+                textInputAction: TextInputAction.done,
+                keyboardType: TextInputType.multiline,
+                onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+                decoration: const InputDecoration(
+                  labelText: 'Nota (opcional)',
+                  prefixIcon: Icon(Icons.note),
+                  hintText: 'Observaciones sobre la apertura',
+                ),
+                maxLines: 2,
+              ),
+              if (widget.controller.cajaPorTurnos) ...[
+                const SizedBox(height: 16),
+                if (widget.controller.cajaTurnos.isEmpty)
+                  Text(
+                    'No hay turnos configurados. Pide al administrador que defina turnos en Configuración → Caja por turnos.',
+                    style: TextStyle(
+                      fontSize: tablet ? 13.0 : 12.0,
+                      color: Colors.orange.shade800,
+                    ),
+                  )
+                else
+                  DropdownButtonFormField<CajaTurnoSlotModel>(
+                    value: _turnoElegido,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: 'Turno *',
+                      prefixIcon: const Icon(Icons.schedule),
+                      helperText: 'Horario CDMX',
+                      helperStyle: TextStyle(
+                        fontSize: tablet ? 12.0 : 11.0,
+                      ),
+                    ),
+                    items: widget.controller.cajaTurnos
+                        .map(
+                          (t) => DropdownMenuItem(
+                            value: t,
+                            child: Text('${t.nombre} (${t.inicio}–${t.fin})'),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() => _turnoElegido = v),
+                  ),
               ],
-            ),
-          ],
+              const SizedBox(height: 24),
+              actionButtons(),
+            ],
+          ),
         ),
       ),
     );
@@ -2818,6 +2929,32 @@ class _CashOpenModalState extends State<_CashOpenModal> {
       return;
     }
 
+    if (widget.controller.cajaPorTurnos) {
+      if (widget.controller.cajaTurnos.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'No hay turnos configurados. Configúralos en Administración.',
+            ),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+        return;
+      }
+      if (_turnoElegido == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Selecciona el turno de esta apertura'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
+
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
       final authController = Provider.of<AuthController>(context, listen: false);
       final userName = authController.userName.isNotEmpty
@@ -2829,9 +2966,12 @@ class _CashOpenModalState extends State<_CashOpenModal> {
             ? null
             : _notaController.text.trim(),
         usuario: userName,
+        turnoCodigo: _turnoElegido?.codigo,
+        turnoLabel: _turnoElegido?.nombre,
       );
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
+      if (!mounted) return;
+      navigator.pop();
+      messenger.showSnackBar(
         SnackBar(
           content: Text(
             'Caja abierta con \$${efectivoInicial.toStringAsFixed(2)}',
@@ -2840,7 +2980,8 @@ class _CashOpenModalState extends State<_CashOpenModal> {
         ),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      if (!mounted) return;
+      messenger.showSnackBar(
         SnackBar(
           content: Text('Error al abrir caja: ${e.toString()}'),
           backgroundColor: Colors.red,
@@ -2852,9 +2993,8 @@ class _CashOpenModalState extends State<_CashOpenModal> {
 
 class _CashCloseModal extends StatefulWidget {
   final CajeroController controller;
-  final bool isTablet;
 
-  const _CashCloseModal({required this.controller, required this.isTablet});
+  const _CashCloseModal({required this.controller});
 
   @override
   State<_CashCloseModal> createState() => _CashCloseModalState();
@@ -2879,27 +3019,70 @@ class _CashCloseModalState extends State<_CashCloseModal> {
 
   @override
   Widget build(BuildContext context) {
+    final sw = MediaQuery.sizeOf(context).width;
+    final tablet = CashUiResponsive.isTabletOrWider(sw);
+    final titleSize = CashUiResponsive.modalTitleSize(sw);
+    final bodySize = CashUiResponsive.modalBodySize(sw);
+    final pad = CashUiResponsive.modalPadding(sw);
+    final compact = CashUiResponsive.isCompactLayout(sw);
+
+    Widget closeActions() {
+      final cancel = OutlinedButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      );
+      final send = ElevatedButton.icon(
+        onPressed: _sendCashClose,
+        icon: const Icon(Icons.send),
+        label: const Text('Cerrar Turno'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: Colors.white,
+        ),
+      );
+      if (compact) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            send,
+            const SizedBox(height: 8),
+            cancel,
+          ],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: cancel),
+          const SizedBox(width: 16),
+          Expanded(child: send),
+        ],
+      );
+    }
+
     return Dialog(
+      insetPadding: CashUiResponsive.dialogInsetPadding(sw),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: widget.isTablet ? 600 : 520,
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxWidth: CashUiResponsive.dialogMaxWidth(sw),
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
         child: SingleChildScrollView(
-          padding: EdgeInsets.all(widget.isTablet ? 24.0 : 16.0),
+          padding: EdgeInsets.all(pad),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Enviar Cierre de Caja',
-                  style: TextStyle(
-                    fontSize: widget.isTablet ? 20.0 : 18.0,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+                Expanded(
+                  child: Text(
+                    'Enviar Cierre de Caja',
+                    style: TextStyle(
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -2910,9 +3093,9 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Completa la información del cierre de caja para enviar al Admin',
+              'Completa el cierre de tu turno. Si es el último turno del día, se generará automáticamente el cierre general.',
               style: TextStyle(
-                fontSize: widget.isTablet ? 14.0 : 12.0,
+                fontSize: bodySize,
                 color: AppColors.textSecondary,
               ),
             ),
@@ -2925,6 +3108,15 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                 if (apertura == null || apertura.efectivoInicial <= 0) {
                   return const SizedBox.shrink();
                 }
+                final labelStyle = TextStyle(
+                  fontSize: tablet ? 14.0 : 12.0,
+                  color: AppColors.textSecondary,
+                );
+                final valueStyle = TextStyle(
+                  fontSize: tablet ? 14.0 : 12.0,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.success,
+                );
                 return Container(
                   margin: const EdgeInsets.only(bottom: 16),
                   padding: const EdgeInsets.all(12),
@@ -2935,22 +3127,66 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                       color: AppColors.success.withValues(alpha: 0.3),
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Efectivo inicial (apertura):',
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 14.0 : 12.0,
-                          color: AppColors.textSecondary,
+                  child: compact
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Efectivo inicial (apertura):',
+                              style: labelStyle,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.controller
+                                  .formatCurrency(apertura.efectivoInicial),
+                              style: valueStyle,
+                            ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                'Efectivo inicial (apertura):',
+                                style: labelStyle,
+                              ),
+                            ),
+                            Text(
+                              widget.controller
+                                  .formatCurrency(apertura.efectivoInicial),
+                              style: valueStyle,
+                            ),
+                          ],
                         ),
+                );
+              },
+            ),
+            Builder(
+              builder: (context) {
+                final apertura = widget.controller.getTodayCashOpening();
+                final turno = (apertura?.turnoLabel ?? apertura?.turnoCodigo ?? '')
+                    .trim();
+                if (turno.isEmpty) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.schedule,
+                        size: tablet ? 18 : 16,
+                        color: AppColors.textSecondary,
                       ),
-                      Text(
-                        widget.controller.formatCurrency(apertura.efectivoInicial),
-                        style: TextStyle(
-                          fontSize: widget.isTablet ? 14.0 : 12.0,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.success,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Turno activo: $turno',
+                          style: TextStyle(
+                            fontSize: tablet ? 14.0 : 12.0,
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
@@ -3041,6 +3277,7 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                 final iva = showIva && totalDeclarado > 0
                     ? totalDeclarado - subtotal
                     : 0.0;
+                final small = tablet ? 14.0 : 12.0;
 
                 return Container(
                   padding: const EdgeInsets.all(16),
@@ -3057,18 +3294,22 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                       if (showIva && totalDeclarado > 0) ...[
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Subtotal (base gravable):',
-                              style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
-                                color: AppColors.textSecondary,
+                            Expanded(
+                              child: Text(
+                                'Subtotal (base gravable):',
+                                style: TextStyle(
+                                  fontSize: small,
+                                  color: AppColors.textSecondary,
+                                ),
                               ),
                             ),
+                            const SizedBox(width: 8),
                             Text(
                               widget.controller.formatCurrency(subtotal),
                               style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                fontSize: small,
                                 color: AppColors.textSecondary,
                               ),
                             ),
@@ -3077,18 +3318,22 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                         const SizedBox(height: 4),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'IVA (16%):',
-                              style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
-                                color: AppColors.textSecondary,
+                            Expanded(
+                              child: Text(
+                                'IVA (16%):',
+                                style: TextStyle(
+                                  fontSize: small,
+                                  color: AppColors.textSecondary,
+                                ),
                               ),
                             ),
+                            const SizedBox(width: 8),
                             Text(
                               widget.controller.formatCurrency(iva),
                               style: TextStyle(
-                                fontSize: widget.isTablet ? 14.0 : 12.0,
+                                fontSize: small,
                                 color: AppColors.textSecondary,
                               ),
                             ),
@@ -3100,19 +3345,23 @@ class _CashCloseModalState extends State<_CashCloseModal> {
                       ],
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Total declarado:',
-                            style: TextStyle(
-                              fontSize: widget.isTablet ? 16.0 : 14.0,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
+                          Expanded(
+                            child: Text(
+                              'Total declarado:',
+                              style: TextStyle(
+                                fontSize: tablet ? 16.0 : 14.0,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Text(
                             widget.controller.formatCurrency(totalDeclarado),
                             style: TextStyle(
-                              fontSize: widget.isTablet ? 18.0 : 16.0,
+                              fontSize: tablet ? 18.0 : 16.0,
                               fontWeight: FontWeight.bold,
                               color: AppColors.primary,
                             ),
@@ -3127,28 +3376,7 @@ class _CashCloseModalState extends State<_CashCloseModal> {
             const SizedBox(height: 24),
 
             // Botones
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _sendCashClose,
-                    icon: const Icon(Icons.send),
-                    label: const Text('Enviar Cierre'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            closeActions(),
             ],
           ),
         ),
@@ -3206,6 +3434,9 @@ class _CashCloseModalState extends State<_CashCloseModal> {
           ? null
           : _notaCajeroController.text.trim(),
       totalDeclarado: totalDeclarado,
+      eventoTipo: 'cierre',
+      turnoCodigo: apertura?.turnoCodigo,
+      turnoLabel: apertura?.turnoLabel,
       auditLog: [
         AuditLogEntry(
           id: 'log_${DateTime.now().millisecondsSinceEpoch}',
@@ -3221,7 +3452,7 @@ class _CashCloseModalState extends State<_CashCloseModal> {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     
     try {
-      await widget.controller.sendCashClose(cashClose);
+      final generoCierreGeneral = await widget.controller.sendCashClose(cashClose);
       
       // Cerrar el modal de cierre de caja
       if (context.mounted) {
@@ -3244,9 +3475,10 @@ class _CashCloseModalState extends State<_CashCloseModal> {
         barrierDismissible: false,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Cierre de Caja Completado'),
-          content: const Text(
-            'El cierre de caja se ha enviado correctamente.\n\n'
-            '¿Deseas generar reportes con toda la información financiera del día?',
+          content: Text(
+            generoCierreGeneral
+                ? 'Tu cierre de turno se envió correctamente.\n\nTambién se generó y registró automáticamente el cierre general del día.\n\n¿Deseas generar reportes con toda la información financiera del día?'
+                : 'El cierre de caja se ha enviado correctamente.\n\n¿Deseas generar reportes con toda la información financiera del día?',
           ),
           actions: [
             TextButton(

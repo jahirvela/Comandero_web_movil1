@@ -7,6 +7,7 @@ import '../../../controllers/admin_controller.dart';
 import '../../../services/configuracion_service.dart';
 import '../../../services/impresoras_service.dart';
 import '../../../utils/app_colors.dart';
+import '../../../utils/cash_ui_responsive.dart';
 import '../../../utils/plantilla_ticket_friendly.dart';
 
 /// Mensaje legible para errores al generar clave (red, CORS, servidor, etc.).
@@ -184,6 +185,13 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
                     ),
                     const SizedBox(height: 24),
                     _buildPlantillaTicketsCard(
+                      context,
+                      controller,
+                      isDesktop,
+                      isTablet,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildCajaConfigCard(
                       context,
                       controller,
                       isDesktop,
@@ -679,6 +687,409 @@ class _ConfiguracionWebViewState extends State<ConfiguracionWebView> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildCajaConfigCard(
+    BuildContext context,
+    AdminController controller,
+    bool isDesktop,
+    bool isTablet,
+  ) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: EdgeInsets.all(isDesktop ? 24.0 : (isTablet ? 20.0 : 16.0)),
+        child: _CajaConfigCardContent(
+          controller: controller,
+          isDesktop: isDesktop,
+          isTablet: isTablet,
+          onSaved: () {
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _TurnoRowControllers {
+  final TextEditingController nombre;
+  final TextEditingController inicio;
+  final TextEditingController fin;
+
+  _TurnoRowControllers({
+    required String n,
+    required String i,
+    required String f,
+  })  : nombre = TextEditingController(text: n),
+        inicio = TextEditingController(text: i),
+        fin = TextEditingController(text: f);
+
+  void dispose() {
+    nombre.dispose();
+    inicio.dispose();
+    fin.dispose();
+  }
+}
+
+String? _normalizeHoraCaja(String raw) {
+  final t = raw.trim();
+  final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(t);
+  if (m == null) return null;
+  final h = int.tryParse(m.group(1)!) ?? -1;
+  final min = int.tryParse(m.group(2)!) ?? -1;
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return '${h.toString().padLeft(2, '0')}:${min.toString().padLeft(2, '0')}';
+}
+
+class _CajaConfigCardContent extends StatefulWidget {
+  final AdminController controller;
+  final bool isDesktop;
+  final bool isTablet;
+  final VoidCallback onSaved;
+
+  const _CajaConfigCardContent({
+    required this.controller,
+    required this.isDesktop,
+    required this.isTablet,
+    required this.onSaved,
+  });
+
+  @override
+  State<_CajaConfigCardContent> createState() => _CajaConfigCardContentState();
+}
+
+class _CajaConfigCardContentState extends State<_CajaConfigCardContent> {
+  late String _modo;
+  final List<_TurnoRowControllers> _rows = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromController();
+  }
+
+  void _loadFromController() {
+    for (final r in _rows) {
+      r.dispose();
+    }
+    _rows.clear();
+    final c = widget.controller.configuracionCaja;
+    _modo = c.modo == 'turnos' ? 'turnos' : 'diario';
+    final src = c.turnos.isNotEmpty
+        ? c.turnos
+        : (_modo == 'turnos'
+            ? ConfiguracionCajaModel.turnosPorDefecto()
+            : <CajaTurnoSlotModel>[]);
+    for (final t in src) {
+      _rows.add(
+        _TurnoRowControllers(
+          n: t.nombre,
+          i: t.inicio,
+          f: t.fin,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final r in _rows) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _guardar() async {
+    if (_modo == 'turnos') {
+      if (_rows.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Agrega al menos un turno')),
+        );
+        return;
+      }
+      final turnos = <Map<String, dynamic>>[];
+      final codigosGenerados = <String>{};
+      for (var idx = 0; idx < _rows.length; idx++) {
+        final r = _rows[idx];
+        final nombre = r.nombre.text.trim();
+        if (nombre.isEmpty) continue;
+        final hi = _normalizeHoraCaja(r.inicio.text);
+        final hf = _normalizeHoraCaja(r.fin.text);
+        if (hi == null || hf == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Horario inválido en turno "$nombre". Usa formato 24h HH:mm (ej. 09:00).',
+              ),
+            ),
+          );
+          return;
+        }
+        final codigo = generarCodigoTurnoCajaUnico(
+          nombreVisible: nombre,
+          indiceFila: idx,
+          codigosUsados: codigosGenerados,
+        );
+        turnos.add({
+          'codigo': codigo,
+          'nombre': nombre,
+          'inicio': hi,
+          'fin': hf,
+        });
+      }
+      if (turnos.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Define al menos un turno completo')),
+        );
+        return;
+      }
+      await widget.controller.actualizarConfiguracionCaja({
+        'modo': 'turnos',
+        'turnos': turnos,
+      });
+    } else {
+      await widget.controller.actualizarConfiguracionCaja({'modo': 'diario'});
+    }
+    if (mounted) {
+      widget.onSaved();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Configuración de caja guardada')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDesktop = widget.isDesktop;
+    final saving = widget.controller.isSavingConfiguracion;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final compactTurnos = w < CashUiResponsive.tabletMin;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.payments_outlined, size: 28, color: AppColors.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Caja: cierre diario o por turnos',
+                    style: TextStyle(
+                      fontSize: isDesktop ? 18.0 : 16.0,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'En modo diario hay una sola sesión de caja por día. En turnos, el cajero elige el turno al abrir y el cierre queda ligado a ese turno (horarios referencia CDMX).',
+              style: TextStyle(
+                fontSize: isDesktop ? 14.0 : 13.0,
+                color: AppColors.textSecondary,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'diario', label: Text('Diario')),
+                  ButtonSegment(value: 'turnos', label: Text('Por turnos')),
+                ],
+                selected: {_modo},
+                onSelectionChanged: saving
+                    ? null
+                    : (Set<String> sel) {
+                        if (sel.isEmpty) return;
+                        setState(() {
+                          _modo = sel.first;
+                          if (_modo == 'turnos' && _rows.isEmpty) {
+                            final c = widget.controller.configuracionCaja;
+                            final src = c.turnos.isNotEmpty
+                                ? c.turnos
+                                : ConfiguracionCajaModel.turnosPorDefecto();
+                            for (final t in src) {
+                              _rows.add(
+                                _TurnoRowControllers(
+                                  n: t.nombre,
+                                  i: t.inicio,
+                                  f: t.fin,
+                                ),
+                              );
+                            }
+                          }
+                        });
+                      },
+              ),
+            ),
+            if (_modo == 'turnos') ...[
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Turnos (máx. 8)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: saving || _rows.length >= 8
+                        ? null
+                        : () {
+                            setState(() {
+                              _rows.add(
+                                _TurnoRowControllers(
+                                  n: '',
+                                  i: '09:00',
+                                  f: '18:00',
+                                ),
+                              );
+                            });
+                          },
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Agregar'),
+                  ),
+                ],
+              ),
+              for (var i = 0; i < _rows.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (compactTurnos) ...[
+                        TextField(
+                          controller: _rows[i].nombre,
+                          decoration: const InputDecoration(
+                            labelText: 'Nombre del turno',
+                            hintText: 'Mañana',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _rows[i].inicio,
+                                decoration: const InputDecoration(
+                                  labelText: 'Inicio (HH:mm)',
+                                  hintText: '07:00',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextField(
+                                controller: _rows[i].fin,
+                                decoration: const InputDecoration(
+                                  labelText: 'Fin (HH:mm)',
+                                  hintText: '14:00',
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Quitar turno',
+                              onPressed: saving || _rows.length <= 1
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _rows.removeAt(i).dispose();
+                                      });
+                                    },
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _rows[i].nombre,
+                                decoration: const InputDecoration(
+                                  labelText: 'Nombre del turno',
+                                  hintText: 'Mañana',
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Quitar turno',
+                              onPressed: saving || _rows.length <= 1
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _rows.removeAt(i).dispose();
+                                      });
+                                    },
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _rows[i].inicio,
+                                decoration: const InputDecoration(
+                                  labelText: 'Inicio (HH:mm)',
+                                  hintText: '07:00',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextField(
+                                controller: _rows[i].fin,
+                                decoration: const InputDecoration(
+                                  labelText: 'Fin (HH:mm)',
+                                  hintText: '14:00',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const Divider(height: 24),
+                    ],
+                  ),
+                ),
+            ],
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: saving ? null : _guardar,
+                icon: saving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save, size: 20),
+                label: Text(saving ? 'Guardando...' : 'Guardar caja'),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
