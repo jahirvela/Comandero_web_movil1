@@ -22,6 +22,11 @@ class ApiService {
   late final Dio _dio;
   final AuthStorage _storage = AuthStorage();
 
+  /// Evita varias renovaciones en paralelo cuando muchas peticiones reciben 401 a la vez.
+  Future<bool>? _ongoingRefresh;
+
+  static const String _retriedAfterRefreshKey = 'retriedAfterRefresh';
+
   /// Inicializar Dio con configuración optimizada
   void _initializeDio() {
     final baseUrl = ApiConfig.baseUrl;
@@ -37,7 +42,8 @@ class ApiService {
       },
       // Configuración específica para Flutter Web
       followRedirects: true,
-      validateStatus: (status) => status != null && status < 500,
+      // Solo 2xx como éxito: si tratamos 401 como éxito, onError no corre y el refresh JWT nunca se ejecuta.
+      validateStatus: (status) => status != null && status >= 200 && status < 300,
     ));
 
     // Configuración adicional para Flutter Web
@@ -107,10 +113,15 @@ class ApiService {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // Agregar token si existe
-          final token = await _getAccessToken();
-          if (token != null) {
-            options.headers['Authorization'] = 'Bearer $token';
+          // Login y refresh no deben llevar Bearer (evita confusión y bucles raros en el servidor).
+          final path = options.uri.path;
+          final skipBearer = path.contains('/auth/login') ||
+              path.contains('/auth/refresh');
+          if (!skipBearer) {
+            final token = await _getAccessToken();
+            if (token != null) {
+              options.headers['Authorization'] = 'Bearer $token';
+            }
           }
           
           if (kDebugMode) {
@@ -122,16 +133,28 @@ class ApiService {
         onError: (error, handler) async {
           // Si el token expiró (401), intentar refrescar
           if (error.response?.statusCode == 401) {
+            final opts = error.requestOptions;
+            if (opts.extra[_retriedAfterRefreshKey] == true) {
+              return handler.next(error);
+            }
+            final path = opts.uri.path;
+            if (path.contains('/auth/login') || path.contains('/auth/refresh')) {
+              return handler.next(error);
+            }
             try {
               final refreshToken = await _storage.read('refreshToken');
               if (refreshToken != null) {
-                final refreshed = await _refreshToken(refreshToken);
+                final refreshed = await _refreshTokenLocked(refreshToken);
                 if (refreshed) {
-                  // Reintentar la petición original
-                  final opts = error.requestOptions;
+                  // Reintentar la petición original una sola vez tras renovar
+                  final retry = opts.copyWith(
+                    headers: Map<String, dynamic>.from(opts.headers),
+                  );
+                  retry.extra = Map<String, dynamic>.from(opts.extra);
+                  retry.extra[_retriedAfterRefreshKey] = true;
                   final token = await _getAccessToken();
-                  opts.headers['Authorization'] = 'Bearer $token';
-                  final response = await _dio.fetch(opts);
+                  retry.headers['Authorization'] = 'Bearer $token';
+                  final response = await _dio.fetch(retry);
                   return handler.resolve(response);
                 }
               }
@@ -182,10 +205,19 @@ class ApiService {
     );
   }
 
-  /// Refrescar el token de acceso
-  Future<bool> _refreshToken(String refreshToken) async {
+  Future<bool> _refreshTokenLocked(String refreshToken) {
+    if (_ongoingRefresh != null) {
+      return _ongoingRefresh!;
+    }
+    _ongoingRefresh = _refreshTokenImpl(refreshToken).whenComplete(() {
+      _ongoingRefresh = null;
+    });
+    return _ongoingRefresh!;
+  }
+
+  /// Refrescar el token de acceso (cliente sin interceptores para evitar recursión).
+  Future<bool> _refreshTokenImpl(String refreshToken) async {
     try {
-      // Crear un nuevo cliente sin interceptores para evitar loops infinitos
       final dioWithoutInterceptors = Dio(BaseOptions(
         baseUrl: ApiConfig.baseUrl,
         connectTimeout: ApiConfig.timeout,
@@ -194,7 +226,13 @@ class ApiService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 300,
       ));
+
+      if (kIsWeb) {
+        dioWithoutInterceptors.options.extra['withCredentials'] = true;
+      }
 
       final response = await dioWithoutInterceptors.post(
         '/auth/refresh',
@@ -203,10 +241,15 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = response.data;
-        if (data['tokens'] != null) {
-          await _saveAccessToken(data['tokens']['accessToken']);
-          await _saveRefreshToken(data['tokens']['refreshToken']);
-          return true;
+        if (data is Map && data['tokens'] != null) {
+          final tokens = data['tokens'] as Map;
+          final access = tokens['accessToken']?.toString() ?? '';
+          final refresh = tokens['refreshToken']?.toString() ?? '';
+          if (access.isNotEmpty && refresh.isNotEmpty) {
+            await _saveAccessToken(access);
+            await _saveRefreshToken(refresh);
+            return true;
+          }
         }
       }
       return false;

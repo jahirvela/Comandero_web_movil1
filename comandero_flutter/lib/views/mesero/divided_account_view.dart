@@ -67,13 +67,12 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                     final isDesktop = constraints.maxWidth > 900;
                     final isWide = constraints.maxWidth > 1200;
                     
-                    // En móvil, usar layout vertical
+                    // En móvil, usar layout vertical + franja inferior con acciones de cierre
+                    // (en <600px no hay sidebar: antes no existían "cerrar cuenta completa" ni barra de mesa/división).
                     if (constraints.maxWidth < 600) {
                       return Column(
                         children: [
-                          // Panel de personas (colapsable o en tabs)
                           _buildPersonListMobile(context, controller, persons, isTablet),
-                          // Contenido principal
                           Expanded(
                             child: _selectedPersonId == null
                                 ? _buildNoPersonSelected(isTablet)
@@ -82,8 +81,10 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                                     controller,
                                     _selectedPersonId!,
                                     isTablet,
+                                    dockPerPersonCloseBelowScroll: true,
                                   ),
                           ),
+                          _buildMobileGlobalActionsStrip(context, controller, isTablet),
                         ],
                       );
                     }
@@ -120,6 +121,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                                   controller,
                                   _selectedPersonId!,
                                   isTablet,
+                                  dockPerPersonCloseBelowScroll: false,
                                 ),
                         ),
                       ],
@@ -201,8 +203,9 @@ class _DividedAccountViewState extends State<DividedAccountView> {
     BuildContext context,
     MeseroController controller,
     String personId,
-    bool isTablet,
-  ) {
+    bool isTablet, {
+    bool dockPerPersonCloseBelowScroll = false,
+  }) {
     final personName = controller.personNames[personId] ?? 'Persona';
     final personItems = controller.getItemsForPerson(personId);
     final total = personItems.fold<double>(
@@ -245,6 +248,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                   personItems,
                   total,
                   isTablet,
+                  omitPerPersonCloseButton: false,
                 ),
               ),
               const SizedBox(width: 16),
@@ -262,8 +266,37 @@ class _DividedAccountViewState extends State<DividedAccountView> {
             ],
           );
         }
-        
-        // En pantallas medianas/pequeñas, usar tabs o scroll vertical
+
+        if (dockPerPersonCloseBelowScroll) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  child: _buildPersonOrderColumn(
+                    context,
+                    controller,
+                    personId,
+                    personName,
+                    personItems,
+                    total,
+                    isTablet,
+                    omitPerPersonCloseButton: true,
+                  ),
+                ),
+              ),
+              _buildPerPersonCloseAccountBar(
+                context,
+                controller,
+                personId,
+                personName,
+                isTablet,
+              ),
+            ],
+          );
+        }
+
+        // Tablet estrecha / sin dock: todo en un scroll
         return SingleChildScrollView(
           child: _buildPersonOrderColumn(
             context,
@@ -273,6 +306,7 @@ class _DividedAccountViewState extends State<DividedAccountView> {
             personItems,
             total,
             isTablet,
+            omitPerPersonCloseButton: false,
           ),
         );
       },
@@ -286,8 +320,9 @@ class _DividedAccountViewState extends State<DividedAccountView> {
     String personName,
     List<dynamic> personItems,
     double total,
-    bool isTablet,
-  ) {
+    bool isTablet, {
+    bool omitPerPersonCloseButton = false,
+  }) {
     return Column(
       children: [
         // Header de la persona
@@ -369,12 +404,9 @@ class _DividedAccountViewState extends State<DividedAccountView> {
               )),
         if (personItems.isEmpty)
           _buildEmptyPersonCart(personName, isTablet),
-        // Footer con acciones
+        // Footer con acciones (sin maxHeight fijo: en móvil podía recortar y ocultar controles)
         if (personItems.isNotEmpty)
           Container(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.3,
-            ),
             padding: EdgeInsets.all(isTablet ? 20.0 : 16.0),
             decoration: BoxDecoration(
               color: AppColors.secondary,
@@ -439,75 +471,172 @@ class _DividedAccountViewState extends State<DividedAccountView> {
               ],
             ),
           ),
-        // Botón de cerrar cuenta (solo si hay historial y no está cerrada)
-        if (_hasPersonHistory(controller, personId) && !_isPersonAccountClosed(controller, personId))
-          Container(
-            padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-            decoration: BoxDecoration(
-              color: AppColors.warning.withValues(alpha: 0.1),
-              border: Border(
-                top: BorderSide(
-                  color: AppColors.border,
-                  width: 1,
-                ),
-              ),
+        if (!omitPerPersonCloseButton) ...[
+          // Botón de cerrar cuenta (solo si hay historial y no está cerrada)
+          if (_hasPersonHistory(controller, personId) &&
+              !_isPersonAccountClosed(controller, personId))
+            _buildPerPersonCloseAccountButton(
+              context,
+              controller,
+              personId,
+              personName,
+              isTablet,
             ),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => _showCloseAccountForPerson(
-                  context,
-                  controller,
-                  personId,
-                  personName,
-                  isTablet,
-                ),
-                icon: const Icon(Icons.receipt_long),
-                label: Text('Cerrar Cuenta de $personName'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.warning,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    vertical: isTablet ? 14.0 : 12.0,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        // Indicador de cuenta cerrada
-        if (_isPersonAccountClosed(controller, personId))
-          Container(
-            padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-            decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.1),
-              border: Border(
-                top: BorderSide(
-                  color: AppColors.border,
-                  width: 1,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.check_circle,
-                  color: AppColors.success,
-                  size: isTablet ? 20.0 : 18.0,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Cuenta de $personName cerrada',
-                  style: TextStyle(
-                    fontSize: isTablet ? 14.0 : 12.0,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.success,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // Indicador de cuenta cerrada
+          if (_isPersonAccountClosed(controller, personId))
+            _buildPerPersonAccountClosedBanner(personName, isTablet),
+        ],
       ],
+    );
+  }
+
+  /// Barra fija bajo el scroll (móvil): cierre por persona siempre a la vista.
+  Widget _buildPerPersonCloseAccountBar(
+    BuildContext context,
+    MeseroController controller,
+    String personId,
+    String personName,
+    bool isTablet,
+  ) {
+    if (_isPersonAccountClosed(controller, personId)) {
+      return Material(
+        color: AppColors.success.withValues(alpha: 0.12),
+        child: _buildPerPersonAccountClosedBanner(personName, isTablet),
+      );
+    }
+    if (_hasPersonHistory(controller, personId)) {
+      return Material(
+        color: AppColors.warning.withValues(alpha: 0.08),
+        elevation: 2,
+        child: _buildPerPersonCloseAccountButton(
+          context,
+          controller,
+          personId,
+          personName,
+          isTablet,
+          compactLabel: true,
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildPerPersonAccountClosedBanner(String personName, bool isTablet) {
+    return Container(
+      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+      decoration: BoxDecoration(
+        color: AppColors.success.withValues(alpha: 0.1),
+        border: Border(
+          top: BorderSide(
+            color: AppColors.border,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.check_circle,
+            color: AppColors.success,
+            size: isTablet ? 20.0 : 18.0,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'Cuenta de $personName cerrada',
+              style: TextStyle(
+                fontSize: isTablet ? 14.0 : 12.0,
+                fontWeight: FontWeight.w600,
+                color: AppColors.success,
+              ),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPerPersonCloseAccountButton(
+    BuildContext context,
+    MeseroController controller,
+    String personId,
+    String personName,
+    bool isTablet, {
+    bool compactLabel = false,
+  }) {
+    return Container(
+      padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.1),
+        border: Border(
+          top: BorderSide(
+            color: AppColors.border,
+            width: 1,
+          ),
+        ),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () => _showCloseAccountForPerson(
+            context,
+            controller,
+            personId,
+            personName,
+            isTablet,
+          ),
+          icon: const Icon(Icons.receipt_long),
+          label: Text(
+            compactLabel ? 'Cerrar cuenta — $personName' : 'Cerrar Cuenta de $personName',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.warning,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(
+              vertical: isTablet ? 14.0 : 12.0,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Móvil: mismas acciones que en el sidebar de tablet (antes no existían en <600px).
+  Widget _buildMobileGlobalActionsStrip(
+    BuildContext context,
+    MeseroController controller,
+    bool isTablet,
+  ) {
+    return Material(
+      elevation: 8,
+      color: AppColors.secondary,
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            isTablet ? 10.0 : 8.0,
+            8.0,
+            isTablet ? 10.0 : 8.0,
+            8.0,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_hasAnyPersonHistory(controller))
+                _buildCloseAllAccountsButton(context, controller, isTablet),
+              _buildCloseDivisionModeButton(context, controller, isTablet),
+              _buildCloseTableButton(context, controller, isTablet),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1201,44 +1330,45 @@ class _DividedAccountViewState extends State<DividedAccountView> {
     Map<String, String> persons,
     bool isTablet,
   ) {
-    return Column(
-      children: [
-        // Header del panel
-        Container(
-          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-          decoration: BoxDecoration(
-            color: AppColors.info.withValues(alpha: 0.1),
-            border: Border(
-              bottom: BorderSide(
-                color: AppColors.border,
-                width: 1,
-              ),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.people,
-                color: AppColors.info,
-                size: isTablet ? 20.0 : 18.0,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Personas (${persons.length})',
-                style: TextStyle(
-                  fontSize: isTablet ? 16.0 : 14.0,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
+    // Un solo scroll: en tablets bajas o muchas personas, los botones del final
+    // quedaban fuera de pantalla y no se podía bajar a ellos.
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Container(
+            padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+            decoration: BoxDecoration(
+              color: AppColors.info.withValues(alpha: 0.1),
+              border: Border(
+                bottom: BorderSide(
+                  color: AppColors.border,
+                  width: 1,
                 ),
               ),
-            ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.people,
+                  color: AppColors.info,
+                  size: isTablet ? 20.0 : 18.0,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Personas (${persons.length})',
+                  style: TextStyle(
+                    fontSize: isTablet ? 16.0 : 14.0,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        // Lista de personas
-        Expanded(
-          child: ListView.builder(
-            itemCount: persons.length,
-            itemBuilder: (context, index) {
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
               final personId = persons.keys.elementAt(index);
               final personName = persons[personId]!;
               final personItems = controller.getItemsForPerson(personId);
@@ -1381,43 +1511,47 @@ class _DividedAccountViewState extends State<DividedAccountView> {
                 ),
               );
             },
+            childCount: persons.length,
           ),
         ),
-        // Botón para agregar persona
-        Container(
-          padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
-          decoration: BoxDecoration(
-            border: Border(
-              top: BorderSide(
-                color: AppColors.border,
-                width: 1,
+        SliverToBoxAdapter(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: EdgeInsets.all(isTablet ? 16.0 : 12.0),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(
+                      color: AppColors.border,
+                      width: 1,
+                    ),
+                  ),
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showAddPersonDialog(
+                      context,
+                      controller,
+                      isTablet,
+                    ),
+                    icon: const Icon(Icons.person_add),
+                    label: const Text('Agregar Persona'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.info,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _showAddPersonDialog(
-                context,
-                controller,
-                isTablet,
-              ),
-              icon: const Icon(Icons.person_add),
-              label: const Text('Agregar Persona'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.info,
-                foregroundColor: Colors.white,
-              ),
-            ),
+              if (_hasAnyPersonHistory(controller))
+                _buildCloseAllAccountsButton(context, controller, isTablet),
+              _buildCloseDivisionModeButton(context, controller, isTablet),
+              _buildCloseTableButton(context, controller, isTablet),
+            ],
           ),
         ),
-        // Botón para cerrar cuenta completa (solo si hay historial)
-        if (_hasAnyPersonHistory(controller))
-          _buildCloseAllAccountsButton(context, controller, isTablet),
-        // Botón para salir del modo dividido y volver a consumo de mesa
-        _buildCloseDivisionModeButton(context, controller, isTablet),
-        // Botón para cerrar mesa (siempre visible en modo división)
-        _buildCloseTableButton(context, controller, isTablet),
       ],
     );
   }

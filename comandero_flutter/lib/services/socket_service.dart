@@ -129,6 +129,41 @@ class SocketService {
     }
   }
 
+  int? _jwtExpUnix(String token) {
+    final p = _decodeJwtPayload(token);
+    if (p == null) return null;
+    final exp = p['exp'];
+    if (exp is int) return exp;
+    if (exp != null) return int.tryParse(exp.toString());
+    return null;
+  }
+
+  /// Si el access JWT está por expirar, renueva antes de conectar (el handshake del socket no pasa por Dio).
+  Future<void> _refreshAccessIfExpiringSoon() async {
+    final token = await _storage.read('accessToken');
+    if (token == null || token.isEmpty) return;
+    final exp = _jwtExpUnix(token);
+    if (exp == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    const skewSeconds = 120;
+    if (exp - now > skewSeconds) return;
+
+    final rt = await _storage.read('refreshToken');
+    if (rt == null || rt.isEmpty) return;
+    if (_tokenRefreshInProgress) return;
+    _tokenRefreshInProgress = true;
+    try {
+      final ok = await _authService.refreshToken(rt);
+      if (ok && kDebugMode) {
+        print(
+          '🔄 Socket: Access token renovado antes de conectar (expira en ${exp - now}s)',
+        );
+      }
+    } finally {
+      _tokenRefreshInProgress = false;
+    }
+  }
+
   /// Conectar al servidor Socket.IO
   ///
   /// IMPORTANTE: Este método SIEMPRE crea una nueva conexión usando el token más reciente del storage.
@@ -196,6 +231,8 @@ class SocketService {
 
     try {
       _updateState(SocketConnectionState.connecting);
+
+      await _refreshAccessIfExpiringSoon();
 
       // CRÍTICO: Leer el token del storage directamente (sin cache)
       // IMPORTANTE: Leer siempre del storage para asegurar que tenemos el token más reciente
