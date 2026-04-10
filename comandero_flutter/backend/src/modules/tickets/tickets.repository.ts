@@ -283,6 +283,48 @@ export interface TicketListItem {
   }>;
 }
 
+function normalizePaymentType(formaPagoNombre: string, referencia: string): 'efectivo' | 'tarjeta' | 'transferencia' | 'otro' {
+  const forma = (formaPagoNombre || '').toLowerCase();
+  const ref = (referencia || '').toLowerCase();
+  if (
+    forma.includes('transfer') ||
+    forma.includes('spei') ||
+    ref.includes('banco:')
+  ) {
+    return 'transferencia';
+  }
+  if (
+    forma.includes('tarjeta') ||
+    forma.includes('card') ||
+    ref.includes('tarjeta débito') ||
+    ref.includes('tarjeta debito') ||
+    ref.includes('tarjeta crédito') ||
+    ref.includes('tarjeta credito')
+  ) {
+    return 'tarjeta';
+  }
+  if (forma.includes('efectivo') || forma.includes('cash')) {
+    return 'efectivo';
+  }
+  return 'otro';
+}
+
+function extractDiscountPercentFromText(value: string | null | undefined): number {
+  if (!value) return 0;
+  const match = value.match(/descuento(?:\s+aplicado)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (!match) return 0;
+  const p = Number(match[1]);
+  if (!Number.isFinite(p) || p <= 0) return 0;
+  return Math.min(p, 100);
+}
+
+function computeDiscountFallback(subtotal: number, discountStored: number, paymentReference: string | null): number {
+  if (discountStored > 0) return discountStored;
+  const pct = extractDiscountPercentFromText(paymentReference);
+  if (pct <= 0 || subtotal <= 0) return 0;
+  return Number(((subtotal * pct) / 100).toFixed(2));
+}
+
 // Función helper para construir información de pago (detecta pagos mixtos y construye desglose)
 function buildPaymentInfo(pagos: RowDataPacket[]): { paymentMethod: string | null; paymentReference: string | null } {
   if (!pagos || pagos.length === 0) {
@@ -313,7 +355,27 @@ function buildPaymentInfo(pagos: RowDataPacket[]): { paymentMethod: string | nul
     return { paymentMethod, paymentReference: referencia || null };
   }
 
-  // Si hay múltiples pagos, es un pago mixto
+  // Si hay múltiples pagos, solo es mixto cuando hay más de un tipo real de pago.
+  const tipos = new Set<string>();
+  for (const pago of pagos) {
+    tipos.add(normalizePaymentType(String(pago.nombre || ''), String(pago.referencia || '')));
+  }
+  if (tipos.size <= 1) {
+    // Múltiples pagos del mismo tipo (p. ej. doble cobro en efectivo) NO deben mostrarse como mixto.
+    const ultimo = pagos[pagos.length - 1];
+    const referencia = (ultimo.referencia as string | null) ?? null;
+    const tipo = normalizePaymentType(String(ultimo.nombre || ''), String(ultimo.referencia || ''));
+    if (tipo === 'transferencia') return { paymentMethod: 'Transferencia', paymentReference: referencia };
+    if (tipo === 'tarjeta') {
+      if ((referencia || '').includes('Tarjeta Crédito')) return { paymentMethod: 'Tarjeta Crédito', paymentReference: referencia };
+      if ((referencia || '').includes('Tarjeta Débito')) return { paymentMethod: 'Tarjeta Débito', paymentReference: referencia };
+      return { paymentMethod: String(ultimo.nombre || 'Tarjeta'), paymentReference: referencia };
+    }
+    if (tipo === 'efectivo') return { paymentMethod: 'Efectivo', paymentReference: referencia };
+    return { paymentMethod: String(ultimo.nombre || null), paymentReference: referencia };
+  }
+
+  // Si hay múltiples tipos, sí es un pago mixto.
   const desglosePagos: string[] = [];
   let totalMixto = 0;
 
@@ -704,10 +766,10 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           customerName: row.cliente_nombre,
           customerPhone: row.cliente_telefono || null,
           subtotal: subtotalTotal,
-          discount: descuentoTotal,
+          discount: computeDiscountFallback(subtotalTotal, descuentoTotal, paymentReference),
           tax: impuestoTotal,
           tip: propinaTotal > 0 ? propinaTotal : null,
-          total: totalTotal,
+          total: Number((subtotalTotal - computeDiscountFallback(subtotalTotal, descuentoTotal, paymentReference) + impuestoTotal).toFixed(2)),
           status,
           createdAt: utcToMxISO(row.fecha_ultimo_cobro ?? fechaMasAntigua) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,
@@ -755,10 +817,10 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           customerName: row.cliente_nombre,
           customerPhone: row.cliente_telefono || null,
           subtotal: Number(row.orden_subtotal),
-          discount: Number(row.orden_descuento),
+          discount: computeDiscountFallback(Number(row.orden_subtotal), Number(row.orden_descuento), paymentReference),
           tax: Number(row.orden_impuesto),
           tip: row.propina_pago && Number(row.propina_pago) > 0 ? Number(row.propina_pago) : null,
-          total: Number(row.orden_total),
+          total: Number((Number(row.orden_subtotal) - computeDiscountFallback(Number(row.orden_subtotal), Number(row.orden_descuento), paymentReference) + Number(row.orden_impuesto)).toFixed(2)),
           status,
           createdAt: utcToMxISO(row.fecha_ultimo_cobro ?? row.orden_fecha) ?? new Date().toISOString(),
           waiterName: row.mesero_nombre,

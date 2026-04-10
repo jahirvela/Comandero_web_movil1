@@ -105,6 +105,18 @@ class BillRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Elimina cualquier bill que contenga alguno de los [ordenIds] proporcionados.
+  /// Útil como respaldo cuando el billId cambia de formato entre vistas/eventos.
+  void removeBillsByOrdenIds(Iterable<int> ordenIds) {
+    final ids = ordenIds.toSet();
+    if (ids.isEmpty) return;
+    _bills.removeWhere((bill) {
+      final billOrdenIds = _ordenIdsEnBill(bill);
+      return billOrdenIds.any(ids.contains);
+    });
+    notifyListeners();
+  }
+
   /// Quita bills cuyo [tableNumber] coincide. **No usar** para “liberar mesa” en mesero:
   /// el cajero y gerente comparten este repositorio; las cuentas deben quitarse solo al
   /// cobrar (o cancelar orden), no al cerrar la mesa en la vista del mesero.

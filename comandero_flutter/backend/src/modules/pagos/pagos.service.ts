@@ -22,6 +22,7 @@ import { obtenerImpresoraPorId } from '../impresoras/impresoras.repository.js';
 import { enviarAperturaCajon } from '../tickets/tickets.printer.js';
 import type { PrinterConfigEntry } from '../../config/printers.config.js';
 import { normalizePaperWidth } from '../../config/printers.config.js';
+import { pool } from '../../db/pool.js';
 
 export const obtenerPagos = (ordenId?: number) => listarPagos(ordenId);
 
@@ -79,6 +80,19 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number, 
   // Para cuentas agrupadas, rastrear todas las órdenes pagadas para emitir un solo ticket
   const ordenesPagadas: Array<{ ordenId: number; total: number }> = [];
   const esCuentaAgrupada = ordenIdsToProcess.length > 1;
+
+  // Si el cajero incluyó un descuento en la referencia ("Descuento 5%"),
+  // persistirlo en la orden para que tickets/admin reflejen correctamente el total neto.
+  // Se limita a cobros de orden individual para evitar prorrateos ambiguos en cuentas agrupadas.
+  const descuentoDesdeReferencia = extraerPorcentajeDescuento(input.referencia ?? null);
+  if (!esCuentaAgrupada && descuentoDesdeReferencia > 0) {
+    await aplicarDescuentoEnOrdenSiCorresponde(input.ordenId, descuentoDesdeReferencia);
+    const ordenActualizada = await obtenerOrdenBasePorId(input.ordenId);
+    if (ordenActualizada) {
+      ordenesData.set(input.ordenId, { total: ordenActualizada.total, ordenBase: ordenActualizada });
+      totalTodasLasOrdenes = ordenActualizada.total;
+    }
+  }
   
   for (let i = 0; i < ordenIdsOrdenados.length; i++) {
     const ordenId = ordenIdsOrdenados[i];
@@ -187,6 +201,49 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number, 
 
   return resultado;
 };
+
+function extraerPorcentajeDescuento(referencia: string | null): number {
+  if (!referencia) return 0;
+  const match = referencia.match(/descuento(?:\s+aplicado)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (!match) return 0;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(value, 100);
+}
+
+async function aplicarDescuentoEnOrdenSiCorresponde(ordenId: number, porcentaje: number): Promise<void> {
+  const orden = await obtenerOrdenBasePorId(ordenId);
+  if (!orden) return;
+  const subtotal = Number(orden.subtotal ?? 0);
+  const descuentoActual = Number(orden.descuentoTotal ?? 0);
+  if (subtotal <= 0) return;
+
+  const descuentoNuevo = Number(((subtotal * porcentaje) / 100).toFixed(2));
+  if (descuentoNuevo <= 0) return;
+  if (descuentoActual > 0.009) return; // No pisar descuentos ya persistidos.
+
+  const baseImponible = Math.max(0, subtotal - descuentoNuevo);
+  const impuestoActual = Number(orden.impuestoTotal ?? 0);
+  const impuestoNuevo = impuestoActual > 0 ? Number((baseImponible * 0.16).toFixed(2)) : 0;
+  const totalNuevo = Number((baseImponible + impuestoNuevo).toFixed(2));
+
+  await pool.execute(
+    `
+      UPDATE orden
+      SET descuento_total = :descuentoTotal,
+          impuesto_total = :impuestoTotal,
+          total = :total,
+          actualizado_en = NOW()
+      WHERE id = :ordenId
+    `,
+    {
+      ordenId,
+      descuentoTotal: descuentoNuevo,
+      impuestoTotal: impuestoNuevo,
+      total: totalNuevo,
+    }
+  );
+}
 
 /**
  * Si la configuración del cajón lo permite (habilitado, abrir en efectivo/tarjeta según forma de pago),

@@ -1185,10 +1185,24 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
 
     // Filtrar por fecha
     closures = closures.where((closure) {
-      return closure.fecha.isAfter(
-            _startDate.subtract(const Duration(days: 1)),
-          ) &&
-          closure.fecha.isBefore(_endDate.add(const Duration(days: 1)));
+      final start = DateTime(
+        _startDate.year,
+        _startDate.month,
+        _startDate.day,
+        0,
+        0,
+        0,
+      );
+      final end = DateTime(
+        _endDate.year,
+        _endDate.month,
+        _endDate.day,
+        23,
+        59,
+        59,
+        999,
+      );
+      return !closure.fecha.isBefore(start) && !closure.fecha.isAfter(end);
     }).toList();
 
     // Ordenar por fecha descendente

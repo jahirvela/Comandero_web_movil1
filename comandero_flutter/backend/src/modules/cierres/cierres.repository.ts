@@ -9,6 +9,9 @@ import {
   todayMxString
 } from '../../config/time.js';
 
+const FECHA_PAGO_MX_SQL = "DATE(CONVERT_TZ(p.fecha_pago, '+00:00', '-06:00'))";
+const FECHA_PP_MX_SQL = "DATE(CONVERT_TZ(pp.fecha, '+00:00', '-06:00'))";
+
 interface CierreCajaRow extends RowDataPacket {
   fecha: Date;
   cajero_id: number | null;
@@ -64,18 +67,18 @@ export const listarCierresCaja = async (
   if (fechaInicio && fechaFin) {
     const fechaInicioStr = getDateOnlyMx(fechaInicio) ?? (fechaInicio instanceof Date ? fechaInicio.toISOString().split('T')[0] : fechaInicio);
     const fechaFinStr = getDateOnlyMx(fechaFin) ?? (fechaFin instanceof Date ? fechaFin.toISOString().split('T')[0] : fechaFin);
-    conditionsPago.push('DATE(p.fecha_pago) BETWEEN DATE(:fechaInicio) AND DATE(:fechaFin)');
+    conditionsPago.push(`${FECHA_PAGO_MX_SQL} BETWEEN DATE(:fechaInicio) AND DATE(:fechaFin)`);
     conditionsCierre.push('DATE(cc.fecha) BETWEEN DATE(:fechaInicio) AND DATE(:fechaFin)');
     params.fechaInicio = fechaInicioStr;
     params.fechaFin = fechaFinStr;
   } else if (fechaInicio) {
     const fechaInicioStr = getDateOnlyMx(fechaInicio) ?? (fechaInicio instanceof Date ? fechaInicio.toISOString().split('T')[0] : fechaInicio);
-    conditionsPago.push('DATE(p.fecha_pago) >= DATE(:fechaInicio)');
+    conditionsPago.push(`${FECHA_PAGO_MX_SQL} >= DATE(:fechaInicio)`);
     conditionsCierre.push('DATE(cc.fecha) >= DATE(:fechaInicio)');
     params.fechaInicio = fechaInicioStr;
   } else if (fechaFin) {
     const fechaFinStr = getDateOnlyMx(fechaFin) ?? (fechaFin instanceof Date ? fechaFin.toISOString().split('T')[0] : fechaFin);
-    conditionsPago.push('DATE(p.fecha_pago) <= DATE(:fechaFin)');
+    conditionsPago.push(`${FECHA_PAGO_MX_SQL} <= DATE(:fechaFin)`);
     conditionsCierre.push('DATE(cc.fecha) <= DATE(:fechaFin)');
     params.fechaFin = fechaFinStr;
   }
@@ -94,7 +97,7 @@ export const listarCierresCaja = async (
   const [rowsCalculados] = await pool.execute<CierreCajaRow[]>(
     `
     SELECT
-      DATE(p.fecha_pago) AS fecha,
+      ${FECHA_PAGO_MX_SQL} AS fecha,
       p.empleado_id AS cajero_id,
       u.nombre AS cajero_nombre,
       u.username AS cajero_username,
@@ -116,7 +119,7 @@ export const listarCierresCaja = async (
         SELECT id FROM estado_orden WHERE nombre IN ('pagada', 'cerrada')
       )
       ${whereClausePago}
-    GROUP BY DATE(p.fecha_pago), p.empleado_id, u.id, u.nombre, u.username
+    GROUP BY ${FECHA_PAGO_MX_SQL}, p.empleado_id, u.id, u.nombre, u.username
     `,
     params
   );
@@ -126,7 +129,7 @@ export const listarCierresCaja = async (
   // Para cada orden con propina: prorratear según monto efectivo/tarjeta de sus pagos
   const wherePropinas = conditionsPago.length > 0
     ? ' AND ' + conditionsPago
-        .map(c => c.replace(/DATE\(p\.fecha_pago\)/g, 'pp.fecha').replace(/p\.empleado_id/g, 'pp.empleado_id'))
+        .map(c => c.replace(new RegExp(FECHA_PAGO_MX_SQL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), FECHA_PP_MX_SQL).replace(/p\.empleado_id/g, 'pp.empleado_id'))
         .join(' AND ')
     : '';
   interface PropinasTipoRow extends RowDataPacket { fecha: Date; cajero_id: number | null; total_propinas_efectivo: number; total_propinas_tarjeta: number; }
@@ -156,7 +159,7 @@ export const listarCierresCaja = async (
     FROM (SELECT orden_id, SUM(monto) AS propina_monto FROM propina GROUP BY orden_id) pr
     INNER JOIN orden o ON o.id = pr.orden_id
     INNER JOIN (
-      SELECT p1.orden_id, p1.empleado_id, DATE(p1.fecha_pago) AS fecha
+      SELECT p1.orden_id, p1.empleado_id, p1.fecha_pago AS fecha
       FROM pago p1
       WHERE p1.estado = 'aplicado'
         AND NOT EXISTS (

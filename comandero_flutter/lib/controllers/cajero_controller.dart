@@ -1072,6 +1072,9 @@ class CajeroController extends ChangeNotifier {
       if (!keepBillOpen) {
         print('💳 CajeroController: Eliminando bill ${payment.billId} (último pago)');
         _billRepository.removeBill(payment.billId);
+        // Respaldo: eliminar también por orden(es) para evitar que quede visible
+        // cuando hay diferencias de billId entre eventos/listados.
+        _billRepository.removeBillsByOrdenIds(ordenIdsCompletos);
 
         // Actualizar _bills inmediatamente después de eliminar
         // NO llamar a loadBills() aquí porque puede eliminar bills pendientes que aún deberían estar visibles
