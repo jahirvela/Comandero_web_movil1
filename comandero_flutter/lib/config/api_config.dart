@@ -484,6 +484,14 @@ class ApiConfig {
       final u = _normalizeUrl(_qaApiUrl);
       // Si API_QA_URL viene por --dart-define, respetarlo primero.
       if (_hasQaApiUrlOverride && u.isNotEmpty && !_isUrlBroken(u)) return u;
+      // En web QA el dominio fuerza environment=qa; si solo pasaron API_URL
+      // (y no API_QA_URL), antes se ignoraba. Respetar API_URL igual que en prod.
+      final prodU = _normalizeUrl(_productionApiUrl);
+      if (_hasProductionApiUrlOverride &&
+          prodU.isNotEmpty &&
+          !_isUrlBroken(prodU)) {
+        return prodU;
+      }
       final webFallback = _webQaFallbackBaseUrl;
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       if (u.isNotEmpty && !_isUrlBroken(u)) return u;
@@ -535,6 +543,13 @@ class ApiConfig {
         return origin.endsWith('/')
             ? origin.substring(0, origin.length - 1)
             : origin;
+      }
+      if (_hasProductionApiUrlOverride) {
+        final p = _normalizeUrl(_productionApiUrl);
+        final o = _originFromBase(p);
+        if (o.isNotEmpty && !_isUrlBroken(o)) {
+          return o.endsWith('/') ? o.substring(0, o.length - 1) : o;
+        }
       }
       final webFallback = _webQaFallbackSocketUrl;
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
