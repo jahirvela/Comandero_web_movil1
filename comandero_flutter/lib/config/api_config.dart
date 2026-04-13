@@ -50,10 +50,12 @@ class ApiConfig {
     'API_URL',
     defaultValue: 'https://api.comandix.com',
   );
+  static const bool _hasProductionApiUrlOverride = bool.hasEnvironment('API_URL');
   static const String _qaApiUrl = String.fromEnvironment(
     'API_QA_URL',
     defaultValue: 'https://apiqa.comancleth.com/api',
   );
+  static const bool _hasQaApiUrlOverride = bool.hasEnvironment('API_QA_URL');
 
   /// Normaliza una URL para que siempre tenga protocolo y host correctos.
   /// - "https:/api.dominio.com" -> "https://api.dominio.com"
@@ -479,9 +481,11 @@ class ApiConfig {
     }
 
     if (environment == 'qa') {
+      final u = _normalizeUrl(_qaApiUrl);
+      // Si API_QA_URL viene por --dart-define, respetarlo primero.
+      if (_hasQaApiUrlOverride && u.isNotEmpty && !_isUrlBroken(u)) return u;
       final webFallback = _webQaFallbackBaseUrl;
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
-      final u = _normalizeUrl(_qaApiUrl);
       if (u.isNotEmpty && !_isUrlBroken(u)) return u;
       return 'https://apiqa.comancleth.com/api';
     }
@@ -489,9 +493,13 @@ class ApiConfig {
     // En producción: en web usar siempre el mismo dominio
     // para que el mismo build funcione en cualquier servidor sin recompilar.
     if (environment == 'production') {
+      final u = _normalizeUrl(_productionApiUrl);
+      // Si API_URL viene por --dart-define, respetarlo primero.
+      if (_hasProductionApiUrlOverride && u.isNotEmpty && !_isUrlBroken(u)) {
+        return u;
+      }
       final webFallback = _webProductionFallbackBaseUrl;
       if (webFallback != null && webFallback.isNotEmpty) return webFallback;
-      final u = _normalizeUrl(_productionApiUrl);
       if (u.isNotEmpty && !_isUrlBroken(u)) return u;
       return 'https://api.comandix.com/api';
     }
@@ -521,10 +529,15 @@ class ApiConfig {
     }
 
     if (environment == 'qa') {
-      final webFallback = _webQaFallbackSocketUrl;
-      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final normalized = _normalizeUrl(_qaApiUrl);
       final origin = _originFromBase(normalized);
+      if (_hasQaApiUrlOverride && origin.isNotEmpty && !_isUrlBroken(origin)) {
+        return origin.endsWith('/')
+            ? origin.substring(0, origin.length - 1)
+            : origin;
+      }
+      final webFallback = _webQaFallbackSocketUrl;
+      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       if (origin.isNotEmpty && !_isUrlBroken(origin)) {
         return origin.endsWith('/')
             ? origin.substring(0, origin.length - 1)
@@ -535,10 +548,15 @@ class ApiConfig {
 
     // En producción: en web usar mismo dominio (comancleth.com → api.comancleth.com)
     if (environment == 'production') {
-      final webFallback = _webProductionFallbackSocketUrl;
-      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       final base = baseUrl;
       final origin = _originFromBase(base);
+      if (_hasProductionApiUrlOverride && origin.isNotEmpty && !_isUrlBroken(origin)) {
+        return origin.endsWith('/')
+            ? origin.substring(0, origin.length - 1)
+            : origin;
+      }
+      final webFallback = _webProductionFallbackSocketUrl;
+      if (webFallback != null && webFallback.isNotEmpty) return webFallback;
       if (origin.isNotEmpty && !_isUrlBroken(origin)) {
         return origin.endsWith('/')
             ? origin.substring(0, origin.length - 1)
