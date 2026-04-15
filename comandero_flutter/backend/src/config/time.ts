@@ -182,6 +182,15 @@ export function formatMxLocale(
 }
 
 /**
+ * Marca de tiempo CDMX sin comas (pies CSV / Excel). `es-MX` en locale puede insertar
+ * comas en fecha-hora y romper columnas o provocar `###` al abrir el archivo.
+ */
+export function formatMxCsvTimestamp(date?: DateTime | null): string {
+  const dt = date ?? nowMx();
+  return dt.toFormat('yyyy-MM-dd HH:mm:ss');
+}
+
+/**
  * Calcula la diferencia de tiempo entre una fecha UTC y ahora en CDMX
  * @param date - Fecha en UTC
  * @returns Texto tipo "hace X minutos/horas" o null si la fecha es inválida

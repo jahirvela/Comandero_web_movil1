@@ -742,14 +742,15 @@ export const listarTickets = async (): Promise<TicketListItem[]> => {
           }
         }
 
-        // Obtener todos los pagos de la orden principal para detectar pago mixto
+        // Pagos de TODAS las órdenes del grupo (mixto puede repartirse entre órdenes secundarias)
+        const placeholders = ordenIdsAgrupados.map(() => '?').join(',');
         const [todosPagosAgrupados] = await pool.query<RowDataPacket[]>(
           `SELECT fp.nombre, p.referencia, p.monto, p.fecha_pago
            FROM pago p 
            JOIN forma_pago fp ON fp.id = p.forma_pago_id 
-           WHERE p.orden_id = ? AND p.estado = 'aplicado'
+           WHERE p.orden_id IN (${placeholders}) AND p.estado = 'aplicado'
            ORDER BY p.fecha_pago ASC`,
-          [row.orden_id]
+          ordenIdsAgrupados
         );
         
         const { paymentMethod, paymentReference } = buildPaymentInfo(todosPagosAgrupados);

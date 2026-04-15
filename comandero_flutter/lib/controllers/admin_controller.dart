@@ -20,11 +20,35 @@ import '../services/configuracion_service.dart';
 import '../services/impresoras_service.dart';
 import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
+import '../utils/closure_utils.dart' as closure_utils;
 import '../utils/string_search_utils.dart';
 import '../utils/file_download_helper.dart';
+import '../utils/csv_format.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/widgets.dart' as pdf_widgets;
+
+bool _adminNonCashMixtoPareceTransferencia(payment_models.PaymentModel p) {
+  if (p.bankName != null && p.bankName!.trim().isNotEmpty) return true;
+  final ref = '${p.reference ?? ''} ${p.notes ?? ''}'.toLowerCase();
+  return ref.contains('banco:') ||
+      ref.contains('transferencia') ||
+      ref.contains('spei');
+}
+
+String? _adminCardTipoResuelto(payment_models.PaymentModel p) {
+  final cm = (p.cardMethod ?? '').toLowerCase().trim();
+  if (cm.contains('credito')) return 'credito';
+  if (cm.contains('debito')) return 'debito';
+  final blob = '${p.reference ?? ''} ${p.notes ?? ''}'.toLowerCase();
+  if (blob.contains('tarjeta crédito') || blob.contains('tarjeta credito')) {
+    return 'credito';
+  }
+  if (blob.contains('tarjeta débito') || blob.contains('tarjeta debito')) {
+    return 'debito';
+  }
+  return null;
+}
 
 class AdminController extends ChangeNotifier {
   AdminController({required PaymentRepository paymentRepository})
@@ -1160,6 +1184,13 @@ class AdminController extends ChangeNotifier {
       }),
     ], eagerError: false); // No fallar si una operación falla
 
+    // `loadDailyConsumption` corre en paralelo con `loadTables`; re-mapear órdenes
+    // para que `mesaCodigo` use el nombre real de la mesa cuando ya hay `_tables`.
+    await loadDailyConsumption().catchError((e) {
+      print('⚠️ Error al refrescar consumo del día tras carga inicial: $e');
+      return null;
+    });
+
     print('✅ AdminController: Carga de datos completada');
   }
 
@@ -1631,8 +1662,59 @@ class AdminController extends ChangeNotifier {
       }
       if (payment.type == payment_models.PaymentType.mixed) {
         final cashPortion = payment.cashApplied ?? 0;
-        return sum +
+        final rest =
             (payment.totalAmount - cashPortion).clamp(0.0, double.infinity);
+        if (rest <= 0) return sum;
+        if (_adminNonCashMixtoPareceTransferencia(payment)) return sum;
+        return sum + rest;
+      }
+      return sum;
+    });
+  }
+
+  /// Tarjeta débito (incluye parte tarjeta de mixtos no transferencia).
+  double get todayDebitCardSales {
+    return _consumptionPagosAplicados.fold(0.0, (sum, payment) {
+      if (payment.type == payment_models.PaymentType.card) {
+        final tipo = _adminCardTipoResuelto(payment);
+        if (tipo == 'credito') return sum;
+        return sum + payment.totalAmount;
+      }
+      if (payment.type == payment_models.PaymentType.mixed) {
+        final cashPortion = payment.cashApplied ?? 0;
+        final rest =
+            (payment.totalAmount - cashPortion).clamp(0.0, double.infinity);
+        if (rest <= 0 || _adminNonCashMixtoPareceTransferencia(payment)) {
+          return sum;
+        }
+        final tipo = _adminCardTipoResuelto(payment);
+        if (tipo == 'credito') return sum;
+        return sum + rest;
+      }
+      return sum;
+    });
+  }
+
+  /// Tarjeta crédito (incluye parte tarjeta de mixtos no transferencia).
+  double get todayCreditCardSales {
+    return _consumptionPagosAplicados.fold(0.0, (sum, payment) {
+      if (payment.type == payment_models.PaymentType.card) {
+        if (_adminCardTipoResuelto(payment) == 'credito') {
+          return sum + payment.totalAmount;
+        }
+        return sum;
+      }
+      if (payment.type == payment_models.PaymentType.mixed) {
+        final cashPortion = payment.cashApplied ?? 0;
+        final rest =
+            (payment.totalAmount - cashPortion).clamp(0.0, double.infinity);
+        if (rest <= 0 || _adminNonCashMixtoPareceTransferencia(payment)) {
+          return sum;
+        }
+        if (_adminCardTipoResuelto(payment) == 'credito') {
+          return sum + rest;
+        }
+        return sum;
       }
       return sum;
     });
@@ -1954,12 +2036,29 @@ class AdminController extends ChangeNotifier {
         );
       }
 
+      final exportNowCdmx = date_utils.AppDateUtils.nowCdmx();
+
       // Construir contenido CSV
       final csvLines = <String>[];
 
       // Encabezados (sin Impuesto)
       csvLines.add(
-        'ID,Orden ID,Tipo,Mesa/Cliente,Subtotal,Descuento,Propina,Total,Método de Pago,Estado,Impreso Por,Fecha/Hora,Mesero,Cliente Teléfono',
+        csvJoinRow([
+          'ID',
+          'Orden ID',
+          'Tipo',
+          'Mesa/Cliente',
+          'Subtotal',
+          'Descuento',
+          'Propina',
+          'Total',
+          'Método de Pago',
+          'Estado',
+          'Impreso Por',
+          'Fecha/Hora',
+          'Mesero',
+          'Cliente Teléfono',
+        ]),
       );
 
       // Función helper para formatear método de pago
@@ -2039,7 +2138,7 @@ class AdminController extends ChangeNotifier {
         final metodoPago = formatPaymentMethod(ticket.paymentMethod);
 
         csvLines.add(
-          [
+          csvJoinRow([
             ticket.id,
             ticket.ordenId?.toString() ?? 'N/A',
             tipo,
@@ -2050,11 +2149,11 @@ class AdminController extends ChangeNotifier {
             ticket.total.toStringAsFixed(2),
             metodoPago,
             estadoStr,
-            impresoPor.replaceAll(',', ';'),
-            fecha.replaceAll(',', ';'),
-            mesero.replaceAll(',', ';'),
-            clienteTelefono.replaceAll(',', ';'),
-          ].join(','),
+            impresoPor,
+            fecha,
+            mesero,
+            clienteTelefono,
+          ]),
         );
       }
 
@@ -2077,22 +2176,25 @@ class AdminController extends ChangeNotifier {
           .fold(0.0, (sum, t) => sum + t.total);
 
       csvLines.add('');
-      csvLines.add('RESUMEN');
-      csvLines.add('Total Tickets,$totalTickets');
-      csvLines.add('Total Ventas,${totalVentas.toStringAsFixed(2)}');
-      csvLines.add('Total Propinas,${totalPropinas.toStringAsFixed(2)}');
-      csvLines.add('Total Efectivo,${totalEfectivo.toStringAsFixed(2)}');
-      csvLines.add('Total Tarjeta,${totalTarjeta.toStringAsFixed(2)}');
+      csvLines.add(csvJoinRow(['RESUMEN']));
+      csvLines.add(csvJoinRow(['Total Tickets', '$totalTickets']));
+      csvLines.add(csvJoinRow(['Total Ventas', totalVentas.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Propinas', totalPropinas.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Efectivo', totalEfectivo.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Tarjeta', totalTarjeta.toStringAsFixed(2)]));
       csvLines.add('');
       csvLines.add(
-        'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+        csvJoinRow([
+          'Generado (CDMX)',
+          date_utils.AppDateUtils.formatDateTimeCsvSafe(exportNowCdmx),
+        ]),
       );
 
       final csvContent = csvLines.join('\n');
 
       // Generar nombre de archivo basado en el período seleccionado
       String filename;
-      final now = date_utils.AppDateUtils.nowCdmx();
+      final now = exportNowCdmx;
       if (_selectedTicketPeriod == 'hoy') {
         filename =
             'tickets_${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}.csv';
@@ -2188,7 +2290,7 @@ class AdminController extends ChangeNotifier {
       );
 
       // Agregar timeout para evitar que la carga se quede colgada
-      _cashClosures = await _cierresService
+      final cargados = await _cierresService
           .listarCierresCaja(fechaInicio: fechaInicio, fechaFin: fechaFin)
           .timeout(
             const Duration(seconds: 15),
@@ -2197,6 +2299,7 @@ class AdminController extends ChangeNotifier {
               return <CashCloseModel>[];
             },
           );
+      _cashClosures = closure_utils.dedupeCashClosuresForDisplay(cargados);
       print('✅ AdminController: ${_cashClosures.length} cierres cargados');
       // Debug: mostrar aperturas encontradas
       final apertura = getTodayCashOpening();
@@ -2493,8 +2596,12 @@ class AdminController extends ChangeNotifier {
         );
       }
 
+      final exportNowCdmx = date_utils.AppDateUtils.nowCdmx();
+      final cierresParaExport =
+          closure_utils.dedupeCashClosuresForDisplay(cierresFiltrados);
+
       // Ordenar por fecha descendente
-      final cierresOrdenados = List<CashCloseModel>.from(cierresFiltrados)
+      final cierresOrdenados = List<CashCloseModel>.from(cierresParaExport)
         ..sort((a, b) => b.fecha.compareTo(a.fecha));
 
       // Construir contenido CSV
@@ -2504,8 +2611,36 @@ class AdminController extends ChangeNotifier {
       // Encabezados (incluir Subtotal e IVA si está habilitado)
       csvLines.add(
         showIva
-            ? 'ID,Fecha,Hora,Cajero,Total Ventas,Subtotal,IVA (16%),Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas'
-            : 'ID,Fecha,Hora,Cajero,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+            ? csvJoinRow([
+                'ID',
+                'Fecha',
+                'Hora',
+                'Cajero',
+                'Total Ventas',
+                'Subtotal',
+                'IVA (16%)',
+                'Efectivo',
+                'Tarjeta',
+                'Otros Ingresos',
+                'Propinas',
+                'Estado',
+                'Efectivo Inicial',
+                'Notas',
+              ])
+            : csvJoinRow([
+                'ID',
+                'Fecha',
+                'Hora',
+                'Cajero',
+                'Total Ventas',
+                'Efectivo',
+                'Tarjeta',
+                'Otros Ingresos',
+                'Propinas',
+                'Estado',
+                'Efectivo Inicial',
+                'Notas',
+              ]),
       );
 
       // Función helper para formatear estado en español
@@ -2545,7 +2680,7 @@ class AdminController extends ChangeNotifier {
           cierre.id,
           fechaStr,
           horaStr,
-          cierre.usuario.replaceAll(',', ';'),
+          cierre.usuario,
           cierre.totalNeto.toStringAsFixed(2),
           if (showIva) ...[
             subtotal.toStringAsFixed(2),
@@ -2559,7 +2694,7 @@ class AdminController extends ChangeNotifier {
           cierre.efectivoInicial.toStringAsFixed(2),
           notas,
         ];
-        csvLines.add(rowData.join(','));
+        csvLines.add(csvJoinRow(rowData));
       }
 
       // Agregar resumen al final
@@ -2586,29 +2721,37 @@ class AdminController extends ChangeNotifier {
       );
 
       csvLines.add('');
-      csvLines.add('RESUMEN');
-      csvLines.add('Total Cierres,$totalCierres');
-      csvLines.add('Total Ventas,${totalVentas.toStringAsFixed(2)}');
+      csvLines.add(csvJoinRow(['RESUMEN']));
+      csvLines.add(csvJoinRow(['Total Cierres', '$totalCierres']));
+      csvLines.add(csvJoinRow(['Total Ventas', totalVentas.toStringAsFixed(2)]));
       if (showIva && totalVentas > 0) {
         final totalSubtotal = totalVentas / 1.16;
         final totalIva = totalVentas - totalSubtotal;
-        csvLines.add('Subtotal (base gravable),${totalSubtotal.toStringAsFixed(2)}');
-        csvLines.add('IVA (16%),${totalIva.toStringAsFixed(2)}');
+        csvLines.add(
+          csvJoinRow([
+            'Subtotal (base gravable)',
+            totalSubtotal.toStringAsFixed(2),
+          ]),
+        );
+        csvLines.add(csvJoinRow(['IVA (16%)', totalIva.toStringAsFixed(2)]));
       }
-      csvLines.add('Total Efectivo,${totalEfectivo.toStringAsFixed(2)}');
-      csvLines.add('Total Tarjeta,${totalTarjeta.toStringAsFixed(2)}');
-      csvLines.add('Total Otros Ingresos,${totalOtros.toStringAsFixed(2)}');
-      csvLines.add('Total Propinas,${totalPropinas.toStringAsFixed(2)}');
+      csvLines.add(csvJoinRow(['Total Efectivo', totalEfectivo.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Tarjeta', totalTarjeta.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Otros Ingresos', totalOtros.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Propinas', totalPropinas.toStringAsFixed(2)]));
       csvLines.add('');
       csvLines.add(
-        'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+        csvJoinRow([
+          'Generado (CDMX)',
+          date_utils.AppDateUtils.formatDateTimeCsvSafe(exportNowCdmx),
+        ]),
       );
 
       final csvContent = csvLines.join('\n');
 
       // Generar nombre de archivo basado en el período seleccionado
       String filename;
-      final now = date_utils.AppDateUtils.nowCdmx();
+      final now = exportNowCdmx;
       if (_selectedCashClosePeriod == 'hoy') {
         filename =
             'cierres_caja_${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}.csv';
@@ -2655,8 +2798,14 @@ class AdminController extends ChangeNotifier {
         );
       }
 
+      final cierresParaPdf =
+          closure_utils.dedupeCashClosuresForDisplay(cierresFiltrados);
+      final marcaGeneracion = date_utils.AppDateUtils.nowCdmx();
+      final marcaGeneracionStr =
+          date_utils.AppDateUtils.formatDateTimeWithAmPm(marcaGeneracion);
+
       // Ordenar por fecha descendente
-      final cierresOrdenados = List<CashCloseModel>.from(cierresFiltrados)
+      final cierresOrdenados = List<CashCloseModel>.from(cierresParaPdf)
         ..sort((a, b) => b.fecha.compareTo(a.fecha));
 
       // Función helper para formatear estado en español
@@ -2701,7 +2850,7 @@ class AdminController extends ChangeNotifier {
                       ),
                     ),
                     pdf_widgets.Text(
-                      date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx()),
+                      marcaGeneracionStr,
                       style: const pdf_widgets.TextStyle(fontSize: 12),
                     ),
                   ],
@@ -2985,7 +3134,7 @@ class AdminController extends ChangeNotifier {
               pdf_widgets.SizedBox(height: 24),
               pdf_widgets.Divider(),
               pdf_widgets.Text(
-                'Generado el ${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())} (CDMX)',
+                'Generado el $marcaGeneracionStr (CDMX)',
                 style: const pdf_widgets.TextStyle(
                   fontSize: 9,
                   color: PdfColors.grey700,
@@ -2999,11 +3148,10 @@ class AdminController extends ChangeNotifier {
 
       // Guardar y compartir PDF
       final bytes = await pdfDoc.save();
-      final pdfHoy = date_utils.AppDateUtils.nowCdmx();
       await Printing.sharePdf(
         bytes: bytes,
         filename:
-            'cierres_caja_${pdfHoy.year}_${pdfHoy.month.toString().padLeft(2, '0')}_${pdfHoy.day.toString().padLeft(2, '0')}.pdf',
+            'cierres_caja_${marcaGeneracion.year}_${marcaGeneracion.month.toString().padLeft(2, '0')}_${marcaGeneracion.day.toString().padLeft(2, '0')}.pdf',
       );
 
       print('✅ PDF de cierres de caja generado correctamente');
@@ -4362,7 +4510,10 @@ class AdminController extends ChangeNotifier {
 
   // Gestión de cierres de caja
   void addCashClose(CashCloseModel cashClose) {
-    _cashClosures.insert(0, cashClose);
+    _cashClosures = closure_utils.dedupeCashClosuresForDisplay([
+      cashClose,
+      ..._cashClosures,
+    ]);
     notifyListeners();
   }
 
@@ -4630,38 +4781,78 @@ class AdminController extends ChangeNotifier {
     final range = _inventoryPeriodRange(period);
     final rows = await _fetchMovimientosForExportRange(range.start, range.end);
     double _num(dynamic v) => (v is num) ? v.toDouble() : 0.0;
+    final exportNow = date_utils.AppDateUtils.nowCdmx();
+    String tsCsv(dynamic v) {
+      if (v == null) return '';
+      try {
+        return date_utils.AppDateUtils.formatDateTimeCsvSafe(
+          date_utils.AppDateUtils.parseToLocal(v),
+        );
+      } catch (_) {
+        return v.toString();
+      }
+    }
+
     final buffer = StringBuffer();
-    buffer.writeln('Reporte de inventario (${range.slug})');
+    buffer.writeln(csvEscapeCell('Reporte de inventario (${range.slug})'));
     buffer.writeln(
-      'Desde,${date_utils.AppDateUtils.formatDateTimeWithAmPm(range.start)}',
+      csvJoinRow([
+        'Desde',
+        date_utils.AppDateUtils.formatDateTimeCsvSafe(
+          date_utils.AppDateUtils.toCdmxWallForReport(range.start),
+        ),
+      ]),
     );
     buffer.writeln(
-      'Hasta,${date_utils.AppDateUtils.formatDateTimeWithAmPm(range.end)}',
+      csvJoinRow([
+        'Hasta',
+        date_utils.AppDateUtils.formatDateTimeCsvSafe(
+          date_utils.AppDateUtils.toCdmxWallForReport(range.end),
+        ),
+      ]),
     );
     buffer.writeln(
-      'IdMov,IdItem,Item,Tipo,Cantidad,Unidad,CostoUnit,CostoTotal,Motivo,Origen,RefOrden,UsuarioId,Fecha',
+      csvJoinRow([
+        'IdMov',
+        'IdItem',
+        'Item',
+        'Tipo',
+        'Cantidad',
+        'Unidad',
+        'CostoUnit',
+        'CostoTotal',
+        'Motivo',
+        'Origen',
+        'RefOrden',
+        'UsuarioId',
+        'Fecha',
+      ]),
     );
-    String esc(String v) => v.replaceAll(',', ' ');
     for (final m in rows) {
-      buffer.writeln([
-        m['id'],
-        m['inventarioItemId'],
-        esc('${m['inventarioItemNombre'] ?? ''}'),
-        m['tipo'],
-        m['cantidad'],
-        m['unidad'],
-        m['costoUnitario'],
-        (_num(m['cantidad']) * _num(m['costoUnitario'])).toStringAsFixed(2),
-        esc('${m['motivo'] ?? ''}'),
-        m['origen'],
-        m['referenciaOrdenId'],
-        m['creadoPorUsuarioId'],
-        _adminFormatReportTimestamp(m['creadoEn']),
-      ].join(','));
+      buffer.writeln(
+        csvJoinRow([
+          '${m['id'] ?? ''}',
+          '${m['inventarioItemId'] ?? ''}',
+          '${m['inventarioItemNombre'] ?? ''}',
+          '${m['tipo'] ?? ''}',
+          '${m['cantidad'] ?? ''}',
+          '${m['unidad'] ?? ''}',
+          '${m['costoUnitario'] ?? ''}',
+          (_num(m['cantidad']) * _num(m['costoUnitario'])).toStringAsFixed(2),
+          '${m['motivo'] ?? ''}',
+          '${m['origen'] ?? ''}',
+          '${m['referenciaOrdenId'] ?? ''}',
+          '${m['creadoPorUsuarioId'] ?? ''}',
+          tsCsv(m['creadoEn']),
+        ]),
+      );
     }
     buffer.writeln('');
     buffer.writeln(
-      'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+      csvJoinRow([
+        'Generado (CDMX)',
+        date_utils.AppDateUtils.formatDateTimeCsvSafe(exportNow),
+      ]),
     );
     final file = 'inventario_${range.slug}_${DateTime.now().millisecondsSinceEpoch}.csv';
     await FileDownloadHelper.downloadCSV(buffer.toString(), file);
@@ -4671,6 +4862,9 @@ class AdminController extends ChangeNotifier {
     final range = _inventoryPeriodRange(period);
     final rows = await _fetchMovimientosForExportRange(range.start, range.end);
     double _num(dynamic v) => (v is num) ? v.toDouble() : 0.0;
+    final marcaGen = date_utils.AppDateUtils.nowCdmx();
+    final marcaGenStr =
+        date_utils.AppDateUtils.formatDateTimeWithAmPm(marcaGen);
     final pdfDoc = pdf_widgets.Document();
     pdfDoc.addPage(
       pdf_widgets.MultiPage(
@@ -4736,7 +4930,7 @@ class AdminController extends ChangeNotifier {
             ),
             pdf_widgets.SizedBox(height: 16),
             pdf_widgets.Text(
-              'Generado el ${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())} (CDMX)',
+              'Generado el $marcaGenStr (CDMX)',
               style: const pdf_widgets.TextStyle(
                 fontSize: 8,
                 color: PdfColors.grey700,
@@ -4852,12 +5046,37 @@ class AdminController extends ChangeNotifier {
       }
     }
 
-    // Obtener mesa
+    // Mesa: priorizar nombre/código real (configuración de mesas) para el panel.
     final mesaId = data['mesaId'] as int?;
-    final mesaCodigo = data['mesaCodigo'] as String?;
-    final tableNumber = mesaCodigo != null
-        ? int.tryParse(mesaCodigo.replaceAll('Mesa ', '').trim())
-        : (mesaId != null ? mesaId : null);
+    final mesaCodigoRaw = (data['mesaCodigo'] as String?)?.trim();
+    final mesaNombreApi = (data['mesaNombre'] as String?)?.trim();
+
+    String? resolvedMesaCodigo;
+    if (mesaNombreApi != null && mesaNombreApi.isNotEmpty) {
+      resolvedMesaCodigo = mesaNombreApi;
+    } else if (mesaId != null && _tables.isNotEmpty) {
+      for (final t in _tables) {
+        if (t.id == mesaId) {
+          resolvedMesaCodigo = t.codigo.trim();
+          break;
+        }
+      }
+    }
+    resolvedMesaCodigo ??=
+        (mesaCodigoRaw != null && mesaCodigoRaw.isNotEmpty) ? mesaCodigoRaw : null;
+
+    int? tableNumber;
+    if (mesaId != null && _tables.isNotEmpty) {
+      for (final t in _tables) {
+        if (t.id == mesaId) {
+          tableNumber = t.number != 0 ? t.number : mesaId;
+          break;
+        }
+      }
+    }
+    tableNumber ??= mesaCodigoRaw != null
+        ? int.tryParse(mesaCodigoRaw.replaceAll(RegExp(r'[^0-9]'), ''))
+        : mesaId;
 
     // Obtener fechas
     DateTime orderTime;
@@ -4881,6 +5100,7 @@ class AdminController extends ChangeNotifier {
     return OrderModel(
       id: ordenId.toString(),
       tableNumber: tableNumber,
+      mesaCodigo: resolvedMesaCodigo,
       items: items,
       status: status,
       orderTime: orderTime,

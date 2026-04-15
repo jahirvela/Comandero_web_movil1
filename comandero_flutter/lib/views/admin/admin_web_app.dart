@@ -750,7 +750,8 @@ class _AdminWebAppState extends State<AdminWebApp> {
     final localSales = controller.todayLocalSales;
     final takeawaySales = controller.todayTakeawaySales;
     final cashSales = controller.todayCashSales;
-    final cardSales = controller.todayCardSales;
+    final debitCardSales = controller.todayDebitCardSales;
+    final creditCardSales = controller.todayCreditCardSales;
     final transferSales = controller.todayTransferSales;
     final pendingPayment = controller.pendingCollectionsTotal;
     final totalNet = controller.todayTotalSales;
@@ -832,12 +833,23 @@ class _AdminWebAppState extends State<AdminWebApp> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: _buildConsumptionCard(
-                          'Ventas Tarjeta',
-                          '\$${cardSales.toStringAsFixed(2)}',
+                          'Tarjeta Débito',
+                          '\$${debitCardSales.toStringAsFixed(2)}',
                           Colors.deepOrange.shade700,
                           isTablet,
                           isDesktop,
-                          subtitle: 'Tarjeta + parte tarjeta de mixto',
+                          subtitle: 'Débito + parte débito de mixto',
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildConsumptionCard(
+                          'Tarjeta Crédito',
+                          '\$${creditCardSales.toStringAsFixed(2)}',
+                          Colors.deepPurple.shade700,
+                          isTablet,
+                          isDesktop,
+                          subtitle: 'Crédito + parte crédito de mixto',
                         ),
                       ),
                         ],
@@ -925,12 +937,23 @@ class _AdminWebAppState extends State<AdminWebApp> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: _buildConsumptionCard(
-                              'Ventas Tarjeta',
-                              '\$${cardSales.toStringAsFixed(2)}',
+                              'Tarjeta Débito',
+                              '\$${debitCardSales.toStringAsFixed(2)}',
                               Colors.deepOrange.shade700,
                               isTablet,
                               isDesktop,
-                              subtitle: 'Tarjeta + parte tarjeta de mixto',
+                              subtitle: 'Débito + parte débito de mixto',
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildConsumptionCard(
+                              'Tarjeta Crédito',
+                              '\$${creditCardSales.toStringAsFixed(2)}',
+                              Colors.deepPurple.shade700,
+                              isTablet,
+                              isDesktop,
+                              subtitle: 'Crédito + parte crédito de mixto',
                             ),
                           ),
                         ],

@@ -5,6 +5,7 @@ import '../../controllers/auth_controller.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cajero_discount_input.dart';
 import '../../utils/date_utils.dart' as date_utils;
 
 /// Modal para registrar múltiples pagos manuales (mixto)
@@ -50,13 +51,16 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   final _tipAmtFocus = FocusNode();
   final _tipPctFocus = FocusNode();
   bool _submitted = false;
+  CajeroDiscountInputMode _discountMode = CajeroDiscountInputMode.percent;
 
   double get _originalBillTotal => widget.bill.calculatedTotal;
-  double get _discountPercentage {
-    final value = double.tryParse(_discountController.text) ?? 0;
-    return value.clamp(0, 100).toDouble();
-  }
-  double get _discountAmount => _originalBillTotal * (_discountPercentage / 100);
+  double get _discountRaw => cajeroParseDiscountInput(_discountController.text);
+  double get _discountAmount => cajeroDiscountAmount(
+        billTotalForDiscount: _originalBillTotal,
+        mode: _discountMode,
+        rawInput: _discountRaw,
+      );
+  bool get _hasDiscount => _discountAmount > 0.0001;
   double get _billTotal => (_originalBillTotal - _discountAmount).clamp(0, double.infinity);
   double get _totalPaid =>
       _entries.fold(0.0, (sum, entry) => sum + entry.amount);
@@ -182,18 +186,42 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
   }
 
   Widget _buildDiscountField(bool isTablet) {
-    return TextFormField(
-      controller: _discountController,
-      focusNode: _discountFocus,
-      textInputAction: TextInputAction.next,
-      onFieldSubmitted: (_) => _tipAmtFocus.requestFocus(),
-      decoration: InputDecoration(
-        labelText: 'Descuento global (%)',
-        prefixIcon: const Icon(Icons.percent),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-      keyboardType: TextInputType.number,
-      onChanged: (_) => setState(() {}),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        cajeroDiscountModeSelector(
+          mode: _discountMode,
+          onChanged: (m) => setState(() => _discountMode = m),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _discountController,
+          focusNode: _discountFocus,
+          textInputAction: TextInputAction.next,
+          onFieldSubmitted: (_) => _tipAmtFocus.requestFocus(),
+          decoration: InputDecoration(
+            labelText: _discountMode == CajeroDiscountInputMode.percent
+                ? 'Descuento global (%)'
+                : 'Descuento global (MXN)',
+            prefixIcon: Icon(
+              _discountMode == CajeroDiscountInputMode.percent
+                  ? Icons.percent
+                  : Icons.attach_money,
+            ),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          keyboardType: TextInputType.number,
+          onChanged: (_) => setState(() {}),
+        ),
+      ],
+    );
+  }
+
+  String? _mixedDiscountRefSuffix() {
+    return cajeroDiscountPaymentReference(
+      mode: _discountMode,
+      rawInput: _discountRaw,
+      billTotalForDiscount: _originalBillTotal,
     );
   }
 
@@ -768,7 +796,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           entry,
           cashierName,
           includeTip: isLast && _tipAmount > 0,
-          includeDiscount: isLast && _discountPercentage > 0,
+          includeDiscount: isLast && _hasDiscount,
         );
 
         // Asegurar que el billId sea el correcto usando el bill original
@@ -847,6 +875,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
     final timestamp = date_utils.AppDateUtils.now();
     final tipToApply = includeTip ? _tipAmount : 0.0;
     final discountToApply = includeDiscount ? _discountAmount : 0.0;
+    final discSuffix = includeDiscount ? _mixedDiscountRefSuffix() : null;
     final totalWithTip =
         (entry.amount + tipToApply - discountToApply).clamp(0.0, double.infinity).toDouble();
     switch (entry.type) {
@@ -866,8 +895,8 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           transactionId: entry.referenceCtrl.text.trim().isNotEmpty
               ? entry.referenceCtrl.text.trim()
               : null,
-          reference: includeDiscount
-              ? '$referencia | Descuento ${_discountPercentage.toStringAsFixed(0)}%'
+          reference: discSuffix != null && discSuffix.isNotEmpty
+              ? '$referencia | $discSuffix'
               : referencia,
           notes: entry.notesCtrl.text.trim().isEmpty
               ? null
@@ -887,8 +916,8 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           type: PaymentType.transfer,
           totalAmount: totalWithTip,
           bankName: entry.bankCtrl.text.trim(),
-          reference: includeDiscount
-              ? '${entry.referenceCtrl.text.trim()} | Descuento ${_discountPercentage.toStringAsFixed(0)}%'
+          reference: discSuffix != null && discSuffix.isNotEmpty
+              ? '${entry.referenceCtrl.text.trim()} | $discSuffix'
               : entry.referenceCtrl.text.trim(),
           notes: entry.notesCtrl.text.trim().isEmpty
               ? null
@@ -907,6 +936,7 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
           cashReceived: totalWithTip,
           cashApplied: totalWithTip,
           change: 0,
+          reference: discSuffix,
           notes: entry.notesCtrl.text.trim().isEmpty
               ? null
               : entry.notesCtrl.text.trim(),

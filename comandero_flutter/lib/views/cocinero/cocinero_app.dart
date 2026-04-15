@@ -65,6 +65,7 @@ class CocineroApp extends StatelessWidget {
                     cocineroController,
                     authController,
                     isTablet,
+                    roleLabel,
                   ),
                   body: _buildBody(
                     context,
@@ -87,8 +88,12 @@ class CocineroApp extends StatelessWidget {
     CocineroController cocineroController,
     AuthController authController,
     bool isTablet,
+    String roleLabel,
   ) {
     final filteredOrders = cocineroController.filteredOrders;
+    final user = authController.userName.trim();
+    final titleCenter =
+        user.isEmpty ? 'Usuario · $roleLabel' : '$user · $roleLabel';
 
     return AppBar(
       title: Row(
@@ -111,24 +116,18 @@ class CocineroApp extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Filtros de Cocina - Comandix',
-                style: TextStyle(
-                  fontSize: isTablet ? 18.0 : 16.0,
-                  fontWeight: FontWeight.bold,
-                ),
+          Expanded(
+            child: Text(
+              titleCenter,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
-              Text(
-                '${authController.userName} • $roleLabel',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: Colors.white.withValues(alpha: 0.8),
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/payment_model.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cajero_discount_input.dart';
 import 'card_voucher_modal.dart';
 
 /// Modal para pagar con tarjeta (primera parte: enviar a terminal)
@@ -46,12 +47,14 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
   final _discountController = TextEditingController();
   final _discountFocus = FocusNode();
   final bool _isTerminalConnected = true; // Simulado
-  double get _discountPercentage {
-    final value = double.tryParse(_discountController.text) ?? 0;
-    return value.clamp(0, 100).toDouble();
-  }
-  double get _discountAmount =>
-      widget.bill.calculatedTotal * (_discountPercentage / 100);
+  CajeroDiscountInputMode _discountMode = CajeroDiscountInputMode.percent;
+
+  double get _discountRaw => cajeroParseDiscountInput(_discountController.text);
+  double get _discountAmount => cajeroDiscountAmount(
+        billTotalForDiscount: widget.bill.calculatedTotal,
+        mode: _discountMode,
+        rawInput: _discountRaw,
+      );
   double get _totalWithDiscount =>
       (widget.bill.calculatedTotal - _discountAmount).clamp(0, double.infinity);
 
@@ -266,6 +269,11 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                   ),
                   const SizedBox(height: 24),
 
+                  cajeroDiscountModeSelector(
+                    mode: _discountMode,
+                    onChanged: (m) => setState(() => _discountMode = m),
+                  ),
+                  const SizedBox(height: 8),
                   TextFormField(
                     controller: _discountController,
                     focusNode: _discountFocus,
@@ -273,8 +281,14 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
                     onFieldSubmitted: (_) =>
                         FocusScope.of(context).nextFocus(),
                     decoration: InputDecoration(
-                      labelText: 'Descuento (%)',
-                      prefixIcon: const Icon(Icons.percent),
+                      labelText: _discountMode == CajeroDiscountInputMode.percent
+                          ? 'Descuento (%)'
+                          : 'Descuento (monto MXN)',
+                      prefixIcon: Icon(
+                        _discountMode == CajeroDiscountInputMode.percent
+                            ? Icons.percent
+                            : Icons.attach_money,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
@@ -481,7 +495,8 @@ class _CardPaymentModalState extends State<CardPaymentModal> {
       terminal,
       controller,
       isTablet,
-      _discountPercentage,
+      _discountMode,
+      _discountRaw,
     );
   }
 }

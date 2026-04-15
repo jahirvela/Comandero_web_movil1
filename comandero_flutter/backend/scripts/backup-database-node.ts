@@ -242,8 +242,10 @@ const isMainModule = import.meta.url === `file://${process.argv[1]}` ||
                      process.argv[1]?.endsWith('backup-database-node.ts') ||
                      process.argv[1]?.includes('backup-database-node');
 
+const backupOutputDir = process.env.BACKUP_OUTPUT_DIR?.trim();
+
 if (isMainModule || !process.env.npm_config_user_config) {
-  crearBackupNode()
+  crearBackupNode(backupOutputDir ? { outputDir: backupOutputDir } : {})
     .then((backupPath) => {
       console.log(`\n✅ Backup guardado en: ${backupPath}`);
       process.exit(0);

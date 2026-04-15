@@ -100,6 +100,10 @@ class MeseroApp extends StatelessWidget {
       cartBadgeCount = meseroController.totalCartItems;
     }
 
+    final u = authController.userName.trim();
+    final titleCenter =
+        u.isEmpty ? 'Usuario · $roleLabel' : '$u · $roleLabel';
+
     return AppBar(
       title: Row(
         children: [
@@ -109,24 +113,18 @@ class MeseroApp extends StatelessWidget {
             color: Colors.white,
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Comandix',
-                style: TextStyle(
-                  fontSize: isTablet ? 20.0 : 18.0,
-                  fontWeight: FontWeight.bold,
-                ),
+          Expanded(
+            child: Text(
+              titleCenter,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
               ),
-              Text(
-                '${authController.userName} • $roleLabel',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: Colors.white.withValues(alpha: 0.8),
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),

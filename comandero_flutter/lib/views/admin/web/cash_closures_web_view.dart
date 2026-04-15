@@ -635,6 +635,18 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                   ),
                 ),
                 DataColumn(
+                  label: Tooltip(
+                    message: 'Apertura o cierre de caja.',
+                    child: Text(
+                      'Tipo',
+                      style: TextStyle(
+                        fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                DataColumn(
                   label: Text(
                     'Período',
                     style: TextStyle(
@@ -716,6 +728,8 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
     bool isTablet,
     bool isDesktop,
   ) {
+    final esAperturaRow = closure_utils.cashCloseEsApertura(closure);
+    final tipoMov = closure_utils.cashCloseTipoEtiqueta(closure);
     Color statusColor = Colors.grey;
     String statusText = 'Desconocido';
     IconData statusIcon = Icons.help;
@@ -775,6 +789,32 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
               fontSize: isDesktop ? 14.0 : (isTablet ? 12.0 : 10.0),
               fontWeight: FontWeight.w500,
               color: AppColors.textPrimary,
+            ),
+          ),
+        ),
+        DataCell(
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: esAperturaRow
+                  ? Colors.teal.withValues(alpha: 0.12)
+                  : Colors.indigo.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: esAperturaRow
+                    ? Colors.teal.withValues(alpha: 0.35)
+                    : Colors.indigo.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Text(
+              tipoMov,
+              style: TextStyle(
+                fontSize: isDesktop ? 12.0 : (isTablet ? 10.0 : 9.0),
+                fontWeight: FontWeight.w600,
+                color: esAperturaRow
+                    ? Colors.teal.shade800
+                    : Colors.indigo.shade800,
+              ),
             ),
           ),
         ),
@@ -872,20 +912,22 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                 onPressed: () => _showClosureDetails(closure, controller),
                 icon: Icon(Icons.visibility, size: isDesktop ? 18.0 : 16.0),
                 color: Colors.blue,
-                tooltip: 'Ver Detalles',
+                tooltip: esAperturaRow
+                    ? 'Ver detalles de la apertura'
+                    : 'Ver detalles del cierre',
               ),
               if (closure.estado == CashCloseStatus.pending) ...[
                 IconButton(
                   onPressed: () => _approveClosure(closure, controller),
                   icon: Icon(Icons.check, size: isDesktop ? 18.0 : 16.0),
                   color: Colors.green,
-                  tooltip: 'Aprobar',
+                  tooltip: esAperturaRow ? 'Aprobar apertura' : 'Aprobar cierre',
                 ),
                 IconButton(
                   onPressed: () => _rejectClosure(closure, controller),
                   icon: Icon(Icons.close, size: isDesktop ? 18.0 : 16.0),
                   color: Colors.red,
-                  tooltip: 'Rechazar',
+                  tooltip: esAperturaRow ? 'Rechazar apertura' : 'Rechazar cierre',
                 ),
               ],
               IconButton(
@@ -1289,6 +1331,10 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
   void _showClosureDetails(CashCloseModel closure, AdminController controller) {
     final isTablet = MediaQuery.of(context).size.width > 800;
     final isDesktop = MediaQuery.of(context).size.width > 1200;
+    final esAperturaDet = closure_utils.cashCloseEsApertura(closure);
+    final tituloDetalle = esAperturaDet
+        ? 'Detalles de la apertura'
+        : 'Detalles del cierre de caja';
 
     showDialog(
       context: context,
@@ -1326,7 +1372,7 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Detalles del Cierre de Caja',
+                            tituloDetalle,
                             style: TextStyle(
                               fontSize: isDesktop
                                   ? 22.0
@@ -1394,6 +1440,13 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                                       ),
                                       const SizedBox(height: 6),
                                       _buildInfoRow(Icons.person_outline, 'Usuario', closure.usuario, isDesktop, isTablet),
+                                      _buildInfoRow(
+                                        Icons.bookmark_outline,
+                                        'Tipo',
+                                        closure_utils.cashCloseTipoEtiqueta(closure),
+                                        isDesktop,
+                                        isTablet,
+                                      ),
                                       _buildInfoRow(Icons.calendar_today, 'Período', closure.periodo, isDesktop, isTablet),
                                       _buildInfoRow(Icons.access_time, 'Fecha y hora', date_utils.AppDateUtils.formatDateTime(closure.fecha), isDesktop, isTablet),
                                       if (closure.efectivoInicial > 0)
@@ -1478,7 +1531,9 @@ class _CashClosuresWebViewState extends State<CashClosuresWebView> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Efectivo + Tarjeta + Otros ingresos',
+                                  esAperturaDet
+                                      ? 'En aperturas suele mostrarse en cero hasta registrar ventas'
+                                      : 'Efectivo + Tarjeta + Otros ingresos',
                                   style: TextStyle(
                                     fontSize: isDesktop ? 11.0 : 10.0,
                                     color: AppColors.textSecondary,

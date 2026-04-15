@@ -294,6 +294,19 @@ class AppDateUtils {
     return '$day/$month/$year $hour12:$minute $amPm';
   }
 
+  /// Fecha-hora CDMX sin comas (export CSV / pies de archivo): evita columnas
+  /// partidas y celdas `###` en Excel cuando el locale inserta comas en fechas.
+  static String formatDateTimeCsvSafe(DateTime fecha) {
+    final localDate = toCdmxWallForReport(fecha);
+    final y = localDate.year;
+    final mo = localDate.month.toString().padLeft(2, '0');
+    final d = localDate.day.toString().padLeft(2, '0');
+    final h = localDate.hour.toString().padLeft(2, '0');
+    final mi = localDate.minute.toString().padLeft(2, '0');
+    final s = localDate.second.toString().padLeft(2, '0');
+    return '$y-$mo-$d $h:$mi:$s';
+  }
+
   /// Formatea solo la fecha (sin hora)
   /// Formato: dd/MM/yyyy
   static String formatDate(DateTime fecha) {

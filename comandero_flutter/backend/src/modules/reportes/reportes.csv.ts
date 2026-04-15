@@ -5,7 +5,7 @@ import type {
   CorteCaja,
   InventarioMovimiento
 } from './reportes.repository.js';
-import { formatMxLocale, formatMxDate, nowMx } from '../../config/time.js';
+import { formatMxLocale, formatMxDate, formatMxCsvTimestamp } from '../../config/time.js';
 
 /**
  * Librería elegida: json2csv (v6.0.0-alpha.2)
@@ -34,7 +34,7 @@ export const generarCSVVentas = (datos: VentasReporte[]): string => {
 
   const parser = new Parser({ fields, withBOM: true });
   const body = datos.length === 0 ? '' : parser.parse(datos);
-  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
+  return `${body}\n\nGenerado (CDMX),${formatMxCsvTimestamp()}`;
 };
 
 export const generarCSVTopProductos = (datos: TopProducto[]): string => {
@@ -48,7 +48,7 @@ export const generarCSVTopProductos = (datos: TopProducto[]): string => {
 
   const parser = new Parser({ fields, withBOM: true });
   const body = datos.length === 0 ? '' : parser.parse(datos);
-  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
+  return `${body}\n\nGenerado (CDMX),${formatMxCsvTimestamp()}`;
 };
 
 export const generarCSVCorteCaja = (datos: CorteCaja): string => {
@@ -66,7 +66,7 @@ export const generarCSVCorteCaja = (datos: CorteCaja): string => {
 
   const parser = new Parser({ fields, withBOM: true });
   const body = parser.parse([datos]);
-  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
+  return `${body}\n\nGenerado (CDMX),${formatMxCsvTimestamp()}`;
 };
 
 export const generarCSVInventario = (datos: InventarioMovimiento[]): string => {
@@ -90,6 +90,6 @@ export const generarCSVInventario = (datos: InventarioMovimiento[]): string => {
 
   const parser = new Parser({ fields, withBOM: true });
   const body = datos.length === 0 ? '' : parser.parse(datos);
-  return `${body}\n\nGenerado (CDMX),${formatMxLocale(nowMx())}`;
+  return `${body}\n\nGenerado (CDMX),${formatMxCsvTimestamp()}`;
 };
 

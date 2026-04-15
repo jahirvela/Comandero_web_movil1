@@ -81,16 +81,29 @@ export const crearNuevoPago = async (input: CrearPagoInput, usuarioId?: number, 
   const ordenesPagadas: Array<{ ordenId: number; total: number }> = [];
   const esCuentaAgrupada = ordenIdsToProcess.length > 1;
 
-  // Si el cajero incluyó un descuento en la referencia ("Descuento 5%"),
+  // Si el cajero incluyó un descuento en la referencia (porcentaje o monto fijo),
   // persistirlo en la orden para que tickets/admin reflejen correctamente el total neto.
   // Se limita a cobros de orden individual para evitar prorrateos ambiguos en cuentas agrupadas.
-  const descuentoDesdeReferencia = extraerPorcentajeDescuento(input.referencia ?? null);
-  if (!esCuentaAgrupada && descuentoDesdeReferencia > 0) {
-    await aplicarDescuentoEnOrdenSiCorresponde(input.ordenId, descuentoDesdeReferencia);
-    const ordenActualizada = await obtenerOrdenBasePorId(input.ordenId);
-    if (ordenActualizada) {
-      ordenesData.set(input.ordenId, { total: ordenActualizada.total, ordenBase: ordenActualizada });
-      totalTodasLasOrdenes = ordenActualizada.total;
+  const refDescuento = input.referencia ?? null;
+  if (!esCuentaAgrupada) {
+    const montoFijo = extraerMontoDescuentoFijo(refDescuento);
+    let aplicoDescuento = false;
+    if (montoFijo > 0) {
+      await aplicarDescuentoAbsolutoEnOrdenSiCorresponde(input.ordenId, montoFijo);
+      aplicoDescuento = true;
+    } else {
+      const pct = extraerPorcentajeDescuento(refDescuento);
+      if (pct > 0) {
+        await aplicarDescuentoPorcentajeEnOrdenSiCorresponde(input.ordenId, pct);
+        aplicoDescuento = true;
+      }
+    }
+    if (aplicoDescuento) {
+      const ordenActualizada = await obtenerOrdenBasePorId(input.ordenId);
+      if (ordenActualizada) {
+        ordenesData.set(input.ordenId, { total: ordenActualizada.total, ordenBase: ordenActualizada });
+        totalTodasLasOrdenes = ordenActualizada.total;
+      }
     }
   }
   
@@ -211,14 +224,26 @@ function extraerPorcentajeDescuento(referencia: string | null): number {
   return Math.min(value, 100);
 }
 
-async function aplicarDescuentoEnOrdenSiCorresponde(ordenId: number, porcentaje: number): Promise<void> {
+/** Ej. "Descuento fijo: $152.00" o "| Descuento fijo: 152" */
+function extraerMontoDescuentoFijo(referencia: string | null): number {
+  if (!referencia) return 0;
+  const match = referencia.match(/descuento\s+fijo\s*[:\-]?\s*\$?\s*(\d+(?:[.,]\d+)?)/i);
+  if (!match) return 0;
+  const normalized = String(match[1]).replace(',', '');
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value;
+}
+
+async function persistirDescuentoOrdenSiCorresponde(
+  ordenId: number,
+  descuentoNuevo: number
+): Promise<void> {
   const orden = await obtenerOrdenBasePorId(ordenId);
   if (!orden) return;
   const subtotal = Number(orden.subtotal ?? 0);
   const descuentoActual = Number(orden.descuentoTotal ?? 0);
   if (subtotal <= 0) return;
-
-  const descuentoNuevo = Number(((subtotal * porcentaje) / 100).toFixed(2));
   if (descuentoNuevo <= 0) return;
   if (descuentoActual > 0.009) return; // No pisar descuentos ya persistidos.
 
@@ -243,6 +268,30 @@ async function aplicarDescuentoEnOrdenSiCorresponde(ordenId: number, porcentaje:
       total: totalNuevo,
     }
   );
+}
+
+async function aplicarDescuentoPorcentajeEnOrdenSiCorresponde(
+  ordenId: number,
+  porcentaje: number
+): Promise<void> {
+  const orden = await obtenerOrdenBasePorId(ordenId);
+  if (!orden) return;
+  const subtotal = Number(orden.subtotal ?? 0);
+  if (subtotal <= 0) return;
+  const descuentoNuevo = Number(((subtotal * porcentaje) / 100).toFixed(2));
+  await persistirDescuentoOrdenSiCorresponde(ordenId, descuentoNuevo);
+}
+
+async function aplicarDescuentoAbsolutoEnOrdenSiCorresponde(
+  ordenId: number,
+  montoSolicitado: number
+): Promise<void> {
+  const orden = await obtenerOrdenBasePorId(ordenId);
+  if (!orden) return;
+  const subtotal = Number(orden.subtotal ?? 0);
+  if (subtotal <= 0) return;
+  const descuentoNuevo = Number(Math.min(Math.max(montoSolicitado, 0), subtotal).toFixed(2));
+  await persistirDescuentoOrdenSiCorresponde(ordenId, descuentoNuevo);
 }
 
 /**

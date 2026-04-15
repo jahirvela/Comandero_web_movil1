@@ -35,6 +35,7 @@
     "migrate:remote": "tsx scripts/aplicar-migraciones-remoto.ts",
     "backfill:mov-inventario-inicial": "tsx scripts/backfill-movimiento-inventario-inicial.ts",
     "backup:database": "tsx scripts/backup-database-node.ts",
+    "dump:menu-insumos": "tsx scripts/dump-menu-insumos.ts",
     "backup:periodico": "tsx scripts/backup-periodico.ts",
     "restore:backup": "tsx scripts/restore-backup.ts",
     "backup:programar": "powershell -ExecutionPolicy Bypass -File scripts/programar-backups.ps1",

@@ -143,6 +143,10 @@ class _CaptainAppBodyState extends State<_CaptainAppBody> {
     AuthController authController,
     bool isTablet,
   ) {
+    final user = authController.userName.trim();
+    final titleCenter =
+        user.isEmpty ? 'Usuario · Capitán' : '$user · Capitán';
+
     return AppBar(
       title: Row(
         children: [
@@ -164,24 +168,18 @@ class _CaptainAppBodyState extends State<_CaptainAppBody> {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Panel de Capitán - Comandix',
-                style: TextStyle(
-                  fontSize: isTablet ? 18.0 : 16.0,
-                  fontWeight: FontWeight.bold,
-                ),
+          Expanded(
+            child: Text(
+              titleCenter,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
-              Text(
-                '${authController.userName} • Capitán',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: Colors.white.withValues(alpha: 0.8),
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),

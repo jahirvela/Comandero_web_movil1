@@ -4,6 +4,7 @@ import '../../models/payment_model.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cajero_discount_input.dart';
 import '../../utils/date_utils.dart' as date_utils;
 
 /// Modal para confirmar cobro en efectivo
@@ -49,6 +50,7 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
   final _tipFocus = FocusNode();
   final _notesFocus = FocusNode();
   bool _tipDelivered = false;
+  CajeroDiscountInputMode _discountMode = CajeroDiscountInputMode.percent;
 
   @override
   void dispose() {
@@ -65,11 +67,14 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
 
   double get _cashReceived => double.tryParse(_cashReceivedController.text) ?? 0.0;
   double get _tipAmount => double.tryParse(_tipAmountController.text) ?? 0.0;
-  double get _discountPercentage {
-    final value = double.tryParse(_discountPercentageController.text) ?? 0.0;
-    return value.clamp(0, 100).toDouble();
-  }
-  double get _discountAmount => widget.bill.calculatedTotal * (_discountPercentage / 100);
+  double get _discountRaw =>
+      cajeroParseDiscountInput(_discountPercentageController.text);
+  double get _discountAmount => cajeroDiscountAmount(
+        billTotalForDiscount: widget.bill.calculatedTotal,
+        mode: _discountMode,
+        rawInput: _discountRaw,
+      );
+  bool get _hasDiscount => _discountAmount > 0.0001;
   // Usar el total calculado desde los items para asegurar que sea correcto
   double get _totalAmount => (widget.bill.calculatedTotal - _discountAmount).clamp(0, double.infinity);
   
@@ -137,10 +142,12 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
                         ),
                       ),
                     ],
-                    if (_discountPercentage > 0) ...[
+                    if (_hasDiscount) ...[
                       const SizedBox(height: 6),
                       Text(
-                        'Incluye descuento ${_discountPercentage.toStringAsFixed(0)}% (-${widget.controller.formatCurrency(_discountAmount)})',
+                        _discountMode == CajeroDiscountInputMode.percent
+                            ? 'Incluye descuento ${_discountRaw.clamp(0, 100).toStringAsFixed(0)}% (-${widget.controller.formatCurrency(_discountAmount)})'
+                            : 'Incluye descuento fijo (-${widget.controller.formatCurrency(_discountAmount)})',
                         style: TextStyle(
                           fontSize: widget.isTablet ? 13.0 : 12.0,
                           color: AppColors.success,
@@ -153,14 +160,25 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
               ),
               const SizedBox(height: 24),
 
+              cajeroDiscountModeSelector(
+                mode: _discountMode,
+                onChanged: (m) => setState(() => _discountMode = m),
+              ),
+              const SizedBox(height: 8),
               TextFormField(
                 controller: _discountPercentageController,
                 focusNode: _discountFocus,
                 textInputAction: TextInputAction.next,
                 onFieldSubmitted: (_) => _cashFocus.requestFocus(),
                 decoration: InputDecoration(
-                  labelText: 'Descuento (%)',
-                  prefixIcon: const Icon(Icons.percent),
+                  labelText: _discountMode == CajeroDiscountInputMode.percent
+                      ? 'Descuento (%)'
+                      : 'Descuento (monto MXN)',
+                  prefixIcon: Icon(
+                    _discountMode == CajeroDiscountInputMode.percent
+                        ? Icons.percent
+                        : Icons.attach_money,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -393,9 +411,11 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
         notes: _notesController.text.trim().isEmpty
             ? null
             : _notesController.text.trim(),
-        reference: _discountPercentage > 0
-            ? 'Descuento aplicado: ${_discountPercentage.toStringAsFixed(0)}%'
-            : null,
+        reference: cajeroDiscountPaymentReference(
+          mode: _discountMode,
+          rawInput: _discountRaw,
+          billTotalForDiscount: widget.bill.calculatedTotal,
+        ),
         tableNumber: widget.bill.tableNumber,
         billId: widget.bill.id,
         timestamp: date_utils.AppDateUtils.now(),

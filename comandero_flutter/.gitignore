@@ -51,6 +51,9 @@ backend/.env.local
 backend/.env.remote
 backend/.env.local.*
 backend/.env.remote.*
+# Credenciales BD en archivo local (ej. remot_bd en Documentos); ignorar si se copia al repo
+remot_bd
+remot_bd.*
 backend/dist/
 backend/build/
 backend/*.log

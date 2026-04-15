@@ -396,7 +396,9 @@ class BillRepository extends ChangeNotifier {
             tamanoEtiqueta,
           );
           final notaItem = itemJson['nota'] as String? ?? '';
-          final tieneDescuento = notaItem.toLowerCase().contains('descuento aplicado');
+          final lower = notaItem.toLowerCase();
+          final tieneDescuento = lower.contains('descuento aplicado') ||
+              lower.contains('descuento fijo');
           final nombreConDescuento = tieneDescuento
               ? '$nombreConTamano (Desc.)'
               : nombreConTamano;

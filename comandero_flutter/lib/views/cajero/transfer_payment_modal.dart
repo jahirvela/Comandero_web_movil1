@@ -5,6 +5,7 @@ import '../../controllers/auth_controller.dart';
 import '../../controllers/cajero_controller.dart';
 import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cajero_discount_input.dart';
 import '../../utils/date_utils.dart' as date_utils;
 
 /// Modal para registrar un pago por transferencia manual
@@ -58,18 +59,23 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   final _notesFocus = FocusNode();
 
   bool _submitted = false;
+  CajeroDiscountInputMode _discountMode = CajeroDiscountInputMode.percent;
 
   double get _billTotal => widget.bill.calculatedTotal;
-  double get _discountPercentage {
-    final value = double.tryParse(_discountController.text) ?? 0;
-    return value.clamp(0, 100).toDouble();
-  }
-  double get _discountAmount => _billTotal * (_discountPercentage / 100);
-  double get _billTotalAfterDiscount => (_billTotal - _discountAmount).clamp(0, double.infinity);
+  double get _discountRaw => cajeroParseDiscountInput(_discountController.text);
+  double get _discountAmount => cajeroDiscountAmount(
+        billTotalForDiscount: _billTotal,
+        mode: _discountMode,
+        rawInput: _discountRaw,
+      );
+  double get _billTotalAfterDiscount =>
+      (_billTotal - _discountAmount).clamp(0, double.infinity);
   double get _amount => double.tryParse(_amountController.text) ?? 0;
   double get _tip => double.tryParse(_tipController.text) ?? 0;
   double get _paidWithTip => _amount + _tip;
-  double get _remaining => (_billTotal - _paidWithTip).clamp(0, double.infinity);
+  /// Saldo del total de cuenta (tras descuento) no cubierto por el monto transferido (la propina es aparte).
+  double get _remaining =>
+      (_billTotalAfterDiscount - _amount).clamp(0, double.infinity);
 
   @override
   void initState() {
@@ -326,27 +332,50 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
   }
 
   Widget _buildDiscountField(bool isTablet) {
-    return TextFormField(
-      controller: _discountController,
-      focusNode: _discountFocus,
-      textInputAction: TextInputAction.next,
-      onFieldSubmitted: (_) => _amountFocus.requestFocus(),
-      decoration: InputDecoration(
-        labelText: 'Descuento (%)',
-        prefixIcon: const Icon(Icons.percent),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        cajeroDiscountModeSelector(
+          mode: _discountMode,
+          onChanged: (m) {
+            setState(() => _discountMode = m);
+            final suggested = _billTotalAfterDiscount.toStringAsFixed(2);
+            _amountController.text = suggested;
+            _amountController.selection = TextSelection.fromPosition(
+              TextPosition(offset: _amountController.text.length),
+            );
+          },
         ),
-      ),
-      keyboardType: TextInputType.number,
-      onChanged: (_) {
-        final suggested = _billTotalAfterDiscount.toStringAsFixed(2);
-        _amountController.text = suggested;
-        _amountController.selection = TextSelection.fromPosition(
-          TextPosition(offset: _amountController.text.length),
-        );
-        setState(() {});
-      },
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _discountController,
+          focusNode: _discountFocus,
+          textInputAction: TextInputAction.next,
+          onFieldSubmitted: (_) => _amountFocus.requestFocus(),
+          decoration: InputDecoration(
+            labelText: _discountMode == CajeroDiscountInputMode.percent
+                ? 'Descuento (%)'
+                : 'Descuento (monto MXN)',
+            prefixIcon: Icon(
+              _discountMode == CajeroDiscountInputMode.percent
+                  ? Icons.percent
+                  : Icons.attach_money,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          keyboardType: TextInputType.number,
+          onChanged: (_) {
+            final suggested = _billTotalAfterDiscount.toStringAsFixed(2);
+            _amountController.text = suggested;
+            _amountController.selection = TextSelection.fromPosition(
+              TextPosition(offset: _amountController.text.length),
+            );
+            setState(() {});
+          },
+        ),
+      ],
     );
   }
 
@@ -531,9 +560,16 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
         timestamp: date_utils.AppDateUtils.now(),
         cashierName: auth.userName.isNotEmpty ? auth.userName : 'Cajero',
         bankName: _bankController.text.trim(),
-        reference: _discountPercentage > 0
-            ? '${_referenceController.text.trim()} | Descuento ${_discountPercentage.toStringAsFixed(0)}%'
-            : _referenceController.text.trim(),
+        reference: () {
+          final refFrag = cajeroDiscountPaymentReference(
+            mode: _discountMode,
+            rawInput: _discountRaw,
+            billTotalForDiscount: _billTotal,
+          );
+          final baseRef = _referenceController.text.trim();
+          if (refFrag == null || refFrag.isEmpty) return baseRef;
+          return '$baseRef | $refFrag';
+        }(),
         tipAmount: _tip > 0 ? _tip : null,
         notes: _notesController.text.trim().isEmpty
             ? null

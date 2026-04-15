@@ -18,6 +18,8 @@ import '../config/api_config.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../utils/file_download_helper.dart';
 import '../utils/cash_session_utils.dart';
+import '../utils/closure_utils.dart' as closure_utils;
+import '../utils/csv_format.dart';
 
 /// Débito/crédito desde nombre de forma en BD (p. ej. `tarjeta_debito`).
 String? _cardMethodDesdeFormaPagoBackend(String? formaNombre) {
@@ -49,6 +51,21 @@ bool _nonCashMixtoPareceTransferencia(PaymentModel p) {
   return ref.contains('banco:') ||
       ref.contains('transferencia') ||
       ref.contains('spei');
+}
+
+/// Tipo de tarjeta efectivo para reportes cuando `cardMethod` viene vacío del backend.
+String? _cardTipoResueltoParaStats(PaymentModel p) {
+  final cm = (p.cardMethod ?? '').toLowerCase().trim();
+  if (cm.contains('credito')) return 'credito';
+  if (cm.contains('debito')) return 'debito';
+  final blob = '${p.reference ?? ''} ${p.notes ?? ''}'.toLowerCase();
+  if (blob.contains('tarjeta crédito') || blob.contains('tarjeta credito')) {
+    return 'credito';
+  }
+  if (blob.contains('tarjeta débito') || blob.contains('tarjeta debito')) {
+    return 'debito';
+  }
+  return null;
 }
 
 class CajeroController extends ChangeNotifier {
@@ -1628,7 +1645,8 @@ class CajeroController extends ChangeNotifier {
         totalCash += amount;
       } else if (typeLower.contains('card') || typeLower.contains('tarjeta')) {
         totalCard += amount;
-        if (payment.cardMethod == 'credito') {
+        final tipo = _cardTipoResueltoParaStats(payment);
+        if (tipo == 'credito') {
           totalCredit += amount;
         } else {
           totalDebit += amount;
@@ -1645,7 +1663,8 @@ class CajeroController extends ChangeNotifier {
           totalTransfer += rest;
         } else {
           totalCard += rest;
-          if (payment.cardMethod == 'credito') {
+          final tipo = _cardTipoResueltoParaStats(payment);
+          if (tipo == 'credito') {
             totalCredit += rest;
           } else {
             totalDebit += rest;
@@ -2055,14 +2074,17 @@ class CajeroController extends ChangeNotifier {
       notifyListeners();
 
       final hoy = date_utils.AppDateUtils.nowCdmx();
-      final cierresDelDia = _cashClosures
-          .where(
-            (cierre) => date_utils.AppDateUtils.isSameCalendarDayCdmx(
-              cierre.fecha,
-              hoy,
-            ),
-          )
-          .toList();
+      final exportNow = hoy;
+      final cierresDelDia = closure_utils.dedupeCashClosuresForDisplay(
+        _cashClosures
+            .where(
+              (cierre) => date_utils.AppDateUtils.isSameCalendarDayCdmx(
+                cierre.fecha,
+                hoy,
+              ),
+            )
+            .toList(),
+      );
 
       // Ordenar por fecha descendente
       cierresDelDia.sort((a, b) => b.fecha.compareTo(a.fecha));
@@ -2074,11 +2096,41 @@ class CajeroController extends ChangeNotifier {
       // Encabezados (con columnas IVA cuando está habilitado)
       if (showIva) {
         csvLines.add(
-          'Fecha,Hora,Cajero,Tipo,Turno,Subtotal,IVA (16%),Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+          csvJoinRow([
+            'Fecha',
+            'Hora',
+            'Cajero',
+            'Tipo',
+            'Turno',
+            'Subtotal',
+            'IVA (16%)',
+            'Total Ventas',
+            'Efectivo',
+            'Tarjeta',
+            'Otros Ingresos',
+            'Propinas',
+            'Estado',
+            'Efectivo Inicial',
+            'Notas',
+          ]),
         );
       } else {
         csvLines.add(
-          'Fecha,Hora,Cajero,Tipo,Turno,Total Ventas,Efectivo,Tarjeta,Otros Ingresos,Propinas,Estado,Efectivo Inicial,Notas',
+          csvJoinRow([
+            'Fecha',
+            'Hora',
+            'Cajero',
+            'Tipo',
+            'Turno',
+            'Total Ventas',
+            'Efectivo',
+            'Tarjeta',
+            'Otros Ingresos',
+            'Propinas',
+            'Estado',
+            'Efectivo Inicial',
+            'Notas',
+          ]),
         );
       }
 
@@ -2100,7 +2152,7 @@ class CajeroController extends ChangeNotifier {
           final subtotal = _subtotalFromTotalConIva(cierre.totalNeto);
           final iva = _ivaFromTotalConIva(cierre.totalNeto);
           csvLines.add(
-            [
+            csvJoinRow([
               fechaStr,
               horaStr,
               cierre.usuario,
@@ -2116,11 +2168,11 @@ class CajeroController extends ChangeNotifier {
               estadoStr,
               cierre.efectivoInicial.toStringAsFixed(2),
               notas,
-            ].join(','),
+            ]),
           );
         } else {
           csvLines.add(
-            [
+            csvJoinRow([
               fechaStr,
               horaStr,
               cierre.usuario,
@@ -2134,7 +2186,7 @@ class CajeroController extends ChangeNotifier {
               estadoStr,
               cierre.efectivoInicial.toStringAsFixed(2),
               notas,
-            ].join(','),
+            ]),
           );
         }
       }
@@ -2151,22 +2203,25 @@ class CajeroController extends ChangeNotifier {
         resumenPropinas += cierre.propinasTarjeta + cierre.propinasEfectivo;
       }
       csvLines.add('');
-      csvLines.add('RESUMEN DEL DÍA');
+      csvLines.add(csvJoinRow(['RESUMEN DEL DÍA']));
       if (showIva) {
         final resumenSubtotal = _subtotalFromTotalConIva(resumenVentas);
         final resumenIva = _ivaFromTotalConIva(resumenVentas);
-        csvLines.add('Subtotal,${resumenSubtotal.toStringAsFixed(2)}');
-        csvLines.add('IVA (16%),${resumenIva.toStringAsFixed(2)}');
-        csvLines.add('Total Ventas,${resumenVentas.toStringAsFixed(2)}');
+        csvLines.add(csvJoinRow(['Subtotal', resumenSubtotal.toStringAsFixed(2)]));
+        csvLines.add(csvJoinRow(['IVA (16%)', resumenIva.toStringAsFixed(2)]));
+        csvLines.add(csvJoinRow(['Total Ventas', resumenVentas.toStringAsFixed(2)]));
       } else {
-        csvLines.add('Total Ventas,${resumenVentas.toStringAsFixed(2)}');
+        csvLines.add(csvJoinRow(['Total Ventas', resumenVentas.toStringAsFixed(2)]));
       }
-      csvLines.add('Total Efectivo,${resumenEfectivo.toStringAsFixed(2)}');
-      csvLines.add('Total Tarjeta,${resumenTarjeta.toStringAsFixed(2)}');
-      csvLines.add('Total Propinas,${resumenPropinas.toStringAsFixed(2)}');
+      csvLines.add(csvJoinRow(['Total Efectivo', resumenEfectivo.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Tarjeta', resumenTarjeta.toStringAsFixed(2)]));
+      csvLines.add(csvJoinRow(['Total Propinas', resumenPropinas.toStringAsFixed(2)]));
       csvLines.add('');
       csvLines.add(
-        'Generado (CDMX),${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())}',
+        csvJoinRow([
+          'Generado (CDMX)',
+          date_utils.AppDateUtils.formatDateTimeCsvSafe(exportNow),
+        ]),
       );
 
       final csvContent = csvLines.join('\n');
@@ -2191,14 +2246,18 @@ class CajeroController extends ChangeNotifier {
       notifyListeners();
 
       final hoy = date_utils.AppDateUtils.nowCdmx();
-      final cierresDelDia = _cashClosures
-          .where(
-            (cierre) => date_utils.AppDateUtils.isSameCalendarDayCdmx(
-              cierre.fecha,
-              hoy,
-            ),
-          )
-          .toList();
+      final marcaGeneracionStr =
+          date_utils.AppDateUtils.formatDateTimeWithAmPm(hoy);
+      final cierresDelDia = closure_utils.dedupeCashClosuresForDisplay(
+        _cashClosures
+            .where(
+              (cierre) => date_utils.AppDateUtils.isSameCalendarDayCdmx(
+                cierre.fecha,
+                hoy,
+              ),
+            )
+            .toList(),
+      );
 
       // Ordenar por fecha descendente
       cierresDelDia.sort((a, b) => b.fecha.compareTo(a.fecha));
@@ -2239,7 +2298,7 @@ class CajeroController extends ChangeNotifier {
                       ),
                     ),
                     pdf_widgets.Text(
-                      date_utils.AppDateUtils.formatDateTimeWithAmPm(hoy),
+                      marcaGeneracionStr,
                       style: const pdf_widgets.TextStyle(fontSize: 12),
                     ),
                   ],
@@ -2591,7 +2650,7 @@ class CajeroController extends ChangeNotifier {
               // Pie de página
               pdf_widgets.Divider(),
               pdf_widgets.Text(
-                'Generado el ${date_utils.AppDateUtils.formatDateTimeWithAmPm(date_utils.AppDateUtils.nowCdmx())} (CDMX)',
+                'Generado el $marcaGeneracionStr (CDMX)',
                 style: const pdf_widgets.TextStyle(
                   fontSize: 10,
                   color: PdfColors.grey700,

@@ -12,11 +12,10 @@ export const listarCierresCajaHandler = async (req: Request, res: Response): Pro
     }
 
     const { fechaInicio, fechaFin, cajeroId } = parsed.data;
-    
-    // Si el usuario es cajero, solo puede ver sus propios cierres
-    const usuarioId = req.user?.id;
-    const usuarioRol = req.user?.rol ?? req.user?.roles?.[0];
-    const cajeroIdFiltro = usuarioRol === 'cajero' ? usuarioId : cajeroId;
+
+    // Caja es compartida por sucursal: cajero y gerente deben ver la misma apertura/cierres del día.
+    // Solo filtrar por `cajeroId` cuando el cliente lo pide explícitamente (p. ej. reportes de admin).
+    const cajeroIdFiltro = cajeroId;
 
     const cierres = await obtenerCierresCaja(fechaInicio, fechaFin, cajeroIdFiltro);
 

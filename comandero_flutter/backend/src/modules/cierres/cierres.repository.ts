@@ -12,6 +12,24 @@ import {
 const FECHA_PAGO_MX_SQL = "DATE(CONVERT_TZ(p.fecha_pago, '+00:00', '-06:00'))";
 const FECHA_PP_MX_SQL = "DATE(CONVERT_TZ(pp.fecha, '+00:00', '-06:00'))";
 
+/** Apertura de caja: no debe heredar propinas agregadas del día completo. */
+function esAperturaCajaManual(
+  eventoTipo: unknown,
+  totalVentas: number,
+  efectivoInicial: unknown
+): boolean {
+  const t =
+    eventoTipo === null || eventoTipo === undefined ? '' : String(eventoTipo).trim();
+  if (t === 'apertura') return true;
+  if (t === 'cierre' || t === 'cierre_dia') return false;
+  let ini = 0;
+  if (efectivoInicial != null && efectivoInicial !== '') {
+    const n = Number(efectivoInicial);
+    if (!Number.isNaN(n)) ini = n;
+  }
+  return totalVentas < 0.01 && ini > 0.01;
+}
+
 interface CierreCajaRow extends RowDataPacket {
   fecha: Date;
   cajero_id: number | null;
@@ -304,6 +322,13 @@ export const listarCierresCaja = async (
 
     // Los valores manuales SIEMPRE tienen prioridad
     const totalVentasManual = row.total_ventas != null ? Number(row.total_ventas) : 0;
+    const esApertura = esAperturaCajaManual(
+      row.evento_tipo,
+      Number.isFinite(totalVentasManual) ? totalVentasManual : 0,
+      row.efectivo_inicial
+    );
+    const propinasEfectivoManual = esApertura ? 0 : propinasDelDia.propinasEfectivo;
+    const propinasTarjetaManual = esApertura ? 0 : propinasDelDia.propinasTarjeta;
     const totalEfectivoManual = row.total_efectivo != null ? Number(row.total_efectivo) : 0;
     const totalTarjetaManual = row.total_tarjeta != null ? Number(row.total_tarjeta) : 0;
     const otrosManual =
@@ -323,9 +348,12 @@ export const listarCierresCaja = async (
       totalEfectivo: totalEfectivoManual,
       totalTarjeta: totalTarjetaManual,
       totalOtros: otrosManual ?? cierreCalculado?.totalOtros ?? 0,
-      totalPropinas: cierreCalculado?.totalPropinas ?? (propinasDelDia.propinasEfectivo + propinasDelDia.propinasTarjeta),
-      propinasEfectivo: propinasDelDia.propinasEfectivo,
-      propinasTarjeta: propinasDelDia.propinasTarjeta,
+      totalPropinas: esApertura
+        ? 0
+        : (cierreCalculado?.totalPropinas ??
+            propinasEfectivoManual + propinasTarjetaManual),
+      propinasEfectivo: propinasEfectivoManual,
+      propinasTarjeta: propinasTarjetaManual,
       status: row.estado || 'pending', // Leer el estado desde la BD
       cierreId: cierreId ?? undefined,
       creadoEn: utcToMxISO(row.creado_en) ?? undefined,
@@ -566,12 +594,25 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
   const fecha =
     utcToMxISO(row.creado_en) ?? sqlDateColumnToMxStartIso(row.fecha) ?? new Date().toISOString();
 
-  // Obtener propinas por tipo para este cierre - TOTAL del día (sin filtrar por cajero),
-  // porque el cierre manual puede ser del cajero pero las propinas vienen de pagos del mesero
-  const fechaStr = sqlDateUtcToYmd(row.fecha) ?? '';
-  interface PropinasPorIdRow extends RowDataPacket { total_propinas_efectivo: number; total_propinas_tarjeta: number; }
-  const [rowsPropinas] = await pool.execute<PropinasPorIdRow[]>(
-    `
+  const totalVentasRow = row.total_ventas != null ? Number(row.total_ventas) : 0;
+  const esAperturaDetalle = esAperturaCajaManual(
+    row.evento_tipo,
+    Number.isFinite(totalVentasRow) ? totalVentasRow : 0,
+    row.efectivo_inicial
+  );
+
+  let propinasEfectivo = 0;
+  let propinasTarjeta = 0;
+  if (!esAperturaDetalle) {
+    // Obtener propinas por tipo para este cierre - TOTAL del día (sin filtrar por cajero),
+    // porque el cierre manual puede ser del cajero pero las propinas vienen de pagos del mesero
+    const fechaStr = sqlDateUtcToYmd(row.fecha) ?? '';
+    interface PropinasPorIdRow extends RowDataPacket {
+      total_propinas_efectivo: number;
+      total_propinas_tarjeta: number;
+    }
+    const [rowsPropinas] = await pool.execute<PropinasPorIdRow[]>(
+      `
     SELECT
       COALESCE(SUM(
         pr.propina_monto *
@@ -606,11 +647,12 @@ export const obtenerCierreCajaPorId = async (cierreId: number): Promise<CierreCa
     WHERE o.estado_orden_id IN (SELECT id FROM estado_orden WHERE nombre IN ('pagada', 'cerrada'))
       AND pp.fecha = :fechaStr
     `,
-    { fechaStr }
-  );
-  const propinasRow = rowsPropinas[0];
-  const propinasEfectivo = propinasRow ? Number(propinasRow.total_propinas_efectivo) : 0;
-  const propinasTarjeta = propinasRow ? Number(propinasRow.total_propinas_tarjeta) : 0;
+      { fechaStr }
+    );
+    const propinasRow = rowsPropinas[0];
+    propinasEfectivo = propinasRow ? Number(propinasRow.total_propinas_efectivo) : 0;
+    propinasTarjeta = propinasRow ? Number(propinasRow.total_propinas_tarjeta) : 0;
+  }
 
   return {
     id: `cierre-${cierreId}`,

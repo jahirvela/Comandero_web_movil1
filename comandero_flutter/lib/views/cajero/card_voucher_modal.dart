@@ -5,6 +5,7 @@ import '../../controllers/cajero_controller.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/payment_model.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/cajero_discount_input.dart';
 import '../../utils/date_utils.dart' as date_utils;
 
 /// Parsea el ordenId desde billId (ej. BILL-ORD-47 -> 47) para impresión.
@@ -28,7 +29,8 @@ class CardVoucherModal extends StatefulWidget {
   final String terminal;
   final CajeroController controller;
   final bool isTablet;
-  final double discountPercentage;
+  final CajeroDiscountInputMode discountMode;
+  final double discountRawInput;
 
   const CardVoucherModal({
     super.key,
@@ -37,7 +39,8 @@ class CardVoucherModal extends StatefulWidget {
     required this.terminal,
     required this.controller,
     required this.isTablet,
-    this.discountPercentage = 0,
+    this.discountMode = CajeroDiscountInputMode.percent,
+    this.discountRawInput = 0,
   });
 
   static Future<void> show(
@@ -47,7 +50,8 @@ class CardVoucherModal extends StatefulWidget {
     String terminal,
     CajeroController controller,
     bool isTablet,
-    double discountPercentage,
+    CajeroDiscountInputMode discountMode,
+    double discountRawInput,
   ) {
     return showDialog(
       context: context,
@@ -57,7 +61,8 @@ class CardVoucherModal extends StatefulWidget {
         terminal: terminal,
         controller: controller,
         isTablet: isTablet,
-        discountPercentage: discountPercentage,
+        discountMode: discountMode,
+        discountRawInput: discountRawInput,
       ),
     );
   }
@@ -67,8 +72,12 @@ class CardVoucherModal extends StatefulWidget {
 }
 
 class _CardVoucherModalState extends State<CardVoucherModal> {
-  double get _discountAmount =>
-      widget.bill.calculatedTotal * (widget.discountPercentage / 100);
+  double get _discountAmount => cajeroDiscountAmount(
+        billTotalForDiscount: widget.bill.calculatedTotal,
+        mode: widget.discountMode,
+        rawInput: widget.discountRawInput,
+      );
+  bool get _hasDiscount => _discountAmount > 0.0001;
   double get _totalWithDiscount =>
       (widget.bill.calculatedTotal - _discountAmount).clamp(0, double.infinity);
 
@@ -304,13 +313,15 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
               ),
             ],
           ),
-          if (widget.discountPercentage > 0) ...[
+          if (_hasDiscount) ...[
             const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Descuento (${widget.discountPercentage.toStringAsFixed(0)}%):',
+                  widget.discountMode == CajeroDiscountInputMode.percent
+                      ? 'Descuento (${widget.discountRawInput.clamp(0, 100).toStringAsFixed(0)}%):'
+                      : 'Descuento (fijo):',
                   style: TextStyle(
                     color: AppColors.success,
                     fontSize: widget.isTablet ? 13 : 11,
@@ -685,9 +696,11 @@ class _CardVoucherModalState extends State<CardVoucherModal> {
         notes: _notesController.text.trim().isNotEmpty
             ? _notesController.text.trim()
             : null,
-        reference: widget.discountPercentage > 0
-            ? 'Descuento aplicado: ${widget.discountPercentage.toStringAsFixed(0)}%'
-            : null,
+        reference: cajeroDiscountPaymentReference(
+          mode: widget.discountMode,
+          rawInput: widget.discountRawInput,
+          billTotalForDiscount: widget.bill.calculatedTotal,
+        ),
         ordenId: ordenIdsList.isNotEmpty ? ordenIdsList.first : widget.bill.ordenId,
         ordenIds: ordenIdsList.length > 1 ? ordenIdsList : null,
       );

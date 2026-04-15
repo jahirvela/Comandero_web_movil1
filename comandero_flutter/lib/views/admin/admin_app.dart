@@ -210,22 +210,36 @@ class AdminApp extends StatelessWidget {
           icon: const Icon(Icons.arrow_back),
           onPressed: onEmbeddedBack ?? () => Navigator.of(context).maybePop(),
         ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+        title: Row(
           children: [
-            Text(
-              'Gestión de Inventario',
-              style: TextStyle(
-                fontSize: isTablet ? 18.0 : 16.0,
-                fontWeight: FontWeight.bold,
+            Expanded(
+              child: Text(
+                () {
+                  final u = authController.userName.trim();
+                  return u.isEmpty
+                      ? 'Usuario · Gerente'
+                      : '$u · Gerente';
+                }(),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isTablet ? 17.0 : 15.0,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
-            Text(
-              '${authController.userName} • Gerente',
-              style: TextStyle(
-                fontSize: isTablet ? 13.0 : 11.0,
-                color: Colors.white.withValues(alpha: 0.85),
+            Flexible(
+              child: Text(
+                'Gestión de Inventario',
+                textAlign: TextAlign.end,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isTablet ? 16.0 : 14.0,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -267,6 +281,11 @@ class AdminApp extends StatelessWidget {
       );
     }
 
+    final adminUser = authController.userName.trim();
+    final adminTitleCenter = adminUser.isEmpty
+        ? 'Usuario · Administrador'
+        : '$adminUser · Administrador';
+
     return AppBar(
       title: Row(
         children: [
@@ -288,32 +307,47 @@ class AdminApp extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Panel de Administrador - Comandix',
-                style: TextStyle(
-                  fontSize: isTablet ? 18.0 : 16.0,
-                  fontWeight: FontWeight.bold,
-                ),
+          Expanded(
+            child: Text(
+              adminTitleCenter,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 17.0 : 15.0,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
-              Text(
-                'Comandix Restaurante',
-                style: TextStyle(
-                  fontSize: isTablet ? 12.0 : 11.0,
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w500,
+            ),
+          ),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Panel de Administrador - Comandix',
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isTablet ? 16.0 : 14.0,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              Text(
-                '${authController.userName} • Administrador',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: Colors.white.withValues(alpha: 0.8),
+                Text(
+                  'Comandix Restaurante',
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isTablet ? 11.0 : 10.0,
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -12952,6 +12986,18 @@ class AdminApp extends StatelessWidget {
             ),
             DataColumn(
               label: Tooltip(
+                message: 'Indica si el registro es una apertura de caja o un cierre.',
+                child: Text(
+                  'Tipo',
+                  style: TextStyle(
+                    fontWeight: AppTheme.fontWeightSemibold,
+                    fontSize: isTablet ? 14 : 12,
+                  ),
+                ),
+              ),
+            ),
+            DataColumn(
+              label: Tooltip(
                 message:
                     'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
                 child: Row(
@@ -13047,6 +13093,8 @@ class AdminApp extends StatelessWidget {
           rows: closures.map((closure) {
             final hasNotes =
                 closure.notaCajero != null && closure.notaCajero!.isNotEmpty;
+            final tipoMov = closure_utils.cashCloseTipoEtiqueta(closure);
+            final esAperturaRow = closure_utils.cashCloseEsApertura(closure);
             return DataRow(
               cells: [
                 DataCell(
@@ -13077,6 +13125,32 @@ class AdminApp extends StatelessWidget {
                   Text(
                     closure.usuario,
                     style: TextStyle(fontSize: isTablet ? 13 : 11),
+                  ),
+                ),
+                DataCell(
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: esAperturaRow
+                          ? Colors.teal.withValues(alpha: 0.12)
+                          : Colors.indigo.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: esAperturaRow
+                            ? Colors.teal.withValues(alpha: 0.35)
+                            : Colors.indigo.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Text(
+                      tipoMov,
+                      style: TextStyle(
+                        fontSize: isTablet ? 12 : 10,
+                        fontWeight: FontWeight.w600,
+                        color: esAperturaRow
+                            ? Colors.teal.shade800
+                            : Colors.indigo.shade800,
+                      ),
+                    ),
                   ),
                 ),
                 DataCell(
@@ -13164,8 +13238,9 @@ class AdminApp extends StatelessWidget {
                     children: [
                       // Botón ver detalles
                       Tooltip(
-                        message:
-                            'Ver detalles${hasNotes ? ' (tiene notas)' : ''}',
+                        message: esAperturaRow
+                            ? 'Ver detalles de la apertura${hasNotes ? ' (tiene notas)' : ''}'
+                            : 'Ver detalles del cierre${hasNotes ? ' (tiene notas)' : ''}',
                         child: IconButton(
                           icon: Icon(
                             hasNotes
@@ -13195,7 +13270,9 @@ class AdminApp extends StatelessWidget {
                         // Botón aprobar (solo si está pendiente)
                         if (closure.estado == CashCloseStatus.pending)
                           Tooltip(
-                            message: 'Aprobar cierre',
+                            message: esAperturaRow
+                                ? 'Aprobar apertura'
+                                : 'Aprobar cierre',
                             child: IconButton(
                               icon: const Icon(Icons.check_circle, size: 18),
                               color: Colors.green,
@@ -13211,7 +13288,9 @@ class AdminApp extends StatelessWidget {
                         // Botón rechazar (solo si está pendiente)
                         if (closure.estado == CashCloseStatus.pending)
                           Tooltip(
-                            message: 'Rechazar cierre',
+                            message: esAperturaRow
+                                ? 'Rechazar apertura'
+                                : 'Rechazar cierre',
                             child: IconButton(
                               icon: const Icon(Icons.cancel, size: 18),
                               color: Colors.red,
@@ -13385,6 +13464,12 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
+    final esAperturaDet = closure_utils.cashCloseEsApertura(closure);
+    final tituloModal = esAperturaDet
+        ? 'Detalle de la apertura'
+        : 'Detalle del cierre';
+    final etiquetaMovimiento =
+        esAperturaDet ? 'Apertura de caja' : 'Cierre de caja';
     final isPending = closure.estado == CashCloseStatus.pending;
     final isClarification = closure.estado == CashCloseStatus.clarification;
 
@@ -13419,7 +13504,7 @@ class AdminApp extends StatelessWidget {
                       const SizedBox(width: AppTheme.spacingSM),
                       Expanded(
                         child: Text(
-                          'Detalle del cierre',
+                          tituloModal,
                           style: Theme.of(context).textTheme.titleLarge
                               ?.copyWith(
                             color: Colors.white,
@@ -13463,7 +13548,7 @@ class AdminApp extends StatelessWidget {
                                           CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Cierre de caja',
+                                  etiquetaMovimiento,
                                           style: Theme.of(context)
                                               .textTheme
                                               .bodySmall
@@ -13546,6 +13631,13 @@ class AdminApp extends StatelessWidget {
                       SizedBox(height: AppTheme.spacingSM),
                       _buildInfoItem(
                         context,
+                        'Tipo',
+                        closure_utils.cashCloseTipoEtiqueta(closure),
+                        Icons.bookmark_outline,
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      _buildInfoItem(
+                        context,
                         'Fecha',
                         _formatDate(closure.fecha),
                         Icons.access_time,
@@ -13564,8 +13656,9 @@ class AdminApp extends StatelessWidget {
                 ),
                 SizedBox(height: AppTheme.spacingMD),
 
-                // Explicación de Total Neto
-                Container(
+                // Explicación de Total Neto (en aperturas no aplica el mismo significado)
+                if (!esAperturaDet)
+                  Container(
                   padding: EdgeInsets.all(AppTheme.spacingSM),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withValues(alpha: 0.1),
@@ -13597,7 +13690,34 @@ class AdminApp extends StatelessWidget {
                     ],
                   ),
                 ),
-                SizedBox(height: AppTheme.spacingMD),
+                if (!esAperturaDet) SizedBox(height: AppTheme.spacingMD),
+                if (esAperturaDet)
+                  Container(
+                    padding: EdgeInsets.all(AppTheme.spacingSM),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                      border: Border.all(
+                        color: Colors.teal.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock_open, size: 18, color: Colors.teal.shade700),
+                        SizedBox(width: AppTheme.spacingSM),
+                        Expanded(
+                          child: Text(
+                            'Registro de apertura: el efectivo inicial queda registrado; el total neto de ventas suele ser cero hasta que haya cobros.',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 11,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (esAperturaDet) SizedBox(height: AppTheme.spacingMD),
 
                 // Tarjetas de resumen
                 Wrap(
@@ -14162,12 +14282,15 @@ class AdminApp extends StatelessWidget {
     CashCloseModel closure,
     AdminController controller,
   ) async {
+    final esAp = closure_utils.cashCloseEsApertura(closure);
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Aprobar cierre de caja'),
-        content: const Text(
-          '¿Estás seguro de que deseas aprobar este cierre de caja?',
+        title: Text(esAp ? 'Aprobar apertura de caja' : 'Aprobar cierre de caja'),
+        content: Text(
+          esAp
+              ? '¿Confirmas aprobar esta apertura de caja?'
+              : '¿Estás seguro de que deseas aprobar este cierre de caja?',
         ),
         actions: [
           TextButton(
@@ -14194,8 +14317,12 @@ class AdminApp extends StatelessWidget {
         );
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Cierre de caja aprobado exitosamente'),
+            SnackBar(
+              content: Text(
+                esAp
+                    ? 'Apertura de caja aprobada exitosamente'
+                    : 'Cierre de caja aprobado exitosamente',
+              ),
               backgroundColor: Colors.green,
             ),
           );
@@ -14204,7 +14331,11 @@ class AdminApp extends StatelessWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error al aprobar cierre: ${e.toString()}'),
+              content: Text(
+                esAp
+                    ? 'Error al aprobar apertura: ${e.toString()}'
+                    : 'Error al aprobar cierre: ${e.toString()}',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -14218,13 +14349,14 @@ class AdminApp extends StatelessWidget {
     CashCloseModel closure,
     AdminController controller,
   ) async {
+    final esAp = closure_utils.cashCloseEsApertura(closure);
     final comentarioController = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Rechazar cierre de caja'),
+        title: Text(esAp ? 'Rechazar apertura de caja' : 'Rechazar cierre de caja'),
         content: Form(
           key: formKey,
           child: SingleChildScrollView(
@@ -14232,9 +14364,11 @@ class AdminApp extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '¿Estás seguro de que deseas rechazar este cierre de caja?',
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                Text(
+                  esAp
+                      ? '¿Estás seguro de que deseas rechazar esta apertura de caja?'
+                      : '¿Estás seguro de que deseas rechazar este cierre de caja?',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 16),
                 const Text('Comentario (opcional):'),
@@ -14279,8 +14413,12 @@ class AdminApp extends StatelessWidget {
         );
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Cierre de caja rechazado exitosamente'),
+            SnackBar(
+              content: Text(
+                esAp
+                    ? 'Apertura de caja rechazada exitosamente'
+                    : 'Cierre de caja rechazado exitosamente',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -14289,7 +14427,11 @@ class AdminApp extends StatelessWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error al rechazar cierre: ${e.toString()}'),
+              content: Text(
+                esAp
+                    ? 'Error al rechazar apertura: ${e.toString()}'
+                    : 'Error al rechazar cierre: ${e.toString()}',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -16033,7 +16175,7 @@ class AdminApp extends StatelessWidget {
         final maxWidth = constraints.maxWidth;
         final crossAxisCount = (maxWidth / (targetWidth + spacing))
             .floor()
-            .clamp(1, 7);
+            .clamp(1, 8);
         final itemWidth =
             (maxWidth -
                 spacing * (crossAxisCount > 1 ? crossAxisCount - 1 : 0)) /
@@ -16059,7 +16201,8 @@ class AdminApp extends StatelessWidget {
     final localSales = controller.todayLocalSales;
     final takeawaySales = controller.todayTakeawaySales;
     final cashSales = controller.todayCashSales;
-    final cardSales = controller.todayCardSales;
+    final debitCardSales = controller.todayDebitCardSales;
+    final creditCardSales = controller.todayCreditCardSales;
     final transferSales = controller.todayTransferSales;
     final pendingTotal = controller.pendingCollectionsTotal;
     final totalNet = controller.todayTotalSales;
@@ -16096,13 +16239,22 @@ class AdminApp extends StatelessWidget {
         icon: Icons.payments,
       ),
       _SummaryCardData(
-        title: 'Ventas Tarjeta',
-        value: controller.formatCurrency(cardSales),
-        subtitle: cardSales > 0
-            ? 'Tarjeta + parte tarjeta de mixto'
-            : 'Sin ventas con tarjeta',
+        title: 'Tarjeta Débito',
+        value: controller.formatCurrency(debitCardSales),
+        subtitle: debitCardSales > 0
+            ? 'Débito + parte débito de mixto'
+            : 'Sin ventas débito',
         color: AppColors.warning,
         icon: Icons.credit_card,
+      ),
+      _SummaryCardData(
+        title: 'Tarjeta Crédito',
+        value: controller.formatCurrency(creditCardSales),
+        subtitle: creditCardSales > 0
+            ? 'Crédito + parte crédito de mixto'
+            : 'Sin ventas crédito',
+        color: Colors.deepPurple,
+        icon: Icons.credit_score,
       ),
       _SummaryCardData(
         title: 'Ventas Transferencia',
@@ -16233,7 +16385,16 @@ class AdminApp extends StatelessWidget {
       final isTakeaway = payment.tableNumber == null;
       final originLabel = isTakeaway
           ? 'Para llevar'
-          : 'Mesa ${payment.tableNumber}';
+          : () {
+              final n = payment.tableNumber;
+              if (n == null) return 'Para llevar';
+              for (final t in controller.tables) {
+                if (t.id == n || t.number == n) {
+                  return t.displayLabel;
+                }
+              }
+              return 'Mesa $n';
+            }();
       final formatted =
           _formatConsumptionPaymentDisplay(payment);
 
@@ -18069,49 +18230,98 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         } else if (linea.toLowerCase().startsWith('pago ')) {
           // Es una línea de pago individual
           widgets.add(const SizedBox(height: 6));
-          
-          // Parsear la línea del pago
-          // Formato esperado: "Pago 1: Efectivo - $50.00 | Observaciones: ..."
-          // o "Pago 2: Tarjeta Débito - Ref: 456789"
-          // o "Pago 3: Transferencia - $30.00 | Banco: BBVA | Referencia: 56789"
-          
-          final partes = linea.split(' - ');
-          if (partes.length >= 2) {
-            final tipoYMonto = partes[0].trim(); // "Pago 1: Efectivo"
-            final detalles = partes.sublist(1).join(' - '); // Resto de la línea
-            
+
+          // Formato backend: "Pago 1: Efectivo - $50.00 | Observaciones: ..."
+          // El split por ' - ' rompe montos con decimales; usamos regex para método + monto.
+          final mixMatch = RegExp(
+            r'^Pago\s+(\d+)\s*:\s*(.+?)\s*-\s*(\$[\d,.]+)(?:\s*\|\s*(.*))?$',
+            caseSensitive: false,
+          ).firstMatch(linea.trim());
+
+          if (mixMatch != null) {
+            final n = mixMatch.group(1)!.trim();
+            final metodo = mixMatch.group(2)!.trim();
+            final monto = mixMatch.group(3)!.trim();
+            final restoPipe = (mixMatch.group(4) ?? '').trim();
+
             widgets.add(
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    tipoYMonto,
-                    style: TextStyle(
-                      fontSize: widget.isTablet ? 10.0 : 9.0,
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: RichText(
+                          text: TextSpan(
+                            style: TextStyle(
+                              fontSize: widget.isTablet ? 10.0 : 9.0,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            children: [
+                              TextSpan(text: 'Pago $n: '),
+                              TextSpan(
+                                text: metodo,
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              TextSpan(
+                                text: '   $monto',
+                                style: TextStyle(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: (widget.isTablet ? 10.0 : 9.0) + 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  if (detalles.isNotEmpty) ...[
+                  if (restoPipe.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    // Parsear detalles adicionales (banco, referencia, observaciones)
-                    ..._parsePaymentDetails(detalles),
+                    ..._parsePaymentDetails(restoPipe),
                   ],
                 ],
               ),
             );
           } else {
-            // Si no se puede parsear, mostrar la línea completa
-            widgets.add(
-              Text(
-                linea.trim(),
-                style: TextStyle(
-                  fontSize: widget.isTablet ? 10.0 : 9.0,
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w500,
+            final partes = linea.split(' - ');
+            if (partes.length >= 2) {
+              final tipoYMonto = partes[0].trim();
+              final detalles = partes.sublist(1).join(' - ');
+              widgets.add(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tipoYMonto,
+                      style: TextStyle(
+                        fontSize: widget.isTablet ? 10.0 : 9.0,
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (detalles.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      ..._parsePaymentDetails(detalles),
+                    ],
+                  ],
                 ),
-              ),
-            );
+              );
+            } else {
+              widgets.add(
+                Text(
+                  linea.trim(),
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 10.0 : 9.0,
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              );
+            }
           }
         }
       }

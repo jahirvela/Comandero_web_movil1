@@ -214,6 +214,9 @@ class CajeroApp extends StatelessWidget {
     bool isTablet,
   ) {
     final pendingBills = cajeroController.getPendingBills().length;
+    final user = authController.userName.trim();
+    final titleCenter =
+        user.isEmpty ? 'Usuario · $roleLabel' : '$user · $roleLabel';
 
     return AppBar(
       title: Row(
@@ -236,24 +239,18 @@ class CajeroApp extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Caja - Comandix',
-                style: TextStyle(
-                  fontSize: isTablet ? 18.0 : 16.0,
-                  fontWeight: FontWeight.bold,
-                ),
+          Expanded(
+            child: Text(
+              titleCenter,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 18.0 : 16.0,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
-              Text(
-                '${authController.userName} • $roleLabel',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: Colors.white.withValues(alpha: 0.8),
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),
