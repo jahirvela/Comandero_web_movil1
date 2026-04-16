@@ -934,16 +934,65 @@ class CajeroController extends ChangeNotifier {
         print('✅ CajeroController: Bill encontrado. OrdenId: ${bill.ordenId}');
         billForMeta = bill;
 
-        // El ordenId debe estar en el bill (se agrega cuando se crea la orden)
+        // El ordenId debe estar en el bill (se agrega cuando se crea la orden).
+        // Resiliencia: si viene nulo, intentar extraerlo del billId o resolverlo recargando cuentas.
         ordenId = bill.ordenId;
+        ordenIdsCompletos = bill.ordenIdsFromBillIdInt;
+        if (ordenId == null && ordenIdsCompletos.isNotEmpty) {
+          ordenId = ordenIdsCompletos.first;
+          print(
+            '⚠️ CajeroController: Bill sin ordenId explícito; usando ordenId extraído del billId: $ordenId',
+          );
+        }
+
+        if (ordenId == null) {
+          print(
+            '⚠️ CajeroController: Bill temporal/sin ordenId. Intentando resolver recargando bills...',
+          );
+          try {
+            await _billRepository.loadBills();
+          } catch (e) {
+            print('❌ CajeroController: Error al recargar bills para resolver temporal: $e');
+          }
+
+          final candidatos = _billRepository.pendingBills.where((b) {
+            final ids = b.ordenIdsFromBillIdInt;
+            if (b.ordenId == null && ids.isEmpty) return false;
+            if (payment.tableNumber != null &&
+                b.tableNumber != null &&
+                b.tableNumber != payment.tableNumber) {
+              return false;
+            }
+            // Monto con tolerancia para evitar falsos positivos por redondeo.
+            return (b.total - payment.totalAmount).abs() <= 0.05;
+          }).toList();
+
+          if (candidatos.isNotEmpty) {
+            candidatos.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            final elegido = candidatos.first;
+            billForMeta = elegido;
+            final ids = elegido.ordenIdsFromBillIdInt;
+            ordenIdsCompletos = ids.isNotEmpty
+                ? ids
+                : (elegido.ordenId != null ? [elegido.ordenId!] : <int>[]);
+            if (ordenIdsCompletos.isNotEmpty) {
+              ordenId = ordenIdsCompletos.first;
+              print(
+                '✅ CajeroController: Bill temporal resuelto automáticamente -> ordenId $ordenId (bill ${elegido.id})',
+              );
+            }
+          }
+        }
+
         if (ordenId == null) {
           throw Exception(
             'El bill no tiene un ordenId asociado. BillId: ${payment.billId}',
           );
         }
 
-        // CRÍTICO: Extraer todos los ordenIds si es una cuenta agrupada
-        ordenIdsCompletos = bill.ordenIdsFromBillIdInt;
+        if (ordenIdsCompletos.isEmpty) {
+          ordenIdsCompletos = [ordenId];
+        }
       }
       final esCuentaAgrupada = ordenIdsCompletos.length > 1;
 
