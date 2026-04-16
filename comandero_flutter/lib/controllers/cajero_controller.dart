@@ -1561,50 +1561,7 @@ class CajeroController extends ChangeNotifier {
   // Obtener estadísticas
   Map<String, double> getPaymentStats() {
     final today = date_utils.AppDateUtils.nowCdmx();
-
-    // Obtener la fecha de referencia: última apertura de caja del día o último cierre con ventas
-    DateTime? fechaReferencia;
-
-    // Buscar la última apertura de caja del día
-    final apertura = getTodayCashOpening();
-    if (apertura != null) {
-      fechaReferencia = apertura.fecha;
-    }
-
-    // Buscar el último cierre de caja con ventas del día (mismo turno si aplica)
-    final hoy = date_utils.AppDateUtils.nowCdmx();
-    final cierresConVentas = _cashClosures.where((cierre) {
-      final esHoy =
-          cierre.fecha.year == hoy.year &&
-          cierre.fecha.month == hoy.month &&
-          cierre.fecha.day == hoy.day;
-
-      // Verificar que sea un cierre con ventas (no una apertura)
-      final esCierreConVentas = cierre.totalNeto > 0;
-
-      if (cajaPorTurnos && apertura != null) {
-        final ta = apertura.turnoCodigo ?? '';
-        final tc = cierre.turnoCodigo ?? '';
-        if (ta != tc) return false;
-      }
-
-      return esHoy && esCierreConVentas;
-    }).toList();
-
-    if (cierresConVentas.isNotEmpty) {
-      // Ordenar por fecha descendente y tomar el más reciente
-      cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
-      final ultimoCierre = cierresConVentas.first;
-
-      // Si hay una apertura, usar la fecha más reciente entre apertura y último cierre
-      if (fechaReferencia != null) {
-        fechaReferencia = ultimoCierre.fecha.isAfter(fechaReferencia)
-            ? ultimoCierre.fecha
-            : fechaReferencia;
-      } else {
-        fechaReferencia = ultimoCierre.fecha;
-      }
-    }
+    final fechaReferencia = _fechaReferenciaCobrosHoy();
 
     // Filtrar pagos del día actual Y posteriores a la fecha de referencia
     final todayPayments = _payments.where((payment) {
@@ -1660,6 +1617,44 @@ class CajeroController extends ChangeNotifier {
       'totalTips': totalTips,
       'total': totalCash + totalCard + totalTransfer,
     };
+  }
+
+  /// Punto de corte para "hoy": apertura activa del día o último cierre con ventas
+  /// (del mismo turno cuando aplica). Se usa para mantener coherentes los widgets
+  /// de resumen e historial en cajero/gerente.
+  DateTime? _fechaReferenciaCobrosHoy() {
+    DateTime? fechaReferencia;
+    final apertura = getTodayCashOpening();
+    if (apertura != null) {
+      fechaReferencia = date_utils.AppDateUtils.toCdmxWallForReport(apertura.fecha);
+    }
+
+    final hoy = date_utils.AppDateUtils.nowCdmx();
+    final cierresConVentas = _cashClosures.where((cierre) {
+      final fechaCierre = date_utils.AppDateUtils.toCdmxWallForReport(cierre.fecha);
+      final esHoy = date_utils.AppDateUtils.isSameCalendarDayCdmx(fechaCierre, hoy);
+      final esCierreConVentas = cierre.totalNeto > 0;
+
+      if (cajaPorTurnos && apertura != null) {
+        final ta = apertura.turnoCodigo ?? '';
+        final tc = cierre.turnoCodigo ?? '';
+        if (ta != tc) return false;
+      }
+
+      return esHoy && esCierreConVentas;
+    }).toList();
+
+    if (cierresConVentas.isNotEmpty) {
+      cierresConVentas.sort((a, b) => b.fecha.compareTo(a.fecha));
+      final ultimoCierre = date_utils.AppDateUtils.toCdmxWallForReport(cierresConVentas.first.fecha);
+      if (fechaReferencia != null) {
+        fechaReferencia = ultimoCierre.isAfter(fechaReferencia) ? ultimoCierre : fechaReferencia;
+      } else {
+        fechaReferencia = ultimoCierre;
+      }
+    }
+
+    return fechaReferencia;
   }
 
   /// Estadísticas del día completo para el Resumen de Consumo: todos los pagos de hoy,
@@ -1832,12 +1827,9 @@ class CajeroController extends ChangeNotifier {
       default:
         fechaInicioWall = DateTime(nw.year, nw.month, nw.day);
         fechaFinWall = DateTime(nw.year, nw.month, nw.day, 23, 59, 59, 999);
-        final apertura = getTodayCashOpening();
-        if (apertura != null) {
-          final ap = date_utils.AppDateUtils.toCdmxWallForReport(apertura.fecha);
-          if (ap.isAfter(fechaInicioWall)) {
-            fechaInicioWall = ap;
-          }
+        final fechaReferencia = _fechaReferenciaCobrosHoy();
+        if (fechaReferencia != null && fechaReferencia.isAfter(fechaInicioWall)) {
+          fechaInicioWall = fechaReferencia;
         }
         break;
     }
