@@ -264,10 +264,10 @@ export const listarCierresCaja = async (
 
   // Primero agregar los cierres calculados a un mapa temporal
   for (const row of rowsCalculados) {
-    // Para cierres calculados, convertir fecha UTC a zona CDMX
-    const fechaMx = utcToMx(row.fecha);
-    const fecha = fechaMx?.toISO() ?? new Date().toISOString();
-    const fechaSoloStr = fechaMx?.toFormat('yyyy-MM-dd') ?? new Date().toISOString().split('T')[0];
+    // row.fecha proviene de SQL DATE(...), sin hora. Si se trata como UTC y luego se convierte
+    // a CDMX, se desplaza a 18:00 del día anterior. Anclar explícitamente al inicio del día CDMX.
+    const fecha = sqlDateColumnToMxStartIso(row.fecha) ?? new Date().toISOString();
+    const fechaSoloStr = getDateOnlyMx(fecha) ?? new Date().toISOString().split('T')[0];
     
     const key = `calc-${fechaSoloStr}-${row.cajero_id ?? 'sin-cajero'}`;
     const propinasKey = `${fechaSoloStr}-${row.cajero_id ?? 'sin-cajero'}`; // Sin "calc-" para coincidir con propinasTipoMap
