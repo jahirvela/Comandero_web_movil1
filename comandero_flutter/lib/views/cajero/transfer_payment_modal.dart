@@ -127,6 +127,8 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
 
 
   bool get _isValid {
+    final settledByDiscount = _billTotalAfterDiscount <= 0.0001;
+    if (settledByDiscount) return _amount >= 0;
     return _amount > 0;
   }
 
@@ -395,7 +397,10 @@ class _TransferPaymentModalState extends State<TransferPaymentModal> {
       keyboardType: TextInputType.number,
       onChanged: (_) => setState(() {}),
       validator: (_) {
-        if (_amount <= 0) return 'Ingresa un monto mayor a 0';
+        final settledByDiscount = _billTotalAfterDiscount <= 0.0001;
+        if (!settledByDiscount && _amount <= 0) {
+          return 'Ingresa un monto mayor a 0';
+        }
         // Permitir que el monto sea mayor si incluye propina
         // La propina es un extra, así que monto + propina puede ser mayor que el total
         if (_amount < _billTotalAfterDiscount - _tip) {

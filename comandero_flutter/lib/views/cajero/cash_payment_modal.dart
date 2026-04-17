@@ -83,6 +83,9 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
   
   // Efectivo aplicado = total + propina (para contar todo el dinero en cierre)
   double get _cashApplied => widget.controller.calculateCashApplied(_totalAmount, _tipAmount);
+  bool get _isDiscountSettled => _totalAmount <= 0.0001;
+  bool get _canConfirmPayment =>
+      _cashReceived >= _totalAmount && (_isDiscountSettled || _cashReceived > 0);
 
   @override
   Widget build(BuildContext context) {
@@ -369,7 +372,7 @@ class _CashPaymentModalState extends State<CashPaymentModal> {
                   const SizedBox(width: 16),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: _cashReceived > 0 && _cashReceived >= _totalAmount
+                      onPressed: _canConfirmPayment
                           ? _confirmPayment
                           : null,
                       style: ElevatedButton.styleFrom(

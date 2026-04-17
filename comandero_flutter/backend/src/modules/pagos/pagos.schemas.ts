@@ -6,7 +6,8 @@ export const crearPagoSchema = z.object({
   ordenId: z.coerce.number().int().positive(),
   ordenIds: z.array(z.coerce.number().int().positive()).optional(), // Para cuentas agrupadas
   formaPagoId: z.coerce.number().int().positive(),
-  monto: z.coerce.number().positive(),
+  // Permitir 0 para casos donde un descuento cubre el 100% del total.
+  monto: z.coerce.number().nonnegative(),
   referencia: z.string().max(120).nullable().optional(),
   estado: z.enum(['aplicado', 'anulado', 'pendiente']).optional().default('aplicado'),
   // Aceptar fecha como string datetime ISO y convertirla a formato SQL para MySQL

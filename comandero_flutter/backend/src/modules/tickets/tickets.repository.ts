@@ -318,8 +318,22 @@ function extractDiscountPercentFromText(value: string | null | undefined): numbe
   return Math.min(p, 100);
 }
 
+function extractFixedDiscountFromText(value: string | null | undefined): number {
+  if (!value) return 0;
+  const match = value.match(/descuento\s+fijo\s*[:\-]?\s*\$?\s*(\d+(?:[.,]\d+)?)/i);
+  if (!match) return 0;
+  const normalized = String(match[1]).replace(',', '');
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return amount;
+}
+
 function computeDiscountFallback(subtotal: number, discountStored: number, paymentReference: string | null): number {
   if (discountStored > 0) return discountStored;
+  const fixed = extractFixedDiscountFromText(paymentReference);
+  if (fixed > 0 && subtotal > 0) {
+    return Math.min(fixed, subtotal);
+  }
   const pct = extractDiscountPercentFromText(paymentReference);
   if (pct <= 0 || subtotal <= 0) return 0;
   return Number(((subtotal * pct) / 100).toFixed(2));

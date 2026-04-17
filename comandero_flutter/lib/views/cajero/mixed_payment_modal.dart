@@ -113,11 +113,13 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
 
 
   bool _isEntryValid(_MixedPaymentEntry entry) {
+    if (_billTotal <= 0.0001) return entry.amount >= 0;
     return entry.amount > 0;
   }
 
   bool get _allEntriesValid =>
-      _entries.every((entry) => _isEntryValid(entry)) && _totalPaid > 0;
+      _entries.every((entry) => _isEntryValid(entry)) &&
+      (_billTotal <= 0.0001 ? _totalPaid >= 0 : _totalPaid > 0);
 
   // Validar que el total pagado cubra al menos el total de la cuenta
   // La propina es un extra, así que el total pagado puede ser mayor
@@ -556,7 +558,9 @@ class _MixedPaymentModalState extends State<MixedPaymentModal> {
       keyboardType: TextInputType.number,
       onChanged: (_) => setState(() {}),
       validator: (_) {
-        if (entry.amount <= 0) return 'Ingresa un monto válido';
+        if (_billTotal > 0.0001 && entry.amount <= 0) {
+          return 'Ingresa un monto válido';
+        }
         if (_totalPaid > _billTotal + 0.01) {
           return 'El total no debe exceder la cuenta';
         }
