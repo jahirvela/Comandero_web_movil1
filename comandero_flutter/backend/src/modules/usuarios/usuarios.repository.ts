@@ -28,6 +28,12 @@ interface UsuarioDetalleRow extends RowDataPacket {
   roles: string | null;
 }
 
+interface UsuarioFkRefRow extends RowDataPacket {
+  tableName: string;
+  columnName: string;
+  isNullable: 'YES' | 'NO';
+}
+
 const mapRoles = (roles: string | null) => {
   if (!roles) return [];
   return roles.split(',').map((role) => role.trim()).filter(Boolean);
@@ -281,6 +287,7 @@ export const eliminarUsuario = async (id: number) => {
 
 export const eliminarUsuarioPermanente = async (id: number) => {
   await withTransaction(async (conn) => {
+    // 1) Quitar roles primero.
     await conn.execute(
       `
       DELETE FROM usuario_rol
@@ -288,6 +295,70 @@ export const eliminarUsuarioPermanente = async (id: number) => {
       `,
       [id]
     );
+
+    // 2) Resolver referencias FK hacia usuario.id para permitir borrado físico.
+    // - Si la FK es nullable, se limpia a NULL.
+    // - Si NO es nullable, se reasigna a un administrador activo de respaldo.
+    const [fkRows] = await conn.query<UsuarioFkRefRow[]>(
+      `
+      SELECT
+        kcu.TABLE_NAME AS tableName,
+        kcu.COLUMN_NAME AS columnName,
+        c.IS_NULLABLE AS isNullable
+      FROM information_schema.KEY_COLUMN_USAGE kcu
+      JOIN information_schema.COLUMNS c
+        ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+       AND c.TABLE_NAME = kcu.TABLE_NAME
+       AND c.COLUMN_NAME = kcu.COLUMN_NAME
+      WHERE kcu.TABLE_SCHEMA = DATABASE()
+        AND kcu.REFERENCED_TABLE_SCHEMA = DATABASE()
+        AND kcu.REFERENCED_TABLE_NAME = 'usuario'
+        AND kcu.REFERENCED_COLUMN_NAME = 'id'
+        AND NOT (kcu.TABLE_NAME = 'usuario_rol' AND kcu.COLUMN_NAME = 'usuario_id')
+      `
+    );
+
+    const refsNullable = fkRows.filter((r) => r.isNullable === 'YES');
+    const refsNoNullable = fkRows.filter((r) => r.isNullable === 'NO');
+
+    for (const ref of refsNullable) {
+      await conn.query(
+        `UPDATE \`${ref.tableName}\` SET \`${ref.columnName}\` = NULL WHERE \`${ref.columnName}\` = ?`,
+        [id]
+      );
+    }
+
+    if (refsNoNullable.length > 0) {
+      const [fallbackRows] = await conn.query<RowDataPacket[]>(
+        `
+        SELECT u.id
+        FROM usuario u
+        JOIN usuario_rol ur ON ur.usuario_id = u.id
+        JOIN rol r ON r.id = ur.rol_id
+        WHERE u.id <> ?
+          AND u.activo = 1
+          AND r.nombre = 'administrador'
+        ORDER BY u.id ASC
+        LIMIT 1
+        `,
+        [id]
+      );
+      const fallbackUsuarioId = Number(fallbackRows[0]?.id ?? 0);
+      if (!Number.isFinite(fallbackUsuarioId) || fallbackUsuarioId <= 0) {
+        throw new Error(
+          'No se pudo eliminar el usuario permanentemente porque tiene referencias no anulables y no existe un administrador activo de respaldo.'
+        );
+      }
+
+      for (const ref of refsNoNullable) {
+        await conn.query(
+          `UPDATE \`${ref.tableName}\` SET \`${ref.columnName}\` = ? WHERE \`${ref.columnName}\` = ?`,
+          [fallbackUsuarioId, id]
+        );
+      }
+    }
+
+    // 3) Borrado físico del usuario.
     await conn.execute(
       `
       DELETE FROM usuario
