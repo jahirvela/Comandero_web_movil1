@@ -275,14 +275,11 @@ class CierresService {
     final statusRaw = (data['status'] as String?)?.toLowerCase() ?? 'pending';
     final status = statusRaw == 'cerrado' ? 'pending' : statusRaw; // Normalizar 'cerrado' a 'pending'
     
-    // Extraer el ID real del cierre si viene como "cierre-{id}"
-    int? cierreIdReal;
+    // ID numérico de BD (preferir campo camelCase del backend)
+    int? cierreIdReal = (data['cierreId'] as num?)?.toInt();
     final idStr = data['id']?.toString() ?? '';
-    if (idStr.startsWith('cierre-')) {
-      final idPart = idStr.substring(7); // Extraer después de "cierre-"
-      cierreIdReal = int.tryParse(idPart);
-    } else if (data['cierreId'] != null) {
-      cierreIdReal = (data['cierreId'] as num?)?.toInt();
+    if (cierreIdReal == null && idStr.startsWith('cierre-')) {
+      cierreIdReal = int.tryParse(idStr.substring('cierre-'.length));
     }
     
     return CashCloseModel(

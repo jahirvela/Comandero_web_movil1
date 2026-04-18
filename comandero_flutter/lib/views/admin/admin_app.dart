@@ -17,10 +17,45 @@ import '../../utils/app_theme.dart';
 import '../../config/api_config.dart';
 import '../../utils/date_utils.dart' as date_utils;
 import '../../utils/inventory_display_utils.dart';
+import '../../utils/string_search_utils.dart';
 import '../../utils/closure_utils.dart' as closure_utils;
 import '../cocinero/order_detail_modal.dart';
 import '../../services/ordenes_service.dart';
 import 'web/configuracion_web_view.dart';
+import 'formulation_line_picker.dart';
+
+/// Filtro del selector de insumos en recetas: nombre (parcial), categoría, código de barras
+/// (parcial o por prefijo numérico).
+bool _recipeInventoryPickerMatchesSearch(InventoryItem item, String rawQuery) {
+  final trimmed = rawQuery.trim();
+  if (trimmed.isEmpty) return true;
+
+  final qNorm = normalizeForInsensitiveSearch(trimmed);
+  if (normalizeForInsensitiveSearch(item.name).contains(qNorm)) return true;
+  if (normalizeForInsensitiveSearch(item.category).contains(qNorm)) return true;
+
+  final code = item.codigoBarras?.trim() ?? '';
+  if (code.isEmpty) return false;
+
+  if (normalizeForInsensitiveSearch(code).contains(qNorm)) return true;
+
+  final digitsQuery = trimmed.replaceAll(RegExp(r'\D'), '');
+  final digitsCode = code.replaceAll(RegExp(r'\D'), '');
+  if (digitsQuery.isNotEmpty && digitsCode.startsWith(digitsQuery)) return true;
+
+  return false;
+}
+
+int _recipeInventoryCategorySort(String a, String b) {
+  bool isOtros(String s) =>
+      normalizeForInsensitiveSearch(s) ==
+      normalizeForInsensitiveSearch('Otros');
+  final ao = isOtros(a);
+  final bo = isOtros(b);
+  if (ao && !bo) return 1;
+  if (!ao && bo) return -1;
+  return a.toLowerCase().compareTo(b.toLowerCase());
+}
 
 /// Al abrir [AdminApp] en modo inventario embebido, fuerza la vista y recarga datos.
 class _AdminEmbeddedInventoryInitializer extends StatefulWidget {
@@ -61,6 +96,44 @@ class _NavItemData {
   final String viewId;
 }
 
+enum _InventoryQuickTab { catalog, movimientos, reportes, resumen, recetas }
+
+/// Pestañas locales: muestra una sección bajo «Accesos rápidos» sin scroll global.
+class _InventoryQuickTabsHost extends StatefulWidget {
+  const _InventoryQuickTabsHost({
+    required this.controller,
+    required this.builder,
+  });
+
+  final AdminController controller;
+  final Widget Function(
+    BuildContext context,
+    _InventoryQuickTab tab,
+    ValueChanged<_InventoryQuickTab> onTab,
+  )
+  builder;
+
+  @override
+  State<_InventoryQuickTabsHost> createState() =>
+      _InventoryQuickTabsHostState();
+}
+
+class _InventoryQuickTabsHostState extends State<_InventoryQuickTabsHost> {
+  _InventoryQuickTab _tab = _InventoryQuickTab.catalog;
+
+  void _selectTab(_InventoryQuickTab t) {
+    setState(() => _tab = t);
+    if (t == _InventoryQuickTab.movimientos) {
+      widget.controller.loadInventoryMovimientos();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.builder(context, _tab, _selectTab);
+  }
+}
+
 class AdminApp extends StatelessWidget {
   const AdminApp({
     super.key,
@@ -75,7 +148,7 @@ class AdminApp extends StatelessWidget {
   /// Helper para extraer mensajes de error más claros
   static String _extractErrorMessage(dynamic e) {
     final errorStr = e.toString();
-    
+
     // Errores comunes
     if (errorStr.contains('Error al obtener roles')) {
       return 'Error al obtener roles del sistema. Verifica que el backend esté funcionando.';
@@ -87,10 +160,10 @@ class AdminApp extends StatelessWidget {
         (errorStr.contains('no existe') ||
             errorStr.contains('Unknown column'))) {
       return 'La columna categoria no existe en la base de datos. El sistema intentará crearla automáticamente. Si el error persiste, ejecuta: npm run migrate:inventory-category en el backend';
-    } else if (errorStr.contains('Error de conexión') || 
-               errorStr.contains('No se pudo conectar') ||
-               errorStr.contains('backend esté corriendo') ||
-               errorStr.contains('connection')) {
+    } else if (errorStr.contains('Error de conexión') ||
+        errorStr.contains('No se pudo conectar') ||
+        errorStr.contains('backend esté corriendo') ||
+        errorStr.contains('connection')) {
       return 'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
     } else if (errorStr.contains('401') || errorStr.contains('403')) {
       return 'No tienes permisos para realizar esta acción.';
@@ -106,7 +179,7 @@ class AdminApp extends StatelessWidget {
         return 'Error del servidor: ${match.group(1)}';
       }
     }
-    
+
     // Intentar extraer el mensaje más relevante
     final match = RegExp(
       r'Exception:\s*(.+?)(?:Exception:|$)',
@@ -114,11 +187,51 @@ class AdminApp extends StatelessWidget {
     if (match != null) {
       return match.group(1)?.trim() ?? 'Error desconocido';
     }
-    
+
     // Si el mensaje es muy largo, truncarlo
-    return errorStr.length > 150 
-        ? '${errorStr.substring(0, 150)}...' 
+    return errorStr.length > 150
+        ? '${errorStr.substring(0, 150)}...'
         : errorStr;
+  }
+
+  /// Valor del desplegable de categoría de inventario (lista siempre desde [controller]).
+  static String? _resolveInventoryCategoryDropdownValue(
+    AdminController controller,
+    String? selected,
+  ) {
+    final opts =
+        controller.inventoryCategories.where((c) => c != 'todos').toList();
+    if (opts.isEmpty) return null;
+    if (selected != null && opts.contains(selected)) return selected;
+    return opts.first;
+  }
+
+  /// Opciones de categoría para producto formulado (incluye la del ítem en edición si hace falta).
+  static List<String> _formulatedCategoryDropdownItems(
+    AdminController controller,
+    InventoryItem? editItem,
+  ) {
+    var opts =
+        controller.inventoryCategories.where((c) => c != 'todos').toList();
+    if (opts.isEmpty) opts = ['Otros'];
+    final ei = editItem;
+    if (ei != null && !opts.contains(ei.category)) {
+      opts = [...opts, ei.category];
+    }
+    return opts;
+  }
+
+  static String? _resolveFormulatedCategoryDropdownValue(
+    AdminController controller,
+    InventoryItem? editItem,
+    String? selected,
+  ) {
+    final opts = _formulatedCategoryDropdownItems(controller, editItem);
+    if (opts.isEmpty) return null;
+    if (selected != null && opts.contains(selected)) return selected;
+    final ei = editItem;
+    if (ei != null && opts.contains(ei.category)) return ei.category;
+    return opts.first;
   }
 
   @override
@@ -216,9 +329,7 @@ class AdminApp extends StatelessWidget {
               child: Text(
                 () {
                   final u = authController.userName.trim();
-                  return u.isEmpty
-                      ? 'Usuario · Gerente'
-                      : '$u · Gerente';
+                  return u.isEmpty ? 'Usuario · Gerente' : '$u · Gerente';
                 }(),
                 textAlign: TextAlign.center,
                 maxLines: 1,
@@ -554,9 +665,9 @@ class AdminApp extends StatelessWidget {
             SizedBox(height: AppTheme.spacingXS),
             Text(
               'Vista rápida del estado actual: ventas, órdenes, mesas y stock crítico.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.textSecondary,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
             ),
             SizedBox(height: AppTheme.spacingLG),
             LayoutBuilder(
@@ -596,14 +707,14 @@ class AdminApp extends StatelessWidget {
     // Calcular ventas del día
     final todaySales = controller.todayTotalSales;
     final salesGrowth = controller.salesGrowthPercentage;
-    final salesGrowthText = salesGrowth >= 0 
+    final salesGrowthText = salesGrowth >= 0
         ? '+${salesGrowth.toStringAsFixed(1)}% vs ayer'
         : '${salesGrowth.toStringAsFixed(1)}% vs ayer';
 
     // Calcular órdenes activas
     final activeOrders = controller.activeOrders.length;
     final ordersInKitchen = controller.ordersInKitchen.length;
-    final ordersText = ordersInKitchen > 0 
+    final ordersText = ordersInKitchen > 0
         ? '$ordersInKitchen en cocina'
         : 'Sin órdenes en cocina';
 
@@ -617,10 +728,10 @@ class AdminApp extends StatelessWidget {
     // Calcular stock crítico
     final criticalStock = controller.criticalStockItems.length;
     final stockItemsNames = controller.criticalStockItemsNames;
-    final stockText = criticalStock > 0 
-        ? stockItemsNames.length > 30 
-            ? '${stockItemsNames.substring(0, 30)}...'
-            : stockItemsNames
+    final stockText = criticalStock > 0
+        ? stockItemsNames.length > 30
+              ? '${stockItemsNames.substring(0, 30)}...'
+              : stockItemsNames
         : 'Ninguno';
 
     return [
@@ -665,225 +776,226 @@ class AdminApp extends StatelessWidget {
         final apertura = ctrl.getTodayCashOpening();
         final isOpen = ctrl.isCashRegisterOpen();
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusLG),
-        side: BorderSide(
-          color: isOpen ? AppColors.success : AppColors.warning,
-          width: 2,
-        ),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(
-          isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLG),
+            side: BorderSide(
+              color: isOpen ? AppColors.success : AppColors.warning,
+              width: 2,
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(
+              isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Icon(
-                      isOpen ? Icons.lock_open : Icons.lock,
-                      color: isOpen ? AppColors.success : AppColors.warning,
-                      size: isTablet ? 28.0 : 24.0,
+                    Row(
+                      children: [
+                        Icon(
+                          isOpen ? Icons.lock_open : Icons.lock,
+                          color: isOpen ? AppColors.success : AppColors.warning,
+                          size: isTablet ? 28.0 : 24.0,
+                        ),
+                        SizedBox(width: AppTheme.spacingMD),
+                        Text(
+                          'Estado de Caja del Día',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: AppTheme.fontWeightBold,
+                                color: AppColors.textPrimary,
+                              ),
+                        ),
+                      ],
                     ),
-                    SizedBox(width: AppTheme.spacingMD),
-                    Text(
-                      'Estado de Caja del Día',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: AppTheme.fontWeightBold,
-                        color: AppColors.textPrimary,
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isTablet ? 16.0 : 12.0,
+                        vertical: isTablet ? 8.0 : 6.0,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isOpen
+                            ? AppColors.success.withValues(alpha: 0.1)
+                            : AppColors.warning.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          fontWeight: FontWeight.w600,
+                          color: isOpen ? AppColors.success : AppColors.warning,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 16.0 : 12.0,
-                    vertical: isTablet ? 8.0 : 6.0,
+                if (apertura != null) ...[
+                  SizedBox(height: AppTheme.spacingLG),
+                  Divider(color: AppColors.border),
+                  SizedBox(height: AppTheme.spacingMD),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Efectivo Inicial',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: isTablet ? 24.0 : 20.0,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Cajero',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              apertura.usuario,
+                              style: TextStyle(
+                                fontSize: isTablet ? 16.0 : 14.0,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'Fecha y Hora',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              date_utils.AppDateUtils.formatDateTime(
+                                apertura.fecha,
+                              ),
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  decoration: BoxDecoration(
-                    color: isOpen
-                        ? AppColors.success.withValues(alpha: 0.1)
-                        : AppColors.warning.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                  // Mostrar notas solo cuando es apertura real (no del cierre)
+                  if (apertura.totalNeto < 1 &&
+                      apertura.notaCajero != null &&
+                      apertura.notaCajero!.isNotEmpty) ...[
+                    SizedBox(height: AppTheme.spacingMD),
+                    Container(
+                      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                      decoration: BoxDecoration(
+                        color: AppColors.inputBackground,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.note,
+                            size: isTablet ? 18.0 : 16.0,
+                            color: AppColors.textSecondary,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              apertura.notaCajero!,
+                              style: TextStyle(
+                                fontSize: isTablet ? 13.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (!isOpen) ...[
+                    SizedBox(height: AppTheme.spacingMD),
+                    Container(
+                      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.warning.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: isTablet ? 18.0 : 16.0,
+                            color: AppColors.warning,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'La caja fue cerrada. Los detalles del cierre están en la tabla inferior.',
+                              style: TextStyle(
+                                fontSize: isTablet ? 13.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  SizedBox(height: AppTheme.spacingMD),
+                  Text(
+                    'No se ha registrado una apertura de caja hoy',
                     style: TextStyle(
                       fontSize: isTablet ? 14.0 : 12.0,
-                      fontWeight: FontWeight.w600,
-                      color: isOpen ? AppColors.success : AppColors.warning,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (apertura != null) ...[
-              SizedBox(height: AppTheme.spacingLG),
-              Divider(color: AppColors.border),
-              SizedBox(height: AppTheme.spacingMD),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Efectivo Inicial',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: isTablet ? 24.0 : 20.0,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Cajero',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          apertura.usuario,
-                          style: TextStyle(
-                            fontSize: isTablet ? 16.0 : 14.0,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          'Fecha y Hora',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          date_utils.AppDateUtils.formatDateTime(
-                            apertura.fecha,
-                          ),
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic,
                     ),
                   ),
                 ],
-              ),
-              // Mostrar notas solo cuando es apertura real (no del cierre)
-              if (apertura.totalNeto < 1 &&
-                  apertura.notaCajero != null &&
-                  apertura.notaCajero!.isNotEmpty) ...[
-                SizedBox(height: AppTheme.spacingMD),
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
-                  decoration: BoxDecoration(
-                    color: AppColors.inputBackground,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.note,
-                        size: isTablet ? 18.0 : 16.0,
-                        color: AppColors.textSecondary,
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          apertura.notaCajero!,
-                          style: TextStyle(
-                            fontSize: isTablet ? 13.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
-              if (!isOpen) ...[
-                SizedBox(height: AppTheme.spacingMD),
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: AppColors.warning.withValues(alpha: 0.2),
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: isTablet ? 18.0 : 16.0,
-                        color: AppColors.warning,
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'La caja fue cerrada. Los detalles del cierre están en la tabla inferior.',
-                          style: TextStyle(
-                            fontSize: isTablet ? 13.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ] else ...[
-              SizedBox(height: AppTheme.spacingMD),
-              Text(
-                'No se ha registrado una apertura de caja hoy',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: AppColors.textSecondary,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
+            ),
+          ),
+        );
       },
     );
   }
@@ -941,9 +1053,9 @@ class AdminApp extends StatelessWidget {
             SizedBox(height: AppTheme.spacingXS),
             Text(
               'Ventas por canal y por método desde pagos aplicados (BD). Pago mixto: efectivo y tarjeta se reparten. Por cobrar: tickets pendientes.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.textSecondary,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
             ),
             SizedBox(height: AppTheme.spacingLG),
 
@@ -1738,7 +1850,9 @@ class AdminApp extends StatelessWidget {
               side: BorderSide(color: AppColors.border.withValues(alpha: 0.6)),
             ),
             child: Padding(
-              padding: EdgeInsets.all(isTablet ? AppTheme.spacingLG : AppTheme.spacingMD),
+              padding: EdgeInsets.all(
+                isTablet ? AppTheme.spacingLG : AppTheme.spacingMD,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1772,7 +1886,9 @@ class AdminApp extends StatelessWidget {
               side: BorderSide(color: AppColors.border.withValues(alpha: 0.6)),
             ),
             child: Padding(
-              padding: EdgeInsets.all(isTablet ? AppTheme.spacingLG : AppTheme.spacingMD),
+              padding: EdgeInsets.all(
+                isTablet ? AppTheme.spacingLG : AppTheme.spacingMD,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1891,7 +2007,7 @@ class AdminApp extends StatelessWidget {
   void _showAddAreaDialog(BuildContext context, AdminController controller) {
     final areaNameController = TextEditingController();
     final isTablet = MediaQuery.of(context).size.width > 600;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1929,7 +2045,7 @@ class AdminApp extends StatelessWidget {
                 );
                 return;
               }
-              
+
               // Verificar si el área ya existe (comparación exacta)
               if (controller.tableAreas.contains(areaName)) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1940,7 +2056,7 @@ class AdminApp extends StatelessWidget {
                 );
                 return;
               }
-              
+
               controller.addTableArea(areaName);
               Navigator.of(context).pop();
               ScaffoldMessenger.of(context).showSnackBar(
@@ -1964,12 +2080,12 @@ class AdminApp extends StatelessWidget {
     String areaName,
   ) {
     final isTablet = MediaQuery.of(context).size.width > 600;
-    
+
     // Contar cuántas mesas usan esta área
     final mesasConArea = controller.tables
         .where((t) => t.section == areaName)
         .length;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1980,8 +2096,8 @@ class AdminApp extends StatelessWidget {
         content: Text(
           mesasConArea > 0
               ? '¿Estás seguro de que deseas eliminar el área "$areaName"?\n\n'
-                  'Hay $mesasConArea mesa${mesasConArea > 1 ? 's' : ''} que usan esta área. '
-                  'Se moverán a "${controller.tableAreas.where((a) => a != 'todos' && a != areaName).isNotEmpty ? controller.tableAreas.where((a) => a != 'todos' && a != areaName).first : 'Área Principal'}".'
+                    'Hay $mesasConArea mesa${mesasConArea > 1 ? 's' : ''} que usan esta área. '
+                    'Se moverán a "${controller.tableAreas.where((a) => a != 'todos' && a != areaName).isNotEmpty ? controller.tableAreas.where((a) => a != 'todos' && a != areaName).first : 'Área Principal'}".'
               : '¿Estás seguro de que deseas eliminar el área "$areaName"?',
           style: TextStyle(fontSize: isTablet ? 16 : 14),
         ),
@@ -1993,12 +2109,12 @@ class AdminApp extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               Navigator.of(context).pop();
-              
+
               try {
                 // El método ahora retorna inmediatamente después de actualizar localmente
                 // No necesita mostrar diálogo de carga porque es instantáneo
                 await controller.deleteTableArea(areaName);
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -2200,7 +2316,11 @@ class AdminApp extends StatelessWidget {
                     ),
                     SizedBox(width: AppTheme.spacingXS),
                     // Solo administrador puede eliminar mesas; mesero puede editar pero no eliminar
-                    if (Provider.of<AuthController>(context, listen: false).userRole != 'mesero')
+                    if (Provider.of<AuthController>(
+                          context,
+                          listen: false,
+                        ).userRole !=
+                        'mesero')
                       IconButton(
                         icon: Icon(Icons.delete, size: isTablet ? 20 : 18),
                         color: textColor,
@@ -2239,13 +2359,13 @@ class AdminApp extends StatelessWidget {
             // Estado con dropdown
             Container(
               decoration: BoxDecoration(
-                color: table.status == TableStatus.enLimpieza 
+                color: table.status == TableStatus.enLimpieza
                     ? Colors
                           .grey
                           .shade200 // Gris claro para "En limpieza"
                     : (table.status == TableStatus.reservada
-                        ? Colors.yellow.shade100
-                        : textColor.withValues(alpha: 0.15)),
+                          ? Colors.yellow.shade100
+                          : textColor.withValues(alpha: 0.15)),
                 borderRadius: BorderRadius.circular(AppTheme.radiusMD),
               ),
               child: DropdownButtonFormField<String>(
@@ -2395,70 +2515,70 @@ class AdminApp extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                  TextFormField(
-                    controller: nameOrNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nombre o número de Mesa *',
-                      hintText: 'Ej: 1, Terraza, VIP 1',
-                      border: OutlineInputBorder(),
+                    TextFormField(
+                      controller: nameOrNumberController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre o número de Mesa *',
+                        hintText: 'Ej: 1, Terraza, VIP 1',
+                        border: OutlineInputBorder(),
+                      ),
+                      textCapitalization: TextCapitalization.words,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        if (controller.tableCodigoExists(value.trim())) {
+                          return 'Ya existe una mesa con ese nombre o número';
+                        }
+                        return null;
+                      },
                     ),
-                    textCapitalization: TextCapitalization.words,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Campo obligatorio';
-                      }
-                      if (controller.tableCodigoExists(value.trim())) {
-                        return 'Ya existe una mesa con ese nombre o número';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                  TextFormField(
-                    controller: seatsController,
-                    decoration: const InputDecoration(
-                      labelText: 'Número de Asientos *',
-                      border: OutlineInputBorder(),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: seatsController,
+                      decoration: const InputDecoration(
+                        labelText: 'Número de Asientos *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final seats = int.tryParse(value);
+                        if (seats == null || seats <= 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
                     ),
-                    keyboardType: TextInputType.number,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Campo obligatorio';
-                      }
-                      final seats = int.tryParse(value);
-                      if (seats == null || seats <= 0) {
-                        return 'Debe ser un número válido';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                  DropdownButtonFormField<String>(
-                    value: selectedSection,
-                    decoration: const InputDecoration(
-                      labelText: 'Sección *',
-                      border: OutlineInputBorder(),
-                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    DropdownButtonFormField<String>(
+                      value: selectedSection,
+                      decoration: const InputDecoration(
+                        labelText: 'Sección *',
+                        border: OutlineInputBorder(),
+                      ),
                       items: availableAreas
                           .map(
                             (area) => DropdownMenuItem(
-                      value: area,
-                      child: Text(area),
+                              value: area,
+                              child: Text(area),
                             ),
                           )
                           .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          selectedSection = value;
-                        });
-                      }
-                    },
-                  ),
-                ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            selectedSection = value;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
           ),
           actions: [
             TextButton(
@@ -2477,47 +2597,47 @@ class AdminApp extends StatelessWidget {
                     seats: int.parse(seatsController.text),
                     section: selectedSection,
                   );
-                // Mostrar indicador de carga
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
                     builder: (context) =>
                         const Center(child: CircularProgressIndicator()),
-                );
+                  );
 
-                try {
-                  await controller.addTable(newTable);
-                  
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  // Cerrar diálogo de creación
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Mesa agregada exitosamente'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
+                  try {
+                    await controller.addTable(newTable);
+
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    // Cerrar diálogo de creación
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Mesa agregada exitosamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
                           content: Text(
                             'Error al crear mesa: ${_extractErrorMessage(e)}',
                           ),
-                        backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 5),
-                      ),
-                    );
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
                   }
-                }
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -2540,9 +2660,7 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
   ) {
     final formKey = GlobalKey<FormState>();
-    final nameOrNumberController = TextEditingController(
-      text: table.codigo,
-    );
+    final nameOrNumberController = TextEditingController(text: table.codigo);
     final seatsController = TextEditingController(text: table.seats.toString());
     final availableAreas = controller.tableAreas
         .where((a) => a != 'todos')
@@ -2584,72 +2702,72 @@ class AdminApp extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                  TextFormField(
-                    controller: nameOrNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nombre o número de Mesa *',
-                      hintText: 'Ej: 1, Terraza, VIP 1',
-                      border: OutlineInputBorder(),
+                    TextFormField(
+                      controller: nameOrNumberController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre o número de Mesa *',
+                        hintText: 'Ej: 1, Terraza, VIP 1',
+                        border: OutlineInputBorder(),
+                      ),
+                      textCapitalization: TextCapitalization.words,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        if (controller.tableCodigoExists(
+                          value.trim(),
+                          excludeId: table.id,
+                        )) {
+                          return 'Ya existe una mesa con ese nombre o número';
+                        }
+                        return null;
+                      },
                     ),
-                    textCapitalization: TextCapitalization.words,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Campo obligatorio';
-                      }
-                      if (controller.tableCodigoExists(
-                        value.trim(),
-                        excludeId: table.id,
-                      )) {
-                        return 'Ya existe una mesa con ese nombre o número';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                  TextFormField(
-                    controller: seatsController,
-                    decoration: const InputDecoration(
-                      labelText: 'Asientos *',
-                      border: OutlineInputBorder(),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: seatsController,
+                      decoration: const InputDecoration(
+                        labelText: 'Asientos *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final seats = int.tryParse(value);
+                        if (seats == null || seats <= 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
                     ),
-                    keyboardType: TextInputType.number,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Campo obligatorio';
-                      }
-                      final seats = int.tryParse(value);
-                      if (seats == null || seats <= 0) {
-                        return 'Debe ser un número válido';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                  DropdownButtonFormField<String>(
-                    value: selectedSection,
-                    decoration: const InputDecoration(
-                      labelText: 'Sección *',
-                      border: OutlineInputBorder(),
-                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    DropdownButtonFormField<String>(
+                      value: selectedSection,
+                      decoration: const InputDecoration(
+                        labelText: 'Sección *',
+                        border: OutlineInputBorder(),
+                      ),
                       items: availableAreas
                           .map(
                             (area) => DropdownMenuItem(
-                      value: area,
-                      child: Text(area),
+                              value: area,
+                              child: Text(area),
                             ),
                           )
                           .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          selectedSection = value;
-                        });
-                      }
-                    },
-                  ),
-                ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            selectedSection = value;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
             ),
           ),
           actions: [
@@ -2677,13 +2795,13 @@ class AdminApp extends StatelessWidget {
                       section: selectedSection,
                     );
                     await controller.updateTable(updatedTable);
-                    
+
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     // Cerrar diálogo de edición
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -2695,7 +2813,7 @@ class AdminApp extends StatelessWidget {
                   } catch (e) {
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -2750,13 +2868,13 @@ class AdminApp extends StatelessWidget {
 
               try {
                 await controller.deleteTable(table.id);
-                
+
                 // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 // Cerrar diálogo de confirmación
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -2768,7 +2886,7 @@ class AdminApp extends StatelessWidget {
               } catch (e) {
                 // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -2807,7 +2925,7 @@ class AdminApp extends StatelessWidget {
     if (controller.getAllCategories().isEmpty) {
       controller.loadCategorias();
     }
-    
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(
         isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
@@ -2969,44 +3087,45 @@ class AdminApp extends StatelessWidget {
                       final puedeBorrar =
                           category.trim().toLowerCase() != 'todos';
                       return FilterChip(
-                    label: Text(
-                      category,
-                      style: TextStyle(
-                        fontSize: isTablet
-                            ? AppTheme.fontSizeSM
-                            : AppTheme.fontSizeXS,
-                        fontWeight: controller.selectedMenuCategory == category
-                            ? AppTheme.fontWeightSemibold
-                            : AppTheme.fontWeightNormal,
-                      ),
-                    ),
-                    selected: controller.selectedMenuCategory == category,
-                    onSelected: (selected) {
-                      if (selected) {
-                        controller.setSelectedMenuCategory(category);
-                      }
-                    },
-                    onDeleted: puedeBorrar
-                        ? () => _handleMenuCategoryDeletion(
-                              context,
-                              controller,
-                              category,
-                            )
-                        : null,
-                    deleteIcon: puedeBorrar
-                        ? Icon(
-                      Icons.close,
-                      size: isTablet ? 16 : 14,
-                      color: AppColors.error,
-                    )
-                        : null,
-                    selectedColor: AppColors.primary,
-                    checkmarkColor: Colors.white,
-                    labelStyle: TextStyle(
-                      color: controller.selectedMenuCategory == category
-                          ? Colors.white
-                          : AppColors.textPrimary,
-                    ),
+                        label: Text(
+                          category,
+                          style: TextStyle(
+                            fontSize: isTablet
+                                ? AppTheme.fontSizeSM
+                                : AppTheme.fontSizeXS,
+                            fontWeight:
+                                controller.selectedMenuCategory == category
+                                ? AppTheme.fontWeightSemibold
+                                : AppTheme.fontWeightNormal,
+                          ),
+                        ),
+                        selected: controller.selectedMenuCategory == category,
+                        onSelected: (selected) {
+                          if (selected) {
+                            controller.setSelectedMenuCategory(category);
+                          }
+                        },
+                        onDeleted: puedeBorrar
+                            ? () => _handleMenuCategoryDeletion(
+                                context,
+                                controller,
+                                category,
+                              )
+                            : null,
+                        deleteIcon: puedeBorrar
+                            ? Icon(
+                                Icons.close,
+                                size: isTablet ? 16 : 14,
+                                color: AppColors.error,
+                              )
+                            : null,
+                        selectedColor: AppColors.primary,
+                        checkmarkColor: Colors.white,
+                        labelStyle: TextStyle(
+                          color: controller.selectedMenuCategory == category
+                              ? Colors.white
+                              : AppColors.textPrimary,
+                        ),
                       );
                     },
                   ),
@@ -3019,7 +3138,9 @@ class AdminApp extends StatelessWidget {
           child: Text(
             'Solo «Todos» no se elimina. «Otros» u otra categoría solo se borra si no tiene productos: edita el producto (lápiz) y asígnalo a otra categoría antes.',
             style: TextStyle(
-              fontSize: isTablet ? AppTheme.fontSizeXS : AppTheme.fontSizeXS - 1,
+              fontSize: isTablet
+                  ? AppTheme.fontSizeXS
+                  : AppTheme.fontSizeXS - 1,
               color: AppColors.textSecondary,
             ),
           ),
@@ -3269,11 +3390,8 @@ class AdminApp extends StatelessWidget {
                       icon: Icon(Icons.discount, size: isTablet ? 20 : 18),
                       color: Colors.deepOrange,
                       tooltip: 'Configurar descuento',
-                      onPressed: () => _showDiscountModal(
-                        context,
-                        product,
-                        controller,
-                      ),
+                      onPressed: () =>
+                          _showDiscountModal(context, product, controller),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
@@ -3347,7 +3465,7 @@ class AdminApp extends StatelessWidget {
                       (product.isAvailable
                               ? AppColors.success
                               : AppColors.error)
-                      .withValues(alpha: 0.15),
+                          .withValues(alpha: 0.15),
                   padding: EdgeInsets.symmetric(
                     horizontal: AppTheme.spacingSM,
                     vertical: AppTheme.spacingXS,
@@ -3440,9 +3558,9 @@ class AdminApp extends StatelessWidget {
               Text(
                 'Descuento activo hasta: ${date_utils.AppDateUtils.formatDateTimeWithAmPm(product.descuentoFin!)}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.deepOrange,
-                      fontWeight: AppTheme.fontWeightSemibold,
-                    ),
+                  color: Colors.deepOrange,
+                  fontWeight: AppTheme.fontWeightSemibold,
+                ),
               ),
               SizedBox(height: AppTheme.spacingSM),
             ],
@@ -3459,9 +3577,9 @@ class AdminApp extends StatelessWidget {
                   Text(
                     '${product.recipeIngredients!.length} ingredientes configurados',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                          fontWeight: AppTheme.fontWeightSemibold,
-                        ),
+                      color: AppColors.textSecondary,
+                      fontWeight: AppTheme.fontWeightSemibold,
+                    ),
                   ),
                 ],
               ),
@@ -3476,9 +3594,9 @@ class AdminApp extends StatelessWidget {
                   Text(
                     'Tamaños disponibles:',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: AppTheme.fontWeightSemibold,
-                          color: AppColors.textPrimary,
-                        ),
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                   SizedBox(height: AppTheme.spacingXS),
                   Wrap(
@@ -3522,10 +3640,10 @@ class AdminApp extends StatelessWidget {
                     ? 'Sin precio establecido'
                     : 'Precio: $priceLabel',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontSize: isTablet ? 18 : 16,
-                      fontWeight: AppTheme.fontWeightBold,
-                      color: AppColors.primary,
-                    ),
+                  fontSize: isTablet ? 18 : 16,
+                  fontWeight: AppTheme.fontWeightBold,
+                  color: AppColors.primary,
+                ),
               ),
             SizedBox(height: AppTheme.spacingMD),
 
@@ -3656,10 +3774,12 @@ class AdminApp extends StatelessWidget {
                         border: OutlineInputBorder(),
                       ),
                       items: durations
-                          .map((d) => DropdownMenuItem<String>(
-                                value: d,
-                                child: Text(d),
-                              ))
+                          .map(
+                            (d) => DropdownMenuItem<String>(
+                              value: d,
+                              child: Text(d),
+                            ),
+                          )
                           .toList(),
                       onChanged: (value) {
                         if (value != null) {
@@ -3686,7 +3806,8 @@ class AdminApp extends StatelessWidget {
                         duracionDescuento: null,
                       );
                       await controller.updateMenuItem(updated);
-                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                      if (dialogContext.mounted)
+                        Navigator.of(dialogContext).pop();
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
@@ -3699,7 +3820,9 @@ class AdminApp extends StatelessWidget {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Error al eliminar descuento: ${_extractErrorMessage(e)}'),
+                            content: Text(
+                              'Error al eliminar descuento: ${_extractErrorMessage(e)}',
+                            ),
                             backgroundColor: Colors.red,
                           ),
                         );
@@ -3711,9 +3834,12 @@ class AdminApp extends StatelessWidget {
                 ElevatedButton(
                   onPressed: () async {
                     try {
-                      final pct = double.tryParse(descuentoController.text.trim()) ?? 0;
+                      final pct =
+                          double.tryParse(descuentoController.text.trim()) ?? 0;
                       if (pct <= 0 || pct > 100) {
-                        throw Exception('Ingresa un descuento válido entre 1 y 100');
+                        throw Exception(
+                          'Ingresa un descuento válido entre 1 y 100',
+                        );
                       }
                       final updated = product.copyWith(
                         descuentoPorcentaje: pct,
@@ -3721,7 +3847,8 @@ class AdminApp extends StatelessWidget {
                         duracionDescuento: selectedDuration,
                       );
                       await controller.updateMenuItem(updated);
-                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                      if (dialogContext.mounted)
+                        Navigator.of(dialogContext).pop();
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
@@ -3736,7 +3863,9 @@ class AdminApp extends StatelessWidget {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Error al guardar descuento: ${_extractErrorMessage(e)}'),
+                            content: Text(
+                              'Error al guardar descuento: ${_extractErrorMessage(e)}',
+                            ),
                             backgroundColor: Colors.red,
                           ),
                         );
@@ -3804,10 +3933,10 @@ class AdminApp extends StatelessWidget {
 
                 try {
                   await controller.addCustomCategory(nameController.text);
-                  
+
                   // Cerrar diálogo de carga
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   // Cerrar diálogo de creación
                   if (context.mounted) Navigator.of(context).pop();
 
@@ -4038,8 +4167,8 @@ class AdminApp extends StatelessWidget {
                       child: Text(
                         'Nota: El precio general se desactiva cuando usas tamaños. Cada tamaño debe tener un precio.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
                   ] else ...[
@@ -4170,9 +4299,7 @@ class AdminApp extends StatelessWidget {
                     if (invalidName) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text(
-                            'Cada tamaño debe tener un nombre',
-                          ),
+                          content: Text('Cada tamaño debe tener un nombre'),
                           backgroundColor: Colors.orange,
                         ),
                       );
@@ -4224,7 +4351,7 @@ class AdminApp extends StatelessWidget {
                       return;
                     }
                   }
-                  
+
                   final newProduct = MenuItem(
                     id: 'temp', // Temporal, se actualizará desde el backend
                     name: nameController.text.trim(),
@@ -4253,16 +4380,16 @@ class AdminApp extends StatelessWidget {
 
                   try {
                     await controller.addMenuItem(newProduct);
-                    
+
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     // Cerrar diálogo de creación
                     if (context.mounted) {
                       disposeSizeControllers();
                       Navigator.of(context).pop();
                     }
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -4274,7 +4401,7 @@ class AdminApp extends StatelessWidget {
                   } catch (e) {
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -4603,8 +4730,8 @@ class AdminApp extends StatelessWidget {
                       child: Text(
                         'Nota: El precio general se reemplaza por los precios configurados aquí.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
                   ] else ...[
@@ -4773,7 +4900,7 @@ class AdminApp extends StatelessWidget {
                     allowExtraIngredients: allowExtraIngredients,
                     updatedAt: date_utils.AppDateUtils.nowCdmx(),
                   );
-                  
+
                   // Mostrar indicador de carga
                   showDialog(
                     context: context,
@@ -4784,16 +4911,16 @@ class AdminApp extends StatelessWidget {
 
                   try {
                     await controller.updateMenuItem(updatedProduct);
-                    
+
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     // Cerrar diálogo de edición
                     if (context.mounted) {
                       disposeSizeControllers();
                       Navigator.of(context).pop();
                     }
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -4805,7 +4932,7 @@ class AdminApp extends StatelessWidget {
                   } catch (e) {
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -4847,14 +4974,19 @@ class AdminApp extends StatelessWidget {
         builder: (ctx) => const Center(child: CircularProgressIndicator()),
       );
     }
-    MenuItem? productWithRecipe = await controller.fetchProductoForRecipe(product.id);
+    MenuItem? productWithRecipe = await controller.fetchProductoForRecipe(
+      product.id,
+    );
     if (productWithRecipe == null && context.mounted) {
       await controller.loadMenuItems();
-      final list = controller.menuItems.where((item) => item.id == product.id).toList();
+      final list = controller.menuItems
+          .where((item) => item.id == product.id)
+          .toList();
       if (list.isNotEmpty) productWithRecipe = list.first;
     }
     if (context.mounted) Navigator.of(context).pop(); // Cerrar loading
-    final currentProduct = productWithRecipe ??
+    final currentProduct =
+        productWithRecipe ??
         controller.menuItems.firstWhere(
           (item) => item.id == product.id,
           orElse: () => product,
@@ -4867,17 +4999,20 @@ class AdminApp extends StatelessWidget {
         .where((size) => size.id != null)
         .toList();
     final canUseSizeRecipes = hasSizes && sizesWithId.isNotEmpty;
-    final hasGeneralIngredients =
-        recipeIngredients.any((ingredient) => ingredient.sizeId == null);
+    final hasGeneralIngredients = recipeIngredients.any(
+      (ingredient) => ingredient.sizeId == null,
+    );
     // Por defecto: si hay tamaños, elegir el primer tamaño que aún no tenga ingredientes (para guiar a configurar Chico, Mediano, Grande)
     MenuSize? selectedSize = null;
     if (canUseSizeRecipes) {
       if (hasGeneralIngredients) {
         selectedSize = null;
       } else {
-        final sizesWithoutIngredients = sizesWithId.where(
-          (size) => !recipeIngredients.any((ing) => ing.sizeId == size.id),
-        ).toList();
+        final sizesWithoutIngredients = sizesWithId
+            .where(
+              (size) => !recipeIngredients.any((ing) => ing.sizeId == size.id),
+            )
+            .toList();
         selectedSize = sizesWithoutIngredients.isNotEmpty
             ? sizesWithoutIngredients.first
             : sizesWithId.first;
@@ -4885,351 +5020,344 @@ class AdminApp extends StatelessWidget {
     }
     final sizeNameById = {
       for (final size in currentProduct.sizes ?? [])
-        if (size.id != null) size.id!: size.name
+        if (size.id != null) size.id!: size.name,
     };
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
-          final filteredEntries = recipeIngredients
-              .asMap()
-              .entries
-              .where((entry) {
-                if (!hasSizes || !canUseSizeRecipes) return true;
-                final ingredientSizeId = entry.value.sizeId;
-                if (selectedSize == null) {
-                  return ingredientSizeId == null;
-                }
-                return ingredientSizeId == selectedSize!.id;
-              })
-              .toList();
+          final filteredEntries = recipeIngredients.asMap().entries.where((
+            entry,
+          ) {
+            if (!hasSizes || !canUseSizeRecipes) return true;
+            final ingredientSizeId = entry.value.sizeId;
+            if (selectedSize == null) {
+              return ingredientSizeId == null;
+            }
+            return ingredientSizeId == selectedSize!.id;
+          }).toList();
 
           return AlertDialog(
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  'Receta: ${product.name}',
-                  style: TextStyle(fontSize: isTablet ? 20 : 18),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: isTablet ? 600 : double.maxFinite,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Configura los ingredientes que se descontarán automáticamente del inventario cuando se prepare este producto.',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Receta: ${product.name}',
+                    style: TextStyle(fontSize: isTablet ? 20 : 18),
                   ),
-                  SizedBox(height: AppTheme.spacingMD),
-                  if (hasSizes) ...[
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: isTablet ? 600 : double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      'Tamaño de receta',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: AppTheme.fontWeightSemibold,
-                          ),
-                    ),
-                    SizedBox(height: AppTheme.spacingSM),
-                    DropdownButtonFormField<MenuSize?>(
-                      value: selectedSize,
-                      decoration: const InputDecoration(
-                        labelText: 'Seleccionar tamaño',
-                        border: OutlineInputBorder(),
+                      'Configura los ingredientes que se descontarán automáticamente del inventario cuando se prepare este producto.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppColors.textSecondary,
                       ),
-                      items: [
-                        const DropdownMenuItem<MenuSize?>(
-                          value: null,
-                          child: Text('General (aplica a todos)'),
-                        ),
-                        ...sizesWithId.map(
-                          (size) => DropdownMenuItem<MenuSize?>(
-                            value: size,
-                            child: Text(size.name),
-                          ),
-                        ),
-                      ],
-                      onChanged: canUseSizeRecipes
-                          ? (value) {
-                              setState(() {
-                                selectedSize = value;
-                              });
-                            }
-                          : null,
                     ),
-                    if (canUseSizeRecipes) ...[
-                      SizedBox(height: AppTheme.spacingXS),
+                    SizedBox(height: AppTheme.spacingMD),
+                    if (hasSizes) ...[
                       Text(
-                        'Selecciona el tamaño y agrega ingredientes con "Desde Inventario". Cada tamaño tiene su propia receta; al cambiar de tamaño no se pierden los ingredientes ya configurados.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
+                        'Tamaño de receta',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: AppTheme.fontWeightSemibold,
+                        ),
                       ),
                       SizedBox(height: AppTheme.spacingSM),
-                      Wrap(
-                        spacing: AppTheme.spacingSM,
-                        runSpacing: AppTheme.spacingXS,
-                        children: [
-                          _recipeSizeChip(
-                            context,
-                            'General',
-                            null,
-                            selectedSize,
-                            recipeIngredients,
-                            setState,
-                            (s) => selectedSize = s,
+                      DropdownButtonFormField<MenuSize?>(
+                        value: selectedSize,
+                        decoration: const InputDecoration(
+                          labelText: 'Seleccionar tamaño',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<MenuSize?>(
+                            value: null,
+                            child: Text('General (aplica a todos)'),
                           ),
                           ...sizesWithId.map(
-                            (size) => _recipeSizeChip(
+                            (size) => DropdownMenuItem<MenuSize?>(
+                              value: size,
+                              child: Text(size.name),
+                            ),
+                          ),
+                        ],
+                        onChanged: canUseSizeRecipes
+                            ? (value) {
+                                setState(() {
+                                  selectedSize = value;
+                                });
+                              }
+                            : null,
+                      ),
+                      if (canUseSizeRecipes) ...[
+                        SizedBox(height: AppTheme.spacingXS),
+                        Text(
+                          'Selecciona el tamaño y agrega ingredientes con "Desde Inventario". Cada tamaño tiene su propia receta; al cambiar de tamaño no se pierden los ingredientes ya configurados.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.textSecondary),
+                        ),
+                        SizedBox(height: AppTheme.spacingSM),
+                        Wrap(
+                          spacing: AppTheme.spacingSM,
+                          runSpacing: AppTheme.spacingXS,
+                          children: [
+                            _recipeSizeChip(
                               context,
-                              size.name,
-                              size,
+                              'General',
+                              null,
                               selectedSize,
                               recipeIngredients,
                               setState,
                               (s) => selectedSize = s,
                             ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: AppTheme.spacingSM),
-                      Text(
-                        selectedSize == null
-                            ? 'Configurando receta para: General (aplica a todos los tamaños)'
-                            : 'Configurando receta para: ${selectedSize!.name}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontWeight: AppTheme.fontWeightMedium,
-                              color: AppColors.primary,
+                            ...sizesWithId.map(
+                              (size) => _recipeSizeChip(
+                                context,
+                                size.name,
+                                size,
+                                selectedSize,
+                                recipeIngredients,
+                                setState,
+                                (s) => selectedSize = s,
+                              ),
                             ),
-                      ),
+                          ],
+                        ),
+                        SizedBox(height: AppTheme.spacingSM),
+                        Text(
+                          selectedSize == null
+                              ? 'Configurando receta para: General (aplica a todos los tamaños)'
+                              : 'Configurando receta para: ${selectedSize!.name}',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                fontWeight: AppTheme.fontWeightMedium,
+                                color: AppColors.primary,
+                              ),
+                        ),
+                      ],
+                      if (!canUseSizeRecipes && hasSizes) ...[
+                        SizedBox(height: AppTheme.spacingXS),
+                        Text(
+                          'Guarda el producto para poder configurar recetas por tamaño.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.textSecondary),
+                        ),
+                      ],
+                      SizedBox(height: AppTheme.spacingMD),
                     ],
-                    if (!canUseSizeRecipes && hasSizes) ...[
-                      SizedBox(height: AppTheme.spacingXS),
-                      Text(
-                        'Guarda el producto para poder configurar recetas por tamaño.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
+
+                    // Lista de ingredientes actuales (siempre visible para editar/eliminar)
+                    Text(
+                      'Ingredientes configurados:',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
                       ),
-                    ],
-                    SizedBox(height: AppTheme.spacingMD),
-                  ],
-                  
-                  // Lista de ingredientes actuales (siempre visible para editar/eliminar)
-                  Text(
-                    'Ingredientes configurados:',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: AppTheme.fontWeightSemibold,
                     ),
-                  ),
-                  SizedBox(height: AppTheme.spacingSM),
-                  if (filteredEntries.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: AppTheme.spacingSM),
-                      child: Text(
-                        recipeIngredients.isEmpty
-                            ? 'Aún no hay ingredientes. Usa «Desde Inventario» para agregar.'
-                            : 'No hay ingredientes configurados para este tamaño.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
+                    SizedBox(height: AppTheme.spacingSM),
+                    if (filteredEntries.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: AppTheme.spacingSM,
+                        ),
+                        child: Text(
+                          recipeIngredients.isEmpty
+                              ? 'Aún no hay ingredientes. Usa «Desde Inventario» para agregar.'
+                              : 'No hay ingredientes configurados para este tamaño.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.textSecondary),
+                        ),
+                      )
+                    else ...[
+                      ...filteredEntries.map((entry) {
+                        final ingredient = entry.value;
+                        return Card(
+                          margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
+                          child: ListTile(
+                            title: Text(ingredient.name),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${ingredient.quantityPerPortion} ${ingredient.unit} por porción',
+                                  style: TextStyle(
+                                    color: ingredient.autoDeduct
+                                        ? Colors.green
+                                        : AppColors.textSecondary,
+                                  ),
+                                ),
+                                if (hasSizes && ingredient.sizeId != null)
+                                  Text(
+                                    'Tamaño: ${sizeNameById[ingredient.sizeId] ?? ingredient.sizeId}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                if (ingredient.isOptional)
+                                  Text(
+                                    'Opcional',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.orange,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                              ],
                             ),
-                      ),
-                    )
-                  else ...[
-                    ...filteredEntries.map((entry) {
-                      final ingredient = entry.value;
-                      return Card(
-                        margin: EdgeInsets.only(bottom: AppTheme.spacingSM),
-                        child: ListTile(
-                          title: Text(ingredient.name),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${ingredient.quantityPerPortion} ${ingredient.unit} por porción',
-                                style: TextStyle(
-                                  color: ingredient.autoDeduct 
-                                    ? Colors.green 
-                                    : AppColors.textSecondary,
-                                ),
-                              ),
-                              if (hasSizes && ingredient.sizeId != null)
-                                Text(
-                                  'Tamaño: ${sizeNameById[ingredient.sizeId] ?? ingredient.sizeId}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: AppColors.textSecondary,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (ingredient.autoDeduct)
+                                  Icon(
+                                    Icons.auto_awesome,
+                                    size: 16,
+                                    color: Colors.green,
                                   ),
-                                ),
-                              if (ingredient.isOptional)
-                                Text(
-                                  'Opcional',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.orange,
-                                    fontStyle: FontStyle.italic,
+                                SizedBox(width: AppTheme.spacingXS),
+                                IconButton(
+                                  icon: const Icon(Icons.edit, size: 18),
+                                  onPressed: () => _showEditIngredientDialog(
+                                    context,
+                                    ingredient,
+                                    recipeIngredients,
+                                    setState,
+                                    isTablet,
                                   ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
                                 ),
-                            ],
+                                SizedBox(width: AppTheme.spacingXS),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    size: 18,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      recipeIngredients.remove(ingredient);
+                                    });
+                                  },
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ),
                           ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (ingredient.autoDeduct)
-                                Icon(
-                                  Icons.auto_awesome,
-                                  size: 16,
-                                  color: Colors.green,
-                                ),
-                              SizedBox(width: AppTheme.spacingXS),
-                              IconButton(
-                                icon: const Icon(Icons.edit, size: 18),
-                                onPressed: () => _showEditIngredientDialog(
-                                  context,
-                                  ingredient,
-                                  recipeIngredients,
-                                  setState,
-                                  isTablet,
-                                ),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
-                              SizedBox(width: AppTheme.spacingXS),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  size: 18,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    recipeIngredients.remove(ingredient);
-                                  });
-                                },
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-                    SizedBox(height: AppTheme.spacingMD),
-                  ],
-                  
-                  // Botones para agregar ingredientes
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            await _showAddIngredientFromInventoryDialog(
-                            context,
-                            controller,
-                            recipeIngredients,
-                            setState,
-                            isTablet,
-                            selectedSize?.id,
-                            selectedSize?.name,
-                            );
-                          },
-                          icon: const Icon(Icons.inventory_2),
-                          label: const Text('Desde Inventario'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ),
+                        );
+                      }),
+                      SizedBox(height: AppTheme.spacingMD),
                     ],
-                  ),
-                ],
+
+                    // Botones para agregar ingredientes
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              await _showAddIngredientFromInventoryDialog(
+                                context,
+                                controller,
+                                recipeIngredients,
+                                setState,
+                                isTablet,
+                                selectedSize?.id,
+                                selectedSize?.name,
+                              );
+                            },
+                            icon: const Icon(Icons.inventory_2),
+                            label: const Text('Desde Inventario'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                // Mostrar indicador de carga
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) =>
-                      const Center(child: CircularProgressIndicator()),
-                );
-                
-                try {
-                  // Obtener el producto actualizado del controller
-                  final updatedProduct = controller.menuItems.firstWhere(
-                    (item) => item.id == product.id,
-                    orElse: () => product,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
                   );
-                  
-                  // Actualizar producto con la nueva receta
-                  await controller.updateMenuItem(
-                    updatedProduct.copyWith(
-                      recipeIngredients: recipeIngredients,
-                    ),
-                  );
-                  
-                  // Recargar productos e inventario
-                  await Future.wait([
-                    controller.loadMenuItems(),
-                    controller.loadInventory(),
-                  ]);
-                  
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  // Cerrar modal de receta
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Receta de "${product.name}" guardada correctamente.',
+
+                  try {
+                    // Obtener el producto actualizado del controller
+                    final updatedProduct = controller.menuItems.firstWhere(
+                      (item) => item.id == product.id,
+                      orElse: () => product,
+                    );
+
+                    // Actualizar producto con la nueva receta
+                    await controller.updateMenuItem(
+                      updatedProduct.copyWith(
+                        recipeIngredients: recipeIngredients,
+                      ),
+                    );
+                    // `updateMenuItem` ya recarga menú e inventario en el controller.
+
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    // Cerrar modal de receta
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Receta de "${product.name}" guardada correctamente.',
+                          ),
+                          backgroundColor: Colors.green,
+                          duration: const Duration(seconds: 3),
                         ),
-                        backgroundColor: Colors.green,
-                        duration: const Duration(seconds: 3),
-                      ),
-                    );
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al guardar receta: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
                   }
-                } catch (e) {
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Error al guardar receta: $e'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Guardar Receta'),
-            ),
-          ],
-        );
+                },
+                child: const Text('Guardar Receta'),
+              ),
+            ],
+          );
         },
       ),
     );
@@ -5248,6 +5376,9 @@ class AdminApp extends StatelessWidget {
     final quantityController = TextEditingController();
     final unitController = TextEditingController();
     InventoryItem? selectedItem;
+
+    /// `null` = todas las categorías; si el inventario cambia y ya no existe, se limpia en el builder.
+    String? inventoryPickerCategoryFilter;
     final isOptionalNotifier = ValueNotifier<bool>(false);
 
     // Mostrar indicador de carga mientras se recarga el inventario
@@ -5264,197 +5395,694 @@ class AdminApp extends StatelessWidget {
     if (context.mounted) Navigator.of(context).pop();
 
     if (!context.mounted) return;
-    
+
+    final searchController = TextEditingController();
+    var dialogResourcesCleanedUp = false;
+    void cleanupDialogResources() {
+      if (dialogResourcesCleanedUp) return;
+      dialogResourcesCleanedUp = true;
+      searchController.dispose();
+      isOptionalNotifier.dispose();
+    }
+
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, dialogSetState) => ValueListenableBuilder<bool>(
-          valueListenable: isOptionalNotifier,
-          builder: (context, isOptional, _) => AlertDialog(
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Agregar Ingrediente desde Inventario'),
-                if (sizeName != null && sizeName.isNotEmpty) ...[
-                  SizedBox(height: AppTheme.spacingXS),
-                  Text(
-                    'Para tamaño: $sizeName',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.textSecondary,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          content: SizedBox(
-            width: isTablet ? 500 : double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                  Builder(
-                    builder: (context) {
-                      final filteredItems = controller.inventory
-                          .where((item) {
-                            if (item.status == InventoryStatus.expired) return false;
-                            // Excluir solo si este ingrediente ya está en la receta PARA EL TAMAÑO ACTUAL.
-                            // Así el mismo ingrediente (ej. chocolate) puede agregarse para Chico, Mediano y Grande por separado.
-                            final itemIdStr = item.id.toString();
-                            final alreadyInRecipeForThisSize = recipeIngredients.any(
-                              (ing) =>
-                                  (ing.inventoryItemId ?? '').toString() == itemIdStr &&
-                                  ing.sizeId == sizeId,
-                            );
-                            return !alreadyInRecipeForThisSize;
-                          })
-                          .toList();
-                      filteredItems.sort((a, b) => a.name.compareTo(b.name));
-                      
-                      return DropdownButtonFormField<InventoryItem>(
-                  decoration: const InputDecoration(
-                    labelText: 'Seleccionar ingrediente',
-                    border: OutlineInputBorder(),
-                  ),
-                        items: filteredItems
-                            .map(
-                              (item) => DropdownMenuItem(
-                            value: item,
-                            child: Text('${item.name} (${item.unit})'),
+      barrierDismissible: false,
+      builder: (dialogContext) => PopScope(
+        canPop: true,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) cleanupDialogResources();
+        },
+        child: StatefulBuilder(
+          builder: (context, dialogSetState) {
+            return ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                return ValueListenableBuilder<bool>(
+                  valueListenable: isOptionalNotifier,
+                  builder: (context, isOptional, _) {
+                    final baseInventory = controller.inventory.where((item) {
+                      if (item.status == InventoryStatus.expired) return false;
+                      final itemIdStr = item.id.toString();
+                      final alreadyInRecipeForThisSize = recipeIngredients.any(
+                        (ing) =>
+                            (ing.inventoryItemId ?? '').toString() ==
+                                itemIdStr &&
+                            ing.sizeId == sizeId,
+                      );
+                      return !alreadyInRecipeForThisSize;
+                    }).toList();
+
+                    final searchText = searchController.text;
+
+                    final categoryNames = <String>{};
+                    for (final item in baseInventory) {
+                      categoryNames.add(
+                        item.category.trim().isEmpty ? 'Otros' : item.category,
+                      );
+                    }
+                    final sortedCategoryChips = categoryNames.toList()
+                      ..sort(_recipeInventoryCategorySort);
+
+                    final String? effectiveCategoryFilter =
+                        inventoryPickerCategoryFilter != null &&
+                            categoryNames.contains(
+                              inventoryPickerCategoryFilter!,
+                            )
+                        ? inventoryPickerCategoryFilter
+                        : null;
+
+                    final afterCategory = effectiveCategoryFilter == null
+                        ? baseInventory
+                        : baseInventory.where((item) {
+                            final c = item.category.trim().isEmpty
+                                ? 'Otros'
+                                : item.category;
+                            return c == effectiveCategoryFilter;
+                          });
+
+                    final visibleItems =
+                        afterCategory
+                            .where(
+                              (item) => _recipeInventoryPickerMatchesSearch(
+                                item,
+                                searchText,
                               ),
                             )
-                      .toList(),
-                  onChanged: (value) {
-                    dialogSetState(() {
-                      selectedItem = value;
-                      // Dejar la unidad vacía para que el usuario la configure (ej: g, ml, pza).
-                      // "En inventario: ..." muestra la unidad del inventario como referencia.
-                      if (value != null) {
-                        unitController.clear();
-                      }
-                    });
-                  },
-                      );
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                  Row(
-                    children: [
-                      Expanded(
-                        flex: 2,
-                        child: TextFormField(
-                  controller: quantityController,
-                  decoration: const InputDecoration(
-                    labelText: 'Cantidad por porción',
-                    hintText: 'Ej: 30',
-                    border: OutlineInputBorder(),
-                  ),
-                          keyboardType: TextInputType.numberWithOptions(
-                            decimal: true,
-                ),
-            ),
-          ),
-                      SizedBox(width: AppTheme.spacingSM),
-                      Expanded(
-                        child: TextFormField(
-                    controller: unitController,
-                    decoration: const InputDecoration(
-                      labelText: 'Unidad',
-                      hintText: 'g, ml, pza, piezas...',
-                      border: OutlineInputBorder(),
-                      helperText: 'Unidad para la receta (peso, volumen o por pieza)',
-                    ),
-                    ),
-                      ),
-                    ],
-                  ),
-                  if (selectedItem != null)
-                    Padding(
-                      padding: EdgeInsets.only(top: AppTheme.spacingXS),
-                      child: Text(
-                        'En inventario: ${selectedItem!.unit}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                          fontStyle: FontStyle.italic,
-                        ),
-                    ),
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                  CheckboxListTile(
-                    title: const Text('Ingrediente opcional'),
-                    subtitle: const Text(
-                      'Marcar si este ingrediente no es esencial para la receta (ej: cilantro, cebolla). Se usa solo para referencia y también se descuenta del inventario si está activado el descuento automático.',
-                    ),
-                    value: isOptional,
-                    activeColor: AppColors.primary,
-                    onChanged: (value) {
-                      isOptionalNotifier.value = value ?? false;
-                    },
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  isOptionalNotifier.dispose();
-                  Navigator.of(context).pop();
-                },
-                child: const Text('Cancelar'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  if (selectedItem == null || 
-                      quantityController.text.isEmpty || 
-                      unitController.text.trim().isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Por favor completa todos los campos'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-                  
-                  final quantity = double.tryParse(quantityController.text);
-                  if (quantity == null || quantity <= 0) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'La cantidad debe ser un número mayor a 0',
-                        ),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
+                            .toList()
+                          ..sort((a, b) => a.name.compareTo(b.name));
 
-                  final unit = unitController.text.trim();
-                  
-                  final newIngredient = RecipeIngredient(
-                    id: DateTime.now().millisecondsSinceEpoch.toString(),
-                    name: selectedItem!.name,
-                    unit: unit, // Usar la unidad especificada por el usuario, no la del inventario
-                    quantityPerPortion: quantity,
-                    autoDeduct: true,
-                    isCustom: false,
-                    isOptional: isOptionalNotifier.value,
-                    category: selectedItem!.category,
-                    inventoryItemId: selectedItem!.id,
-                    sizeId: sizeId,
-                  );
-                  
-                  setState(() {
-                    recipeIngredients.add(newIngredient);
-                  });
-                  
-                  isOptionalNotifier.dispose();
-                  Navigator.of(context).pop();
-                },
-                child: const Text('Agregar'),
-              ),
-            ],
-          ),
+                    final mq = MediaQuery.of(context);
+                    final screenH = mq.size.height;
+                    final screenW = mq.size.width;
+                    final shortestSide = mq.size.shortestSide;
+                    final longestSide = mq.size.longestSide;
+                    final viewPadding = mq.padding;
+                    final keyboardBottom = mq.viewInsets.bottom;
+                    final usableW =
+                        screenW - viewPadding.left - viewPadding.right;
+                    final usableH =
+                        screenH -
+                        viewPadding.top -
+                        viewPadding.bottom -
+                        keyboardBottom;
+                    final isLandscape = screenW > screenH;
+                    final narrowPhone = usableW < 400;
+                    final compactLayout = shortestSide < 520;
+                    final tabletLike =
+                        isTablet || shortestSide >= 600 || usableW >= 600;
+                    final horizontalInset = narrowPhone
+                        ? 8.0
+                        : (tabletLike ? 24.0 : 14.0);
+                    final verticalInset = keyboardBottom > 0
+                        ? 8.0
+                        : (usableH < 520 ? 10.0 : (tabletLike ? 22.0 : 16.0));
+                    final dialogContentWidth =
+                        (tabletLike
+                                ? (usableW >= 900
+                                      ? 620.0
+                                      : (usableW >= 720 ? 560.0 : 480.0))
+                                : (narrowPhone
+                                      ? usableW * 0.98
+                                      : usableW * 0.94))
+                            .clamp(260.0, usableW - horizontalInset * 2);
+                    final heightFraction = keyboardBottom > 0
+                        ? (narrowPhone ? 0.68 : 0.72)
+                        : (narrowPhone
+                              ? (isLandscape ? 0.82 : 0.88)
+                              : (tabletLike
+                                    ? (isLandscape ? 0.78 : 0.82)
+                                    : (isLandscape ? 0.80 : 0.76)));
+                    final minDialogBodyH = narrowPhone
+                        ? 280.0
+                        : (tabletLike ? 380.0 : 340.0);
+                    final dialogContentHeight = (usableH * heightFraction)
+                        .clamp(minDialogBodyH, usableH * 0.94);
+                    final chipFontSize = narrowPhone
+                        ? 13.0
+                        : (tabletLike && longestSide >= 900 ? 14.5 : 13.5);
+                    final chipVerticalPad = narrowPhone ? 10.0 : 8.0;
+                    final chipHorizontalPad = narrowPhone ? 12.0 : 11.0;
+                    final listTileVerticalPad = narrowPhone ? 6.0 : 2.0;
+                    final titleFontSize = narrowPhone
+                        ? 17.0
+                        : (tabletLike ? 20.0 : 18.0);
+                    const radioOrangeStrong = Color(0xFFE65100);
+
+                    return SafeArea(
+                      minimum: const EdgeInsets.all(4),
+                      child: Padding(
+                        padding: EdgeInsets.only(bottom: keyboardBottom),
+                        child: AlertDialog(
+                          insetPadding: EdgeInsets.fromLTRB(
+                            horizontalInset,
+                            verticalInset,
+                            horizontalInset,
+                            verticalInset,
+                          ),
+                          title: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Agregar Ingrediente desde Inventario',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(
+                                      fontSize: titleFontSize,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                              if (sizeName != null && sizeName.isNotEmpty) ...[
+                                SizedBox(height: AppTheme.spacingXS),
+                                Text(
+                                  'Para tamaño: $sizeName',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: AppColors.textSecondary,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          content: SizedBox(
+                            width: dialogContentWidth,
+                            height: dialogContentHeight,
+                            child: Theme(
+                              data: Theme.of(context).copyWith(
+                                radioTheme: RadioThemeData(
+                                  fillColor: WidgetStateProperty.resolveWith((
+                                    states,
+                                  ) {
+                                    if (states.contains(WidgetState.selected)) {
+                                      return radioOrangeStrong;
+                                    }
+                                    return Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.45);
+                                  }),
+                                  overlayColor: WidgetStateProperty.resolveWith(
+                                    (_) => AppColors.primary.withValues(
+                                      alpha: 0.14,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  TextField(
+                                    controller: searchController,
+                                    decoration: const InputDecoration(
+                                      hintText:
+                                          'Buscar por nombre, categoría o código de barras…',
+                                      prefixIcon: Icon(Icons.search),
+                                      border: OutlineInputBorder(),
+                                      isDense: false,
+                                    ),
+                                    style: TextStyle(
+                                      fontSize: narrowPhone ? 16 : 15,
+                                    ),
+                                    onChanged: (_) => dialogSetState(() {
+                                      final t = searchController.text;
+                                      if (selectedItem == null) return;
+                                      if (!_recipeInventoryPickerMatchesSearch(
+                                        selectedItem!,
+                                        t,
+                                      )) {
+                                        selectedItem = null;
+                                        return;
+                                      }
+                                      final cat =
+                                          selectedItem!.category.trim().isEmpty
+                                          ? 'Otros'
+                                          : selectedItem!.category;
+                                      if (effectiveCategoryFilter != null &&
+                                          cat != effectiveCategoryFilter) {
+                                        selectedItem = null;
+                                      }
+                                    }),
+                                  ),
+                                  SizedBox(height: AppTheme.spacingSM),
+                                  Text(
+                                    'Categoría',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(
+                                          fontWeight:
+                                              AppTheme.fontWeightSemibold,
+                                          fontSize: narrowPhone ? 15 : null,
+                                        ),
+                                  ),
+                                  SizedBox(height: AppTheme.spacingXS),
+                                  SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    padding: EdgeInsets.only(
+                                      bottom: narrowPhone ? 6 : 2,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            right: AppTheme.spacingXS,
+                                          ),
+                                          child: FilterChip(
+                                            label: Text(
+                                              'Todos',
+                                              style: TextStyle(
+                                                color:
+                                                    effectiveCategoryFilter ==
+                                                        null
+                                                    ? Colors.white
+                                                    : AppColors.textPrimary,
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: chipFontSize,
+                                              ),
+                                            ),
+                                            selected:
+                                                effectiveCategoryFilter == null,
+                                            onSelected: (_) {
+                                              dialogSetState(() {
+                                                inventoryPickerCategoryFilter =
+                                                    null;
+                                              });
+                                            },
+                                            selectedColor: AppColors.primary,
+                                            backgroundColor: AppColors.surface,
+                                            checkmarkColor: Colors.white,
+                                            side: BorderSide(
+                                              color: AppColors.textSecondary
+                                                  .withValues(alpha: 0.35),
+                                            ),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: chipHorizontalPad,
+                                              vertical: chipVerticalPad,
+                                            ),
+                                            materialTapTargetSize: narrowPhone
+                                                ? MaterialTapTargetSize.padded
+                                                : MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            visualDensity: narrowPhone
+                                                ? VisualDensity.standard
+                                                : VisualDensity.compact,
+                                          ),
+                                        ),
+                                        ...sortedCategoryChips.map(
+                                          (cat) => Padding(
+                                            padding: const EdgeInsets.only(
+                                              right: AppTheme.spacingXS,
+                                            ),
+                                            child: FilterChip(
+                                              label: Text(
+                                                cat,
+                                                style: TextStyle(
+                                                  color:
+                                                      effectiveCategoryFilter ==
+                                                          cat
+                                                      ? Colors.white
+                                                      : AppColors.textPrimary,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: chipFontSize,
+                                                ),
+                                              ),
+                                              selected:
+                                                  effectiveCategoryFilter ==
+                                                  cat,
+                                              onSelected: (_) {
+                                                dialogSetState(() {
+                                                  inventoryPickerCategoryFilter =
+                                                      cat;
+                                                  if (selectedItem != null) {
+                                                    final c =
+                                                        selectedItem!.category
+                                                            .trim()
+                                                            .isEmpty
+                                                        ? 'Otros'
+                                                        : selectedItem!
+                                                              .category;
+                                                    if (c != cat) {
+                                                      selectedItem = null;
+                                                    }
+                                                  }
+                                                });
+                                              },
+                                              selectedColor: AppColors.primary,
+                                              backgroundColor:
+                                                  AppColors.surface,
+                                              checkmarkColor: Colors.white,
+                                              side: BorderSide(
+                                                color: AppColors.textSecondary
+                                                    .withValues(alpha: 0.35),
+                                              ),
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: chipHorizontalPad,
+                                                vertical: chipVerticalPad,
+                                              ),
+                                              materialTapTargetSize: narrowPhone
+                                                  ? MaterialTapTargetSize.padded
+                                                  : MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                              visualDensity: narrowPhone
+                                                  ? VisualDensity.standard
+                                                  : VisualDensity.compact,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  SizedBox(height: AppTheme.spacingSM),
+                                  Text(
+                                    'Seleccionar ingrediente',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(
+                                          fontWeight:
+                                              AppTheme.fontWeightSemibold,
+                                          fontSize: narrowPhone ? 15 : null,
+                                        ),
+                                  ),
+                                  SizedBox(height: AppTheme.spacingXS),
+                                  Expanded(
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: Theme.of(context).dividerColor,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          AppTheme.radiusSM,
+                                        ),
+                                      ),
+                                      child: visibleItems.isEmpty
+                                          ? Center(
+                                              child: Padding(
+                                                padding: const EdgeInsets.all(
+                                                  AppTheme.spacingMD,
+                                                ),
+                                                child: Text(
+                                                  baseInventory.isEmpty
+                                                      ? 'No hay insumos disponibles para agregar.'
+                                                      : searchText
+                                                            .trim()
+                                                            .isNotEmpty
+                                                      ? 'Ningún insumo coincide con la búsqueda o la categoría seleccionada.'
+                                                      : effectiveCategoryFilter !=
+                                                            null
+                                                      ? 'No hay insumos en esta categoría.'
+                                                      : 'Ningún insumo coincide con los filtros.',
+                                                  textAlign: TextAlign.center,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium
+                                                      ?.copyWith(
+                                                        color: AppColors
+                                                            .textSecondary,
+                                                      ),
+                                                ),
+                                              ),
+                                            )
+                                          : ListView.builder(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal:
+                                                        AppTheme.spacingXS,
+                                                    vertical:
+                                                        AppTheme.spacingXS,
+                                                  ),
+                                              itemCount: visibleItems.length,
+                                              itemBuilder: (context, index) {
+                                                final item =
+                                                    visibleItems[index];
+                                                return RadioListTile<
+                                                  InventoryItem
+                                                >(
+                                                  value: item,
+                                                  groupValue: selectedItem,
+                                                  toggleable: true,
+                                                  selectedTileColor: AppColors
+                                                      .primary
+                                                      .withValues(alpha: 0.10),
+                                                  contentPadding:
+                                                      EdgeInsets.symmetric(
+                                                        horizontal: narrowPhone
+                                                            ? 4
+                                                            : 8,
+                                                        vertical:
+                                                            listTileVerticalPad,
+                                                      ),
+                                                  onChanged: (value) {
+                                                    dialogSetState(() {
+                                                      selectedItem = value;
+                                                      if (value != null) {
+                                                        unitController.clear();
+                                                      }
+                                                    });
+                                                  },
+                                                  dense: !narrowPhone,
+                                                  visualDensity: narrowPhone
+                                                      ? VisualDensity.standard
+                                                      : VisualDensity.compact,
+                                                  title: Text(
+                                                    item.name,
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: narrowPhone
+                                                          ? 15
+                                                          : 14,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                  subtitle: Text(
+                                                    [
+                                                      item.unit,
+                                                      if (item.codigoBarras !=
+                                                              null &&
+                                                          item
+                                                              .codigoBarras!
+                                                              .isNotEmpty)
+                                                        'CB: ${item.codigoBarras}',
+                                                    ].join(' · '),
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: narrowPhone
+                                                          ? 13
+                                                          : 12,
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                    ),
+                                  ),
+                                  SizedBox(height: AppTheme.spacingMD),
+                                  if (narrowPhone)
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        TextFormField(
+                                          controller: quantityController,
+                                          decoration: const InputDecoration(
+                                            labelText: 'Cantidad por porción',
+                                            hintText: 'Ej: 30',
+                                            border: OutlineInputBorder(),
+                                          ),
+                                          keyboardType:
+                                              const TextInputType.numberWithOptions(
+                                                decimal: true,
+                                              ),
+                                        ),
+                                        SizedBox(height: AppTheme.spacingSM),
+                                        TextFormField(
+                                          controller: unitController,
+                                          decoration: const InputDecoration(
+                                            labelText: 'Unidad',
+                                            hintText: 'g, ml, pza, piezas...',
+                                            border: OutlineInputBorder(),
+                                            helperText:
+                                                'Unidad para la receta (peso, volumen o por pieza)',
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  else
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          flex: 2,
+                                          child: TextFormField(
+                                            controller: quantityController,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Cantidad por porción',
+                                              hintText: 'Ej: 30',
+                                              border: OutlineInputBorder(),
+                                            ),
+                                            keyboardType:
+                                                const TextInputType.numberWithOptions(
+                                                  decimal: true,
+                                                ),
+                                          ),
+                                        ),
+                                        SizedBox(width: AppTheme.spacingSM),
+                                        Expanded(
+                                          flex: 2,
+                                          child: TextFormField(
+                                            controller: unitController,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Unidad',
+                                              hintText: 'g, ml, pza, piezas...',
+                                              border: OutlineInputBorder(),
+                                              helperText:
+                                                  'Unidad para la receta (peso, volumen o por pieza)',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (selectedItem != null)
+                                    Padding(
+                                      padding: EdgeInsets.only(
+                                        top: AppTheme.spacingXS,
+                                      ),
+                                      child: Text(
+                                        [
+                                          'En inventario: ${selectedItem!.unit}',
+                                          if (selectedItem!.codigoBarras !=
+                                                  null &&
+                                              selectedItem!
+                                                  .codigoBarras!
+                                                  .isNotEmpty)
+                                            'CB: ${selectedItem!.codigoBarras}',
+                                        ].join(' · '),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: AppColors.textSecondary,
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                      ),
+                                    ),
+                                  SizedBox(height: AppTheme.spacingSM),
+                                  CheckboxListTile(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    controlAffinity:
+                                        ListTileControlAffinity.leading,
+                                    title: const Text('Ingrediente opcional'),
+                                    subtitle: Text(
+                                      'Marcar si este ingrediente no es esencial para la receta (ej: cilantro, cebolla). Se usa solo para referencia y también se descuenta del inventario si está activado el descuento automático.',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: AppColors.textSecondary,
+                                            height: 1.25,
+                                          ),
+                                      maxLines: narrowPhone
+                                          ? 5
+                                          : (compactLayout ? 4 : 3),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    value: isOptional,
+                                    activeColor: AppColors.primary,
+                                    materialTapTargetSize: narrowPhone
+                                        ? MaterialTapTargetSize.padded
+                                        : MaterialTapTargetSize.shrinkWrap,
+                                    onChanged: (value) {
+                                      isOptionalNotifier.value = value ?? false;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () {
+                                cleanupDialogResources();
+                                Navigator.of(dialogContext).pop();
+                              },
+                              child: const Text('Cancelar'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                if (selectedItem == null ||
+                                    quantityController.text.isEmpty ||
+                                    unitController.text.trim().isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Por favor completa todos los campos',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                final quantity = double.tryParse(
+                                  quantityController.text,
+                                );
+                                if (quantity == null || quantity <= 0) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'La cantidad debe ser un número mayor a 0',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                final unit = unitController.text.trim();
+
+                                final newIngredient = RecipeIngredient(
+                                  id: DateTime.now().millisecondsSinceEpoch
+                                      .toString(),
+                                  name: selectedItem!.name,
+                                  unit:
+                                      unit, // Usar la unidad especificada por el usuario, no la del inventario
+                                  quantityPerPortion: quantity,
+                                  autoDeduct: true,
+                                  isCustom: false,
+                                  isOptional: isOptionalNotifier.value,
+                                  category: selectedItem!.category,
+                                  inventoryItemId: selectedItem!.id,
+                                  sizeId: sizeId,
+                                );
+
+                                setState(() {
+                                  recipeIngredients.add(newIngredient);
+                                });
+
+                                cleanupDialogResources();
+                                Navigator.of(dialogContext).pop();
+                              },
+                              child: const Text('Agregar'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            );
+          },
         ),
       ),
     );
@@ -5499,12 +6127,10 @@ class AdminApp extends StatelessWidget {
     final quantityController = TextEditingController(
       text: ingredient.quantityPerPortion.toString(),
     );
-    final unitController = TextEditingController(
-      text: ingredient.unit,
-    );
+    final unitController = TextEditingController(text: ingredient.unit);
     bool autoDeduct = ingredient.autoDeduct;
     bool isOptional = ingredient.isOptional;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -5520,12 +6146,14 @@ class AdminApp extends StatelessWidget {
                     Expanded(
                       flex: 2,
                       child: TextFormField(
-                  controller: quantityController,
+                        controller: quantityController,
                         decoration: const InputDecoration(
                           labelText: 'Cantidad por porción',
                           border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                        ),
+                        keyboardType: TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
                       ),
                     ),
                     SizedBox(width: AppTheme.spacingSM),
@@ -5597,7 +6225,7 @@ class AdminApp extends StatelessWidget {
                   );
                   return;
                 }
-                
+
                 final idx = recipeIngredients.indexOf(ingredient);
                 if (idx >= 0) {
                   setState(() {
@@ -5647,13 +6275,13 @@ class AdminApp extends StatelessWidget {
 
               try {
                 await controller.deleteMenuItem(product.id);
-                
+
                 // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 // Cerrar diálogo de confirmación
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -5665,7 +6293,7 @@ class AdminApp extends StatelessWidget {
               } catch (e) {
                 // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -5715,7 +6343,9 @@ class AdminApp extends StatelessWidget {
 
     Widget rowContent = Row(
       mainAxisSize: useScroll ? MainAxisSize.min : MainAxisSize.max,
-      mainAxisAlignment: useScroll ? MainAxisAlignment.start : MainAxisAlignment.spaceEvenly,
+      mainAxisAlignment: useScroll
+          ? MainAxisAlignment.start
+          : MainAxisAlignment.spaceEvenly,
       children: [
         for (int i = 0; i < items.length; i++) ...[
           if (i > 0) SizedBox(width: spacing),
@@ -5814,6 +6444,88 @@ class AdminApp extends StatelessWidget {
     );
   }
 
+  /// Pestañas locales: selección con estilo chip; en pantallas anchas se envuelven.
+  Widget _buildInventorySectionQuickNav(
+    BuildContext context,
+    bool isTablet,
+    _InventoryQuickTab tab,
+    ValueChanged<_InventoryQuickTab> onTab,
+  ) {
+    Widget chip(String label, _InventoryQuickTab value) {
+      final selected = tab == value;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 6),
+        child: FilterChip(
+          label: Text(
+            label,
+            style: TextStyle(
+              fontSize: isTablet ? 13.5 : 12.5,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : AppColors.textPrimary,
+            ),
+          ),
+          selected: selected,
+          onSelected: (_) => onTab(value),
+          selectedColor: AppColors.primary,
+          checkmarkColor: Colors.white,
+          showCheckmark: true,
+          backgroundColor: AppColors.surface,
+          side: BorderSide(color: AppColors.primary.withValues(alpha: 0.45)),
+          padding: EdgeInsets.symmetric(
+            horizontal: isTablet ? 12 : 10,
+            vertical: 8,
+          ),
+          materialTapTargetSize: MaterialTapTargetSize.padded,
+          visualDensity: isTablet
+              ? VisualDensity.standard
+              : VisualDensity.compact,
+        ),
+      );
+    }
+
+    final chips = [
+      chip('Catálogo', _InventoryQuickTab.catalog),
+      chip('Movimientos (kárdex)', _InventoryQuickTab.movimientos),
+      chip('Reportes', _InventoryQuickTab.reportes),
+      chip('Resumen', _InventoryQuickTab.resumen),
+      chip('Recetas', _InventoryQuickTab.recetas),
+    ];
+
+    return Semantics(
+      label: 'Accesos rápidos a secciones de inventario',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Accesos rápidos',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              fontWeight: AppTheme.fontWeightSemibold,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          SizedBox(height: AppTheme.spacingXS),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 720;
+              if (wide) {
+                return Wrap(
+                  spacing: 0,
+                  runSpacing: 0,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: chips,
+                );
+              }
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: chips),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   // Vista de Gestión de Inventario
   Widget _buildInventoryManagementView(
     BuildContext context,
@@ -5826,98 +6538,36 @@ class AdminApp extends StatelessWidget {
       side: BorderSide(color: AppColors.primary.withValues(alpha: 0.25)),
     );
 
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(
-        isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isTablet) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    'Gestión de Inventario',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: AppTheme.fontWeightBold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ),
+    return _InventoryQuickTabsHost(
+      controller: controller,
+      builder: (context, tab, onTab) {
+        return SingleChildScrollView(
+          padding: EdgeInsets.all(
+            isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isTablet) ...[
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    PopupMenuButton<String>(
-                      tooltip: 'Exportar inventario',
-                      icon: const Icon(Icons.file_download_outlined),
-                      onSelected: (value) => _showInventoryExportDialog(
-                        context,
-                        controller,
-                        value,
-                      ),
-                      itemBuilder: (ctx) => const [
-                        PopupMenuItem(
-                          value: 'csv',
-                          child: Text('Exportar CSV'),
-                        ),
-                        PopupMenuItem(
-                          value: 'pdf',
-                          child: Text('Exportar PDF'),
-                        ),
-                      ],
-                    ),
-                    SizedBox(width: AppTheme.spacingSM),
-                    OutlinedButton(
-                      onPressed: () => _showBuscarPorCodigoBarrasDialog(
-                        context,
-                        controller,
-                        isTablet,
-                      ),
-                      child: const Text('Buscar por código'),
-                    ),
-                    SizedBox(width: AppTheme.spacingSM),
-                    ElevatedButton.icon(
-                      onPressed: () =>
-                          _showAddInventoryModal(context, controller, isTablet),
-                      icon: const Icon(Icons.add),
-                      label: const Text('Agregar Producto'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
+                    Expanded(
+                      child: Text(
+                        'Gestión de Inventario',
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(
+                              fontWeight: AppTheme.fontWeightBold,
+                              color: AppColors.textPrimary,
+                            ),
                       ),
                     ),
-                  ],
-                ),
-              ],
-            ),
-          ] else ...[
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Gestión de Inventario',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: AppTheme.fontWeightBold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                SizedBox(height: AppTheme.spacingSM),
-                LayoutBuilder(
-                  builder: (ctx, constraints) {
-                    final columns = constraints.maxWidth < 420 ? 1 : 2;
-                    final spacing = AppTheme.spacingSM;
-                    final totalSpacing = spacing * (columns - 1);
-                    final buttonWidth = (constraints.maxWidth - totalSpacing) / columns;
-                    const buttonHeight = 46.0;
-
-                    return Wrap(
-                      spacing: spacing,
-                      runSpacing: spacing,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         PopupMenuButton<String>(
                           tooltip: 'Exportar inventario',
+                          icon: const Icon(Icons.file_download_outlined),
                           onSelected: (value) => _showInventoryExportDialog(
                             context,
                             controller,
@@ -5933,537 +6583,669 @@ class AdminApp extends StatelessWidget {
                               child: Text('Exportar PDF'),
                             ),
                           ],
-                          child: SizedBox(
-                            width: buttonWidth,
-                            height: buttonHeight,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.file_download_outlined, size: 18, color: AppColors.primary),
-                                  const SizedBox(width: 8),
-                                  const Text('Exportar'),
-                                ],
-                              ),
-                            ),
-                          ),
                         ),
-                        SizedBox(
-                          width: buttonWidth,
-                          height: buttonHeight,
-                          child: OutlinedButton(
-                            onPressed: () => _showBuscarPorCodigoBarrasDialog(
-                              context,
-                              controller,
-                              isTablet,
-                            ),
-                            child: const Text(
-                              'Buscar por código',
-                              textAlign: TextAlign.center,
-                            ),
+                        SizedBox(width: AppTheme.spacingSM),
+                        OutlinedButton(
+                          onPressed: () => _showBuscarPorCodigoBarrasDialog(
+                            context,
+                            controller,
+                            isTablet,
                           ),
+                          child: const Text('Buscar por código'),
                         ),
-                        SizedBox(
-                          width: buttonWidth,
-                          height: buttonHeight,
-                          child: ElevatedButton.icon(
-                            onPressed: () => _showAddInventoryModal(
-                              context,
-                              controller,
-                              isTablet,
-                            ),
-                            icon: const Icon(Icons.add),
-                            label: const Text(
-                              'Agregar Producto',
-                              textAlign: TextAlign.center,
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
-                            ),
+                        SizedBox(width: AppTheme.spacingSM),
+                        OutlinedButton.icon(
+                          onPressed: () =>
+                              _showFormulatedInventoryProductDialog(
+                                context,
+                                controller,
+                                isTablet,
+                              ),
+                          icon: const Icon(Icons.layers_outlined),
+                          label: const Text('Producto formulado'),
+                        ),
+                        SizedBox(width: AppTheme.spacingSM),
+                        ElevatedButton.icon(
+                          onPressed: () => _showAddInventoryModal(
+                            context,
+                            controller,
+                            isTablet,
+                          ),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Agregar Producto'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
                           ),
                         ),
                       ],
-                    );
-                  },
+                    ),
+                  ],
+                ),
+              ] else ...[
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Gestión de Inventario',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: AppTheme.fontWeightBold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    LayoutBuilder(
+                      builder: (ctx, constraints) {
+                        final columns = constraints.maxWidth < 420 ? 1 : 2;
+                        final spacing = AppTheme.spacingSM;
+                        final totalSpacing = spacing * (columns - 1);
+                        final buttonWidth =
+                            (constraints.maxWidth - totalSpacing) / columns;
+                        const buttonHeight = 46.0;
+
+                        return Wrap(
+                          spacing: spacing,
+                          runSpacing: spacing,
+                          children: [
+                            PopupMenuButton<String>(
+                              tooltip: 'Exportar inventario',
+                              onSelected: (value) => _showInventoryExportDialog(
+                                context,
+                                controller,
+                                value,
+                              ),
+                              itemBuilder: (ctx) => const [
+                                PopupMenuItem(
+                                  value: 'csv',
+                                  child: Text('Exportar CSV'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'pdf',
+                                  child: Text('Exportar PDF'),
+                                ),
+                              ],
+                              child: SizedBox(
+                                width: buttonWidth,
+                                height: buttonHeight,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: AppColors.primary.withValues(
+                                        alpha: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.file_download_outlined,
+                                        size: 18,
+                                        color: AppColors.primary,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Text('Exportar'),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: buttonWidth,
+                              height: buttonHeight,
+                              child: OutlinedButton(
+                                onPressed: () =>
+                                    _showBuscarPorCodigoBarrasDialog(
+                                      context,
+                                      controller,
+                                      isTablet,
+                                    ),
+                                child: const Text(
+                                  'Buscar por código',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: buttonWidth,
+                              height: buttonHeight,
+                              child: OutlinedButton.icon(
+                                onPressed: () =>
+                                    _showFormulatedInventoryProductDialog(
+                                      context,
+                                      controller,
+                                      isTablet,
+                                    ),
+                                icon: const Icon(
+                                  Icons.layers_outlined,
+                                  size: 18,
+                                ),
+                                label: const Text(
+                                  'Producto formulado',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: buttonWidth,
+                              height: buttonHeight,
+                              child: ElevatedButton.icon(
+                                onPressed: () => _showAddInventoryModal(
+                                  context,
+                                  controller,
+                                  isTablet,
+                                ),
+                                icon: const Icon(Icons.add),
+                                label: const Text(
+                                  'Agregar Producto',
+                                  textAlign: TextAlign.center,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ],
-          SizedBox(height: AppTheme.spacingLG),
-          Theme(
-            data: Theme.of(context).copyWith(
-              dividerColor: Colors.transparent,
-              splashColor: AppColors.primary.withValues(alpha: 0.06),
-            ),
-            child: Column(
-              children: [
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0,
-                  shape: tileShape,
-                  child: ExpansionTile(
-                    initiallyExpanded: true,
-                    leading: Icon(Icons.inventory_2, color: AppColors.primary),
-                    title: Text(
-                      'Catálogo de insumos',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                      ),
+              SizedBox(height: AppTheme.spacingLG),
+              _buildInventorySectionQuickNav(context, isTablet, tab, onTab),
+              SizedBox(height: AppTheme.spacingMD),
+              Theme(
+                data: Theme.of(context).copyWith(
+                  dividerColor: Colors.transparent,
+                  splashColor: AppColors.primary.withValues(alpha: 0.06),
+                ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 280),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: KeyedSubtree(
+                    key: ValueKey<_InventoryQuickTab>(tab),
+                    child: _buildInventoryTabPanel(
+                      context,
+                      controller,
+                      isTablet,
+                      isDesktop,
+                      tileShape,
+                      tab,
                     ),
-                    subtitle: Text(
-                      'Productos, categorías y ajustes de stock',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    childrenPadding: EdgeInsets.fromLTRB(
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      0,
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      AppTheme.spacingMD,
-                    ),
-                    children: [
-                      _buildInventorySubsectionCard(
-                        context: context,
-                        icon: Icons.category_outlined,
-                        title: 'Categorías',
-                        subtitle: 'Administra y filtra categorías para organizar insumos.',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Wrap(
-                                spacing: AppTheme.spacingSM,
-                                runSpacing: AppTheme.spacingSM,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _showAddCategoryDialog(context, controller),
-                                    icon: const Icon(Icons.add_circle_outline, size: 18),
-                                    label: const Text('Nueva categoría'),
-                                  ),
-                                  OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _showRenameCategoryDialog(context, controller),
-                                    icon: const Icon(Icons.edit_outlined, size: 18),
-                                    label: const Text('Renombrar categoría'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(height: AppTheme.spacingSM),
-                            _buildInventorySearchAndFilters(
-                              context,
-                              controller,
-                              isTablet,
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: AppTheme.spacingMD),
-                      _buildInventorySubsectionCard(
-                        context: context,
-                        icon: Icons.inventory_2_outlined,
-                        title: 'Insumos',
-                        subtitle:
-                            'Alta, edición y consulta de productos con stock actual.',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Wrap(
-                              alignment: WrapAlignment.start,
-                              spacing: AppTheme.spacingSM,
-                              runSpacing: AppTheme.spacingSM,
-                              children: [
-                                OutlinedButton.icon(
-                                  onPressed: () => _showAddInventoryModal(
-                                    context,
-                                    controller,
-                                    isTablet,
-                                  ),
-                                  icon: const Icon(Icons.add, size: 18),
-                                  label: const Text('Agregar insumo'),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: () => _showBuscarPorCodigoBarrasDialog(
-                                    context,
-                                    controller,
-                                    isTablet,
-                                  ),
-                                  icon: const Icon(Icons.qr_code_scanner, size: 18),
-                                  label: const Text('Buscar por código'),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: AppTheme.spacingSM),
-                            _buildInventoryInsumosFilterHint(
-                              context,
-                              controller,
-                              isTablet,
-                            ),
-                            SizedBox(height: AppTheme.spacingSM),
-                            _buildInventoryItemsList(
-                              context,
-                              controller,
-                              isTablet,
-                              isDesktop,
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: AppTheme.spacingMD),
-                      _buildInventorySubsectionCard(
-                        context: context,
-                        icon: Icons.warning_amber_rounded,
-                        title: 'Ajustes y alertas',
-                        subtitle:
-                            'Detecta faltantes y ajusta existencias desde cada tarjeta.',
-                        child: _buildInventoryAlerts(context, controller, isTablet),
-                      ),
-                    ],
                   ),
                 ),
-                SizedBox(height: AppTheme.spacingMD),
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0,
-                  shape: tileShape,
-                  child: ExpansionTile(
-                    maintainState: true,
-                    leading: Icon(Icons.swap_vert, color: AppColors.primary),
-                    title: Text(
-                      'Movimientos (kárdex)',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'Entradas, salidas y ajustes por período',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    onExpansionChanged: (expanded) {
-                      if (expanded) {
-                        controller.loadInventoryMovimientos();
-                      }
-                    },
-                    childrenPadding: EdgeInsets.fromLTRB(
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      0,
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      AppTheme.spacingMD,
-                    ),
-                    children: [
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(AppTheme.spacingSM),
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Período',
-                              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                fontWeight: AppTheme.fontWeightSemibold,
-                              ),
-                            ),
-                            SizedBox(height: AppTheme.spacingXS),
-                            Wrap(
-                              spacing: AppTheme.spacingSM,
-                              runSpacing: AppTheme.spacingSM,
-                              children: [
-                                ChoiceChip(
-                                  label: const Text('Día'),
-                                  selected:
-                                      controller.inventoryMovementsPeriod == 'day',
-                                  onSelected: (_) =>
-                                      controller.setInventoryMovementsPeriod('day'),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Semana'),
-                                  selected:
-                                      controller.inventoryMovementsPeriod == 'week',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsPeriod('week'),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Mes'),
-                                  selected:
-                                      controller.inventoryMovementsPeriod == 'month',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsPeriod('month'),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Personalizado'),
-                                  selected:
-                                      controller.inventoryMovementsPeriod ==
-                                      'personalizado',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsPeriod('personalizado'),
-                                ),
-                              ],
-                            ),
-                            if (controller.inventoryMovementsPeriod == 'personalizado') ...[
-                              SizedBox(height: AppTheme.spacingSM),
-                              SizedBox(
-                                width: isTablet ? null : double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _showInventoryRangePickerDialog(
-                                    context,
-                                    controller,
-                                  ),
-                                  icon: const Icon(
-                                    Icons.date_range_outlined,
-                                    size: 18,
-                                  ),
-                                  label: const Text('Definir rango'),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      if (controller.inventoryMovementsPeriod == 'personalizado' &&
-                          controller.inventoryMovementsStart != null &&
-                          controller.inventoryMovementsEnd != null)
-                        Padding(
-                          padding: EdgeInsets.only(top: AppTheme.spacingSM),
-                          child: Text(
-                            'Desde ${date_utils.AppDateUtils.formatDateTimeWithAmPm(controller.inventoryMovementsStart!)} '
-                            'hasta ${date_utils.AppDateUtils.formatDateTimeWithAmPm(controller.inventoryMovementsEnd!)}',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ),
-                      SizedBox(height: AppTheme.spacingSM),
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(AppTheme.spacingSM),
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Tipo de movimiento',
-                              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                fontWeight: AppTheme.fontWeightSemibold,
-                              ),
-                            ),
-                            SizedBox(height: AppTheme.spacingXS),
-                            Wrap(
-                              alignment: WrapAlignment.start,
-                              spacing: AppTheme.spacingSM,
-                              runSpacing: AppTheme.spacingSM,
-                              children: [
-                                ChoiceChip(
-                                  label: const Text('Todos'),
-                                  selected:
-                                      controller.inventoryMovementsTypeFilter ==
-                                      'todos',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsTypeFilter('todos'),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Entrada'),
-                                  selected:
-                                      controller.inventoryMovementsTypeFilter ==
-                                      'entrada',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsTypeFilter('entrada'),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Salida'),
-                                  selected:
-                                      controller.inventoryMovementsTypeFilter ==
-                                      'salida',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsTypeFilter('salida'),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Ajuste'),
-                                  selected:
-                                      controller.inventoryMovementsTypeFilter ==
-                                      'ajuste',
-                                  onSelected: (_) => controller
-                                      .setInventoryMovementsTypeFilter('ajuste'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: AppTheme.spacingSM),
-                      _InventoryMovementsSearchField(controller: controller),
-                      SizedBox(height: isTablet ? AppTheme.spacingXS : AppTheme.spacingSM),
-                      SizedBox(
-                        width: isTablet ? null : double.infinity,
-                        child: Align(
-                          alignment: isTablet
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: () => controller.loadInventoryMovimientos(),
-                            icon: const Icon(Icons.refresh, size: 18),
-                            label: const Text('Actualizar movimientos'),
-                          ),
-                        ),
-                      ),
-                      _buildInventoryMovimientosSection(
-                        context,
-                        controller,
-                        isTablet,
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0,
-                  shape: tileShape,
-                  child: ExpansionTile(
-                    leading: Icon(Icons.analytics_outlined, color: AppColors.primary),
-                    title: Text(
-                      'Reportes y exportación',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'Descarga reportes por día, semana, mes o rango',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    childrenPadding: EdgeInsets.fromLTRB(
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      0,
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      AppTheme.spacingMD,
-                    ),
-                    children: [
-                      Wrap(
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInventoryTabPanel(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet,
+    bool isDesktop,
+    RoundedRectangleBorder tileShape,
+    _InventoryQuickTab tab,
+  ) {
+    switch (tab) {
+      case _InventoryQuickTab.catalog:
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          shape: tileShape,
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            leading: Icon(Icons.inventory_2, color: AppColors.primary),
+            title: Text(
+              'Catálogo de insumos',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: AppTheme.fontWeightSemibold,
+              ),
+            ),
+            subtitle: Text(
+              'Productos, categorías y ajustes de stock',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+            childrenPadding: EdgeInsets.fromLTRB(
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              0,
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              AppTheme.spacingMD,
+            ),
+            children: [
+              _buildInventorySubsectionCard(
+                context: context,
+                icon: Icons.category_outlined,
+                title: 'Categorías',
+                subtitle:
+                    'Administra y filtra categorías para organizar insumos.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
                         spacing: AppTheme.spacingSM,
                         runSpacing: AppTheme.spacingSM,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           OutlinedButton.icon(
-                            onPressed: () => _showInventoryExportDialog(
-                              context,
-                              controller,
-                              'csv',
+                            onPressed: () =>
+                                _showAddCategoryDialog(context, controller),
+                            icon: const Icon(
+                              Icons.add_circle_outline,
+                              size: 18,
                             ),
-                            icon: const Icon(Icons.table_chart_outlined, size: 18),
-                            label: const Text('Exportar CSV'),
+                            label: const Text('Nueva categoría'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () => _showInventoryExportDialog(
-                              context,
-                              controller,
-                              'pdf',
-                            ),
-                            icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-                            label: const Text('Exportar PDF'),
+                            onPressed: () =>
+                                _showRenameCategoryDialog(context, controller),
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            label: const Text('Renombrar categoría'),
                           ),
                         ],
                       ),
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    _buildInventorySearchAndFilters(
+                      context,
+                      controller,
+                      isTablet,
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: AppTheme.spacingMD),
+              _buildInventorySubsectionCard(
+                context: context,
+                icon: Icons.warning_amber_rounded,
+                title: 'Ajustes y alertas',
+                subtitle:
+                    'Detecta faltantes y ajusta existencias desde cada tarjeta.',
+                child: _buildInventoryAlerts(context, controller, isTablet),
+              ),
+              SizedBox(height: AppTheme.spacingMD),
+              _buildInventorySubsectionCard(
+                context: context,
+                icon: Icons.inventory_2_outlined,
+                title: 'Insumos',
+                subtitle:
+                    'Alta, edición y consulta de productos con stock actual.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      alignment: WrapAlignment.start,
+                      spacing: AppTheme.spacingSM,
+                      runSpacing: AppTheme.spacingSM,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => _showAddInventoryModal(
+                            context,
+                            controller,
+                            isTablet,
+                          ),
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('Agregar insumo'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _showBuscarPorCodigoBarrasDialog(
+                            context,
+                            controller,
+                            isTablet,
+                          ),
+                          icon: const Icon(Icons.qr_code_scanner, size: 18),
+                          label: const Text('Buscar por código'),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    _buildInventoryInsumosFilterHint(
+                      context,
+                      controller,
+                      isTablet,
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    _buildInventoryItemsList(
+                      context,
+                      controller,
+                      isTablet,
+                      isDesktop,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      case _InventoryQuickTab.movimientos:
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          shape: tileShape,
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            maintainState: true,
+            leading: Icon(Icons.swap_vert, color: AppColors.primary),
+            title: Text(
+              'Movimientos (kárdex)',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: AppTheme.fontWeightSemibold,
+              ),
+            ),
+            subtitle: Text(
+              'Entradas, salidas y ajustes por período',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+            onExpansionChanged: (expanded) {
+              if (expanded) {
+                controller.loadInventoryMovimientos();
+              }
+            },
+            childrenPadding: EdgeInsets.fromLTRB(
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              0,
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              AppTheme.spacingMD,
+            ),
+            children: [
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(AppTheme.spacingSM),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Período',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: AppTheme.fontWeightSemibold,
+                      ),
+                    ),
+                    SizedBox(height: AppTheme.spacingXS),
+                    Wrap(
+                      spacing: AppTheme.spacingSM,
+                      runSpacing: AppTheme.spacingSM,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Día'),
+                          selected:
+                              controller.inventoryMovementsPeriod == 'day',
+                          onSelected: (_) =>
+                              controller.setInventoryMovementsPeriod('day'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Semana'),
+                          selected:
+                              controller.inventoryMovementsPeriod == 'week',
+                          onSelected: (_) =>
+                              controller.setInventoryMovementsPeriod('week'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Mes'),
+                          selected:
+                              controller.inventoryMovementsPeriod == 'month',
+                          onSelected: (_) =>
+                              controller.setInventoryMovementsPeriod('month'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Personalizado'),
+                          selected:
+                              controller.inventoryMovementsPeriod ==
+                              'personalizado',
+                          onSelected: (_) => controller
+                              .setInventoryMovementsPeriod('personalizado'),
+                        ),
+                      ],
+                    ),
+                    if (controller.inventoryMovementsPeriod ==
+                        'personalizado') ...[
                       SizedBox(height: AppTheme.spacingSM),
-                      Text(
-                        'Incluye entradas, salidas y ajustes del periodo seleccionado.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
+                      SizedBox(
+                        width: isTablet ? null : double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _showInventoryRangePickerDialog(
+                            context,
+                            controller,
+                          ),
+                          icon: const Icon(Icons.date_range_outlined, size: 18),
+                          label: const Text('Definir rango'),
                         ),
                       ),
                     ],
+                  ],
+                ),
+              ),
+              if (controller.inventoryMovementsPeriod == 'personalizado' &&
+                  controller.inventoryMovementsStart != null &&
+                  controller.inventoryMovementsEnd != null)
+                Padding(
+                  padding: EdgeInsets.only(top: AppTheme.spacingSM),
+                  child: Text(
+                    'Desde ${date_utils.AppDateUtils.formatDateTimeWithAmPm(controller.inventoryMovementsStart!)} '
+                    'hasta ${date_utils.AppDateUtils.formatDateTimeWithAmPm(controller.inventoryMovementsEnd!)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
-                SizedBox(height: AppTheme.spacingMD),
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0,
-                  shape: tileShape,
-                  child: ExpansionTile(
-                    leading: Icon(Icons.insights_outlined, color: AppColors.primary),
-                    title: Text(
-                      'Resumen operativo',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              SizedBox(height: AppTheme.spacingSM),
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(AppTheme.spacingSM),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tipo de movimiento',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
                         fontWeight: AppTheme.fontWeightSemibold,
                       ),
                     ),
-                    subtitle: Text(
-                      'Indicadores clave de stock, alertas y costos',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
+                    SizedBox(height: AppTheme.spacingXS),
+                    Wrap(
+                      alignment: WrapAlignment.start,
+                      spacing: AppTheme.spacingSM,
+                      runSpacing: AppTheme.spacingSM,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Todos'),
+                          selected:
+                              controller.inventoryMovementsTypeFilter ==
+                              'todos',
+                          onSelected: (_) => controller
+                              .setInventoryMovementsTypeFilter('todos'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Entrada'),
+                          selected:
+                              controller.inventoryMovementsTypeFilter ==
+                              'entrada',
+                          onSelected: (_) => controller
+                              .setInventoryMovementsTypeFilter('entrada'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Salida'),
+                          selected:
+                              controller.inventoryMovementsTypeFilter ==
+                              'salida',
+                          onSelected: (_) => controller
+                              .setInventoryMovementsTypeFilter('salida'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Ajuste'),
+                          selected:
+                              controller.inventoryMovementsTypeFilter ==
+                              'ajuste',
+                          onSelected: (_) => controller
+                              .setInventoryMovementsTypeFilter('ajuste'),
+                        ),
+                      ],
                     ),
-                    childrenPadding: EdgeInsets.fromLTRB(
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      0,
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      AppTheme.spacingMD,
-                    ),
-                    children: [
-                      _buildInventoryResumenSection(context, controller, isTablet),
-                    ],
+                  ],
+                ),
+              ),
+              SizedBox(height: AppTheme.spacingSM),
+              _InventoryMovementsSearchField(controller: controller),
+              SizedBox(
+                height: isTablet ? AppTheme.spacingXS : AppTheme.spacingSM,
+              ),
+              SizedBox(
+                width: isTablet ? null : double.infinity,
+                child: Align(
+                  alignment: isTablet
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => controller.loadInventoryMovimientos(),
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Actualizar movimientos'),
                   ),
                 ),
-                SizedBox(height: AppTheme.spacingMD),
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0,
-                  shape: tileShape,
-                  child: ExpansionTile(
-                    leading: Icon(Icons.auto_awesome, color: AppColors.primary),
-                    title: Text(
-                      'Descuento automático y recetas',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'Cómo se conecta el menú con el inventario',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    childrenPadding: EdgeInsets.fromLTRB(
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      0,
-                      isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
-                      AppTheme.spacingMD,
-                    ),
-                    children: [
-                      _buildInventoryDescuentoInfoSection(
-                        context,
-                        isTablet,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+              _buildInventoryMovimientosSection(context, controller, isTablet),
+            ],
           ),
-        ],
-      ),
-    );
+        );
+      case _InventoryQuickTab.reportes:
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          shape: tileShape,
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            leading: Icon(Icons.analytics_outlined, color: AppColors.primary),
+            title: Text(
+              'Reportes y exportación',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: AppTheme.fontWeightSemibold,
+              ),
+            ),
+            subtitle: Text(
+              'Descarga reportes por día, semana, mes o rango',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+            childrenPadding: EdgeInsets.fromLTRB(
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              0,
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              AppTheme.spacingMD,
+            ),
+            children: [
+              Wrap(
+                spacing: AppTheme.spacingSM,
+                runSpacing: AppTheme.spacingSM,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        _showInventoryExportDialog(context, controller, 'csv'),
+                    icon: const Icon(Icons.table_chart_outlined, size: 18),
+                    label: const Text('Exportar CSV'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        _showInventoryExportDialog(context, controller, 'pdf'),
+                    icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                    label: const Text('Exportar PDF'),
+                  ),
+                ],
+              ),
+              SizedBox(height: AppTheme.spacingSM),
+              Text(
+                'Incluye entradas, salidas y ajustes del periodo seleccionado.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        );
+      case _InventoryQuickTab.resumen:
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          shape: tileShape,
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            leading: Icon(Icons.insights_outlined, color: AppColors.primary),
+            title: Text(
+              'Resumen operativo',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: AppTheme.fontWeightSemibold,
+              ),
+            ),
+            subtitle: Text(
+              'Indicadores clave de stock, alertas y costos',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+            childrenPadding: EdgeInsets.fromLTRB(
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              0,
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              AppTheme.spacingMD,
+            ),
+            children: [
+              _buildInventoryResumenSection(context, controller, isTablet),
+            ],
+          ),
+        );
+      case _InventoryQuickTab.recetas:
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          shape: tileShape,
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            leading: Icon(Icons.auto_awesome, color: AppColors.primary),
+            title: Text(
+              'Descuento automático y recetas',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: AppTheme.fontWeightSemibold,
+              ),
+            ),
+            subtitle: Text(
+              'Cómo se conecta el menú con el inventario',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+            childrenPadding: EdgeInsets.fromLTRB(
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              0,
+              isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+              AppTheme.spacingMD,
+            ),
+            children: [_buildInventoryDescuentoInfoSection(context, isTablet)],
+          ),
+        );
+    }
   }
 
   Widget _buildInventoryMovimientosSection(
@@ -6477,9 +7259,9 @@ class AdminApp extends StatelessWidget {
         padding: EdgeInsets.only(bottom: AppTheme.spacingSM),
         child: Text(
           'No hay movimientos que coincidan con el filtro actual. Ajusta tipo, búsqueda o período.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: AppColors.textSecondary,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
         ),
       );
     }
@@ -6531,7 +7313,9 @@ class AdminApp extends StatelessWidget {
                           child: Text(
                             m['inventarioItemNombre']?.toString() ?? 'Ítem',
                             style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: AppTheme.fontWeightSemibold),
+                                ?.copyWith(
+                                  fontWeight: AppTheme.fontWeightSemibold,
+                                ),
                           ),
                         ),
                         Container(
@@ -6540,8 +7324,9 @@ class AdminApp extends StatelessWidget {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: tipoColor(m['tipo']?.toString())
-                                .withValues(alpha: 0.12),
+                            color: tipoColor(
+                              m['tipo']?.toString(),
+                            ).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
@@ -6594,11 +7379,14 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
   ) async {
     final now = date_utils.AppDateUtils.nowCdmx();
-    final initialStart = controller.inventoryMovementsStart ??
+    final initialStart =
+        controller.inventoryMovementsStart ??
         DateTime(now.year, now.month, now.day);
     final initialEnd = controller.inventoryMovementsEnd ?? now;
     DateTime tempStart = initialStart;
-    DateTime tempEnd = initialEnd.isBefore(initialStart) ? initialStart : initialEnd;
+    DateTime tempEnd = initialEnd.isBefore(initialStart)
+        ? initialStart
+        : initialEnd;
 
     await showDialog<void>(
       context: context,
@@ -6612,8 +7400,9 @@ class AdminApp extends StatelessWidget {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Desde'),
-                subtitle:
-                    Text(date_utils.AppDateUtils.formatDateTimeWithAmPm(tempStart)),
+                subtitle: Text(
+                  date_utils.AppDateUtils.formatDateTimeWithAmPm(tempStart),
+                ),
                 trailing: const Icon(Icons.edit_calendar_outlined),
                 onTap: () async {
                   await _pickExportDateTime(context, tempStart, (d) {
@@ -6627,8 +7416,9 @@ class AdminApp extends StatelessWidget {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Hasta'),
-                subtitle:
-                    Text(date_utils.AppDateUtils.formatDateTimeWithAmPm(tempEnd)),
+                subtitle: Text(
+                  date_utils.AppDateUtils.formatDateTimeWithAmPm(tempEnd),
+                ),
                 trailing: const Icon(Icons.edit_calendar_outlined),
                 onTap: () async {
                   await _pickExportDateTime(context, tempEnd, (d) {
@@ -6679,8 +7469,9 @@ class AdminApp extends StatelessWidget {
       }
     }
     final fmt = NumberFormat.currency(locale: 'es_MX', symbol: r'$');
-    final costoUnitarioPromedio =
-        itemsConCosto == 0 ? 0.0 : (sumaCostoUnitario / itemsConCosto);
+    final costoUnitarioPromedio = itemsConCosto == 0
+        ? 0.0
+        : (sumaCostoUnitario / itemsConCosto);
 
     Widget sectionTitle(String title) {
       return Padding(
@@ -6707,7 +7498,9 @@ class AdminApp extends StatelessWidget {
             Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: highlight ? AppColors.textPrimary : AppColors.textSecondary,
+                color: highlight
+                    ? AppColors.textPrimary
+                    : AppColors.textSecondary,
               ),
             ),
             Text(
@@ -6864,9 +7657,13 @@ class AdminApp extends StatelessWidget {
                 Navigator.of(dialogContext).pop();
                 try {
                   if (format == 'csv') {
-                    await controller.exportInventoryReportToCSV('personalizado');
+                    await controller.exportInventoryReportToCSV(
+                      'personalizado',
+                    );
                   } else {
-                    await controller.exportInventoryReportToPDF('personalizado');
+                    await controller.exportInventoryReportToPDF(
+                      'personalizado',
+                    );
                   }
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -6915,7 +7712,11 @@ class AdminApp extends StatelessWidget {
           TextButton(
             onPressed: () {
               Navigator.of(dialogContext).pop();
-              _showInventoryCustomRangeExportDialog(context, controller, format);
+              _showInventoryCustomRangeExportDialog(
+                context,
+                controller,
+                format,
+              );
             },
             child: const Text('Personalizado…'),
           ),
@@ -6932,7 +7733,9 @@ class AdminApp extends StatelessWidget {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Error al exportar: ${_extractErrorMessage(e)}'),
+                    content: Text(
+                      'Error al exportar: ${_extractErrorMessage(e)}',
+                    ),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -6953,7 +7756,9 @@ class AdminApp extends StatelessWidget {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Error al exportar: ${_extractErrorMessage(e)}'),
+                    content: Text(
+                      'Error al exportar: ${_extractErrorMessage(e)}',
+                    ),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -6974,7 +7779,9 @@ class AdminApp extends StatelessWidget {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Error al exportar: ${_extractErrorMessage(e)}'),
+                    content: Text(
+                      'Error al exportar: ${_extractErrorMessage(e)}',
+                    ),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -6999,13 +7806,11 @@ class AdminApp extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.all(AppTheme.spacingMD),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.32,
-        ),
+        color: Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
         borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant,
-        ),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -7027,9 +7832,9 @@ class AdminApp extends StatelessWidget {
           SizedBox(height: AppTheme.spacingXS),
           Text(
             subtitle,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppColors.textSecondary,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
           ),
           SizedBox(height: AppTheme.spacingSM),
           child,
@@ -7120,9 +7925,9 @@ class AdminApp extends StatelessWidget {
           SizedBox(height: AppTheme.spacingXS),
           Text(
             'Aumenta stock sin buscar el producto manualmente.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppColors.textSecondary,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
           ),
           SizedBox(height: AppTheme.spacingSM),
           for (final item in criticalItems.take(4))
@@ -7131,9 +7936,7 @@ class AdminApp extends StatelessWidget {
               padding: EdgeInsets.all(AppTheme.spacingSM),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                border: Border.all(
-                  color: Colors.red.withValues(alpha: 0.3),
-                ),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [
@@ -7145,16 +7948,16 @@ class AdminApp extends StatelessWidget {
                           item.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: AppTheme.fontWeightSemibold,
-                          ),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                fontWeight: AppTheme.fontWeightSemibold,
+                              ),
                         ),
                         SizedBox(height: AppTheme.spacingXS),
                         Text(
                           'Stock actual: ${inventarioStockDisplay(item)}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -7270,11 +8073,12 @@ class AdminApp extends StatelessWidget {
   // Diálogo para agregar categoría
   void _showAddCategoryDialog(
     BuildContext context,
-    AdminController controller,
-  ) {
+    AdminController controller, {
+    ValueChanged<String>? onCategoryCreated,
+  }) {
     final categoryNameController = TextEditingController();
     final isTablet = MediaQuery.of(context).size.width > 600;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -7329,10 +8133,12 @@ class AdminApp extends StatelessWidget {
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(child: CircularProgressIndicator()),
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
               );
               try {
                 await controller.createInventoryCategory(categoryName);
+                onCategoryCreated?.call(categoryName);
                 if (context.mounted) Navigator.of(context).pop();
                 if (context.mounted) Navigator.of(context).pop();
                 if (context.mounted) {
@@ -7346,7 +8152,8 @@ class AdminApp extends StatelessWidget {
               } on StateError catch (e) {
                 if (context.mounted) Navigator.of(context).pop();
                 if (context.mounted) Navigator.of(context).pop();
-                if (e.message == 'DUPLICATE_INVENTORY_CATEGORY' && context.mounted) {
+                if (e.message == 'DUPLICATE_INVENTORY_CATEGORY' &&
+                    context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(
@@ -7454,7 +8261,8 @@ class AdminApp extends StatelessWidget {
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(child: CircularProgressIndicator()),
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
               );
               try {
                 await controller.renameInventoryCategory(sel, nuevo);
@@ -7502,9 +8310,9 @@ class AdminApp extends StatelessWidget {
     final shown = controller.filteredInventory.length;
     final searchOn = controller.inventorySearchQuery.trim().isNotEmpty;
     final subtitle = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: AppColors.textSecondary,
-          height: 1.35,
-        );
+      color: AppColors.textSecondary,
+      height: 1.35,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -7524,9 +8332,12 @@ class AdminApp extends StatelessWidget {
               label: Text(
                 'Todos',
                 style: TextStyle(
-                  fontSize: isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS,
-                  fontWeight:
-                      todos ? AppTheme.fontWeightSemibold : AppTheme.fontWeightNormal,
+                  fontSize: isTablet
+                      ? AppTheme.fontSizeSM
+                      : AppTheme.fontSizeXS,
+                  fontWeight: todos
+                      ? AppTheme.fontWeightSemibold
+                      : AppTheme.fontWeightNormal,
                 ),
               ),
               selected: todos,
@@ -7546,9 +8357,9 @@ class AdminApp extends StatelessWidget {
                   ? '$shown de $total insumo(s) en esta vista'
                   : '$shown insumo(s) en catálogo',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: AppTheme.fontWeightMedium,
-                  ),
+                color: AppColors.textSecondary,
+                fontWeight: AppTheme.fontWeightMedium,
+              ),
             ),
           ],
         ),
@@ -7730,7 +8541,9 @@ class AdminApp extends StatelessWidget {
               children: [
                 Container(
                   padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                    horizontal: isTablet
+                        ? AppTheme.spacingMD
+                        : AppTheme.spacingSM,
                     vertical: AppTheme.spacingXS + 2,
                   ),
                   decoration: BoxDecoration(
@@ -7753,14 +8566,53 @@ class AdminApp extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (item.codigoBarras != null && item.codigoBarras!.trim().isNotEmpty)
+                if (item.isFormulated)
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet
+                          ? AppTheme.spacingMD
+                          : AppTheme.spacingSM,
+                      vertical: AppTheme.spacingXS + 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSM),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.layers_outlined,
+                          size: isTablet ? 16 : 14,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Formulado',
+                          style: TextStyle(
+                            fontSize: isTablet ? AppTheme.fontSizeSM : 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (item.codigoBarras != null &&
+                    item.codigoBarras!.trim().isNotEmpty)
                   Container(
                     padding: EdgeInsets.symmetric(
                       horizontal: AppTheme.spacingSM,
                       vertical: AppTheme.spacingXS,
                     ),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(AppTheme.radiusSM),
                       border: Border.all(
                         color: Theme.of(context).colorScheme.outlineVariant,
@@ -7769,20 +8621,39 @@ class AdminApp extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.view_stream, size: 16, color: AppColors.textSecondary),
+                        Icon(
+                          Icons.view_stream,
+                          size: 16,
+                          color: AppColors.textSecondary,
+                        ),
                         SizedBox(width: 6),
                         Text(
                           item.codigoBarras!,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.textSecondary,
-                            fontFamily: 'monospace',
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: AppColors.textSecondary,
+                                fontFamily: 'monospace',
+                              ),
                         ),
                       ],
                     ),
                   ),
               ],
             ),
+            if (item.isFormulated)
+              Padding(
+                padding: EdgeInsets.only(top: AppTheme.spacingXS),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '${item.numLineasFormulacion} componente(s) en la receta del formulado',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ),
             SizedBox(height: AppTheme.spacingSM),
 
             // Stock con barra de progreso
@@ -7798,18 +8669,24 @@ class AdminApp extends StatelessWidget {
                         children: [
                           Text(
                             'Stock actual: ${inventarioStockDisplay(item)}',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontWeight: AppTheme.fontWeightSemibold,
-                              color: item.currentStock < 0 ? Colors.red : statusColor,
-                            ),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  fontWeight: AppTheme.fontWeightSemibold,
+                                  color: item.currentStock < 0
+                                      ? Colors.red
+                                      : statusColor,
+                                ),
                           ),
-                          for (final line in inventarioContenidoEnvaseLines(item))
+                          for (final line in inventarioContenidoEnvaseLines(
+                            item,
+                          ))
                             Text(
                               line,
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.textSecondary,
-                                fontStyle: FontStyle.italic,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: AppColors.textSecondary,
+                                    fontStyle: FontStyle.italic,
+                                  ),
                             ),
                         ],
                       ),
@@ -7840,18 +8717,18 @@ class AdminApp extends StatelessWidget {
                         children: [
                           Text(
                             'Mín: ${inventarioMinStockDisplay(item)}',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppColors.textSecondary),
                           ),
                           if (inventarioEquivMinimoLine(item) != null)
                             Text(
                               inventarioEquivMinimoLine(item)!,
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.textSecondary,
-                                fontSize: 11,
-                                fontStyle: FontStyle.italic,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11,
+                                    fontStyle: FontStyle.italic,
+                                  ),
                             ),
                         ],
                       ),
@@ -7936,9 +8813,9 @@ class AdminApp extends StatelessWidget {
     if (paymentMethod == null || paymentMethod.isEmpty) {
       return 'No especificado';
     }
-    
+
     final method = paymentMethod.trim().toLowerCase();
-    
+
     // Normalizar a español
     if (method.contains('efectivo') || method == 'cash') {
       return 'Efectivo';
@@ -7955,16 +8832,18 @@ class AdminApp extends StatelessWidget {
     if (method.contains('tarjeta') || method == 'card') {
       return 'Tarjeta';
     }
-    if (method.contains('mixto') || method == 'mixed' || method.contains('pago mixto')) {
+    if (method.contains('mixto') ||
+        method == 'mixed' ||
+        method.contains('pago mixto')) {
       return 'Pago Mixto';
     }
-    
+
     // Si ya está en español, capitalizar correctamente
     return paymentMethod
         .split(' ')
         .map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+          if (word.isEmpty) return word;
+          return word[0].toUpperCase() + word.substring(1).toLowerCase();
         })
         .join(' ');
   }
@@ -7975,6 +8854,515 @@ class AdminApp extends StatelessWidget {
     final firstQty = first.quantity > 0 ? '${first.quantity}x ' : '';
     if (ticket.items.length == 1) return '$firstQty${first.name}';
     return '$firstQty${first.name} + ${ticket.items.length - 1} más';
+  }
+
+  /// Diálogo de producto formulado (BOM + ficha); datos en servidor.
+  void _showFormulatedInventoryProductDialog(
+    BuildContext context,
+    AdminController controller,
+    bool isTablet, {
+    InventoryItem? editing,
+  }) {
+    String fmtNum(double v, {int max = 2}) {
+      if (v == v.roundToDouble() && v.abs() < 1e9) {
+        return v.toInt().toString();
+      }
+      return v
+          .toStringAsFixed(max)
+          .replaceAll(RegExp(r'0*$'), '')
+          .replaceAll(RegExp(r'\.$'), '');
+    }
+
+    final formKey = GlobalKey<FormState>();
+    final nameController = TextEditingController(text: editing?.name ?? '');
+    final codigoBarrasController = TextEditingController(
+      text: editing?.codigoBarras ?? '',
+    );
+    final editItem = editing;
+    final stockController = TextEditingController(
+      text: editItem != null ? fmtNum(editItem.currentStock) : '0',
+    );
+    final minStockController = TextEditingController(
+      text: editItem != null ? fmtNum(editItem.minStock) : '0',
+    );
+    final maxStockController = TextEditingController(
+      text: editItem != null ? fmtNum(editItem.maxStock) : '10',
+    );
+    final supplierController = TextEditingController(
+      text: editing?.supplier ?? '',
+    );
+
+    final inventoryUnitOptions = [
+      'kg',
+      'g',
+      'L',
+      'ml',
+      'pza',
+      'Pieza',
+      'Piezas',
+      'Unidad',
+      'Unidades',
+    ];
+
+    List<String> initialFormulatedCats() {
+      var opts =
+          controller.inventoryCategories.where((c) => c != 'todos').toList();
+      if (opts.isEmpty) opts = ['Otros'];
+      final ei = editItem;
+      if (ei != null && !opts.contains(ei.category)) {
+        opts = [...opts, ei.category];
+      }
+      return opts;
+    }
+
+    final initFormulatedCats = initialFormulatedCats();
+    String? selectedCategory =
+        editItem != null && initFormulatedCats.contains(editItem.category)
+        ? editItem.category
+        : initFormulatedCats.first;
+
+    String selectedUnit = editItem?.unit ?? 'g';
+    if (!inventoryUnitOptions.contains(selectedUnit)) {
+      inventoryUnitOptions.add(selectedUnit);
+    }
+
+    var lines = <InventoryFormulationLine>[];
+    var bomLoadStarted = false;
+
+    final itemId = editItem?.id ?? '0';
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          if (editItem != null && !bomLoadStarted) {
+            bomLoadStarted = true;
+            Future.microtask(() async {
+              final loaded = await controller.fetchFormulationLines(editItem.id);
+              if (context.mounted) {
+                setDialogState(() => lines = loaded);
+              }
+            });
+          }
+          final mq = MediaQuery.of(context);
+          final estCost = controller.estimateFormulatedUnitCost(lines);
+          final dialogW = (isTablet ? 560.0 : mq.size.width * 0.94).clamp(
+            280.0,
+            mq.size.width - 24,
+          );
+          final dialogH = (mq.size.height * 0.88).clamp(
+            420.0,
+            mq.size.height - 32,
+          );
+
+          Future<void> pickComponent() async {
+            final line = await showFormulationLinePicker(
+              context: context,
+              controller: controller,
+              isTablet: isTablet,
+              excludeComponentIds: {
+                for (final l in lines) l.componentInventoryItemId,
+              },
+            );
+            if (line != null) {
+              setDialogState(() => lines.add(line));
+            }
+          }
+
+          return AlertDialog(
+            title: Text(
+              editing == null
+                  ? 'Producto formulado'
+                  : 'Editar producto formulado',
+              style: TextStyle(fontSize: isTablet ? 20 : 18),
+            ),
+            content: SizedBox(
+              width: dialogW,
+              height: dialogH,
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Define el producto terminado y la receta (insumos por cada 1 unidad '
+                        'del producto terminado). Se guarda en el inventario del servidor.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.textSecondary,
+                          height: 1.35,
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      TextFormField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre del producto *',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) => v == null || v.trim().length < 2
+                            ? 'Mínimo 2 caracteres'
+                            : null,
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      TextFormField(
+                        controller: codigoBarrasController,
+                        decoration: const InputDecoration(
+                          labelText: 'Código de barras (opcional)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      DropdownButtonFormField<String>(
+                        value:
+                            AdminApp._resolveFormulatedCategoryDropdownValue(
+                              controller,
+                              editItem,
+                              selectedCategory,
+                            ),
+                        decoration: const InputDecoration(
+                          labelText: 'Categoría *',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: AdminApp._formulatedCategoryDropdownItems(
+                              controller,
+                              editItem,
+                            )
+                            .map(
+                              (c) => DropdownMenuItem(value: c, child: Text(c)),
+                            )
+                            .toList(),
+                        onChanged: (v) =>
+                            setDialogState(() => selectedCategory = v),
+                        validator: (v) =>
+                            v == null || v.isEmpty ? 'Requerido' : null,
+                      ),
+                      SizedBox(height: AppTheme.spacingXS),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            _showAddCategoryDialog(
+                              context,
+                              controller,
+                              onCategoryCreated: (name) {
+                                setDialogState(() => selectedCategory = name);
+                              },
+                            );
+                          },
+                          icon: const Icon(Icons.add_circle_outline, size: 18),
+                          label: const Text('Crear categoría'),
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      DropdownButtonFormField<String>(
+                        value: selectedUnit,
+                        decoration: const InputDecoration(
+                          labelText: 'Unidad del producto formulado *',
+                          border: OutlineInputBorder(),
+                          helperText:
+                              'Ej. kg de salsa, litros de caldo, piezas…',
+                        ),
+                        items: inventoryUnitOptions
+                            .map(
+                              (u) => DropdownMenuItem(value: u, child: Text(u)),
+                            )
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) {
+                            setDialogState(() => selectedUnit = v);
+                          }
+                        },
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      LayoutBuilder(
+                        builder: (ctx, c) {
+                          final narrow = c.maxWidth < 440;
+                          final fieldStock = TextFormField(
+                            controller: stockController,
+                            decoration: const InputDecoration(
+                              labelText: 'Stock actual',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                          );
+                          final fieldMin = TextFormField(
+                            controller: minStockController,
+                            decoration: const InputDecoration(
+                              labelText: 'Stock mínimo',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                          );
+                          final fieldMax = TextFormField(
+                            controller: maxStockController,
+                            decoration: const InputDecoration(
+                              labelText: 'Stock máximo',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                          );
+                          if (narrow) {
+                            return Column(
+                              children: [
+                                fieldStock,
+                                SizedBox(height: AppTheme.spacingSM),
+                                fieldMin,
+                                SizedBox(height: AppTheme.spacingSM),
+                                fieldMax,
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: fieldStock),
+                              SizedBox(width: AppTheme.spacingSM),
+                              Expanded(child: fieldMin),
+                              SizedBox(width: AppTheme.spacingSM),
+                              Expanded(child: fieldMax),
+                            ],
+                          );
+                        },
+                      ),
+                      SizedBox(height: AppTheme.spacingSM),
+                      TextFormField(
+                        controller: supplierController,
+                        decoration: const InputDecoration(
+                          labelText: 'Proveedor (opcional)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.calculate_outlined,
+                            size: 20,
+                            color: AppColors.primary,
+                          ),
+                          SizedBox(width: AppTheme.spacingXS),
+                          Expanded(
+                            child: Text(
+                              lines.isEmpty
+                                  ? 'Costo estimado: — (agrega componentes)'
+                                  : 'Costo estimado / 1 ${selectedUnit}: \$${fmtNum(estCost)}',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      Text(
+                        'Receta (insumos base)',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: AppTheme.fontWeightSemibold,
+                        ),
+                      ),
+                      SizedBox(height: AppTheme.spacingXS),
+                      if (lines.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'Aún no hay componentes. Usa «Agregar componente».',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppColors.textSecondary),
+                          ),
+                        )
+                      else
+                        ...lines.map((l) {
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: ListTile(
+                              dense: true,
+                              title: Text(
+                                l.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                '${fmtNum(l.quantity)} ${l.unit} por 1 ${selectedUnit.trim()}',
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                color: Colors.red,
+                                onPressed: () {
+                                  setDialogState(
+                                    () =>
+                                        lines.removeWhere((x) => x.id == l.id),
+                                  );
+                                },
+                              ),
+                            ),
+                          );
+                        }),
+                      OutlinedButton.icon(
+                        onPressed: pickComponent,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Agregar componente'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  nameController.dispose();
+                  codigoBarrasController.dispose();
+                  stockController.dispose();
+                  minStockController.dispose();
+                  maxStockController.dispose();
+                  supplierController.dispose();
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (!formKey.currentState!.validate()) return;
+                  if (selectedCategory == null ||
+                      selectedCategory!.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Elige una categoría'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  if (lines.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Agrega al menos un componente'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  final stock =
+                      double.tryParse(
+                        stockController.text.replaceAll(',', '.'),
+                      ) ??
+                      0;
+                  final minS =
+                      double.tryParse(
+                        minStockController.text.replaceAll(',', '.'),
+                      ) ??
+                      0;
+                  var maxS =
+                      double.tryParse(
+                        maxStockController.text.replaceAll(',', '.'),
+                      ) ??
+                      minS * 2;
+                  if (maxS < minS) maxS = minS * 2;
+
+                  var status = InventoryStatus.available;
+                  if (stock <= 0) {
+                    status = InventoryStatus.outOfStock;
+                  } else if (stock <= minS) {
+                    status = InventoryStatus.lowStock;
+                  }
+
+                  final unitCost = controller.estimateFormulatedUnitCost(lines);
+                  final item = InventoryItem(
+                    id: itemId,
+                    name: nameController.text.trim(),
+                    codigoBarras: codigoBarrasController.text.trim().isEmpty
+                        ? null
+                        : codigoBarrasController.text.trim(),
+                    category: selectedCategory!.trim(),
+                    currentStock: stock,
+                    minStock: minS,
+                    maxStock: maxS,
+                    minimumStock: minS,
+                    unit: selectedUnit,
+                    cost: unitCost,
+                    price: stock * unitCost,
+                    unitPrice: unitCost,
+                    supplier: supplierController.text.trim().isEmpty
+                        ? null
+                        : supplierController.text.trim(),
+                    lastRestock: editing?.lastRestock,
+                    expiryDate: null,
+                    status: status,
+                    notes: null,
+                    description: null,
+                    isFormulated: true,
+                    numLineasFormulacion: lines.length,
+                  );
+
+                  showDialog<void>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (c) =>
+                        const Center(child: CircularProgressIndicator()),
+                  );
+
+                  try {
+                    if (editing == null) {
+                      await controller.addInventoryItem(
+                        item,
+                        formulationLines: lines,
+                      );
+                    } else {
+                      await controller.updateInventoryItem(
+                        item,
+                        formulationLines: lines,
+                      );
+                    }
+                    if (context.mounted) Navigator.of(context).pop();
+                    nameController.dispose();
+                    codigoBarrasController.dispose();
+                    stockController.dispose();
+                    minStockController.dispose();
+                    maxStockController.dispose();
+                    supplierController.dispose();
+                    if (context.mounted) Navigator.of(dialogContext).pop();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            editing == null
+                                ? 'Producto formulado guardado correctamente'
+                                : 'Cambios guardados',
+                          ),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) Navigator.of(context).pop();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(AdminApp._extractErrorMessage(e)),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Guardar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   // Modal para agregar producto al inventario
@@ -7994,16 +9382,25 @@ class AdminApp extends StatelessWidget {
     String? selectedCategory;
     String selectedUnit = 'g';
     final inventoryUnitOptions = [
-      'kg', 'g', 'L', 'ml',
-      'pza', 'Pieza', 'Piezas', 'Unidad', 'Unidades',
+      'kg',
+      'g',
+      'L',
+      'ml',
+      'pza',
+      'Pieza',
+      'Piezas',
+      'Unidad',
+      'Unidades',
     ];
     final contenidoPorPiezaController = TextEditingController();
     String? selectedUnidadContenido;
-    final categoryOptions = controller.inventoryCategories
-        .where((cat) => cat != 'todos')
-        .toList();
-    if (categoryOptions.isNotEmpty) {
-      selectedCategory = categoryOptions.first;
+    {
+      final first = controller.inventoryCategories
+          .where((c) => c != 'todos')
+          .toList();
+      if (first.isNotEmpty) {
+        selectedCategory = first.first;
+      }
     }
     bool unidadEsPiezaForm() =>
         selectedUnit == 'pza' ||
@@ -8016,463 +9413,506 @@ class AdminApp extends StatelessWidget {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-        title: Text(
-          'Agregar al Inventario',
-          style: TextStyle(fontSize: isTablet ? 20 : 18),
-        ),
-        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
-        content: SizedBox(
-          width: isTablet ? 500 : double.infinity,
-          child: SingleChildScrollView(
-            child: Form(
-              key: formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                SizedBox(height: isTablet ? 16 : 12),
-                TextFormField(
-                  controller: nameController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Nombre del Producto *',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                    floatingLabelBehavior: FloatingLabelBehavior.auto,
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    if (value.trim().length < 2) {
-                      return 'Mínimo 2 caracteres';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: codigoBarrasController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Código de barras (opcional)',
-                    border: OutlineInputBorder(),
-                    hintText: 'Único por línea de producto; para buscar al registrar entradas',
-                  ),
-                  keyboardType: TextInputType.text,
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                DropdownButtonFormField<String>(
-                  value: selectedCategory,
-                  decoration: const InputDecoration(
-                    labelText: 'Categoría *',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: controller.inventoryCategories
-                      .where((cat) => cat != 'todos')
-                      .map((category) {
-                        return DropdownMenuItem(
-                          value: category,
-                          child: Text(category),
-                        );
-                      })
-                      .toList(),
-                  onChanged: (value) {
-                    setDialogState(() => selectedCategory = value);
-                  },
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingSM),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () {
-                      _showAddCategoryDialog(context, controller);
-                    },
-                    icon: const Icon(Icons.add_circle_outline, size: 18),
-                    label: const Text('Crear categoría'),
-                  ),
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                DropdownButtonFormField<String>(
-                  value: selectedUnit,
-                  decoration: InputDecoration(
-                    labelText: 'Unidad *',
-                    border: const OutlineInputBorder(),
-                    hintText: 'kg, g, ml, pza, piezas...',
-                    helperText: unidadEsPiezaForm()
-                        ? 'Stock en número de envases. Abajo: cuánto trae cada uno (kg, L, piezas…).'
-                        : 'Para envases: elige Pieza o pza y define contenido por envase.',
-                  ),
-                  items: inventoryUnitOptions
-                      .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                      .toList(),
-                  onChanged: (value) {
-                    if (value != null) setDialogState(() => selectedUnit = value);
-                  },
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    return null;
-                  },
-                ),
-                if (unidadEsPiezaForm()) ...[
-                  SizedBox(height: AppTheme.spacingMD),
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.all(AppTheme.spacingMD),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                        width: 1,
+          title: Text(
+            'Agregar al Inventario',
+            style: TextStyle(fontSize: isTablet ? 20 : 18),
+          ),
+          contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+          content: SizedBox(
+            width: isTablet ? 500 : double.infinity,
+            child: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: isTablet ? 16 : 12),
+                    TextFormField(
+                      controller: nameController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre del Producto *',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 16,
+                        ),
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        if (value.trim().length < 2) {
+                          return 'Mínimo 2 caracteres';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: codigoBarrasController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Código de barras (opcional)',
+                        border: OutlineInputBorder(),
+                        hintText:
+                            'Único por línea de producto; para buscar al registrar entradas',
+                      ),
+                      keyboardType: TextInputType.text,
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    DropdownButtonFormField<String>(
+                      value: AdminApp._resolveInventoryCategoryDropdownValue(
+                        controller,
+                        selectedCategory,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Categoría *',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: controller.inventoryCategories
+                          .where((cat) => cat != 'todos')
+                          .map((category) {
+                            return DropdownMenuItem(
+                              value: category,
+                              child: Text(category),
+                            );
+                          })
+                          .toList(),
+                      onChanged: (value) {
+                        setDialogState(() => selectedCategory = value);
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () {
+                          _showAddCategoryDialog(
+                            context,
+                            controller,
+                            onCategoryCreated: (name) {
+                              setDialogState(() => selectedCategory = name);
+                            },
+                          );
+                        },
+                        icon: const Icon(Icons.add_circle_outline, size: 18),
+                        label: const Text('Crear categoría'),
                       ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14 : 13,
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.onSurface,
+                    SizedBox(height: AppTheme.spacingMD),
+                    DropdownButtonFormField<String>(
+                      value: selectedUnit,
+                      decoration: InputDecoration(
+                        labelText: 'Unidad *',
+                        border: const OutlineInputBorder(),
+                        hintText: 'kg, g, ml, pza, piezas...',
+                        helperText: unidadEsPiezaForm()
+                            ? 'Stock en número de envases. Abajo: cuánto trae cada uno (kg, L, piezas…).'
+                            : 'Para envases: elige Pieza o pza y define contenido por envase.',
+                      ),
+                      items: inventoryUnitOptions
+                          .map(
+                            (u) => DropdownMenuItem(value: u, child: Text(u)),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null)
+                          setDialogState(() => selectedUnit = value);
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        return null;
+                      },
+                    ),
+                    if (unidadEsPiezaForm()) ...[
+                      SizedBox(height: AppTheme.spacingMD),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(AppTheme.spacingMD),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                            width: 1,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad del ingrediente.',
-                          style: TextStyle(
-                            fontSize: isTablet ? 12 : 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        SizedBox(height: AppTheme.spacingMD),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            TextFormField(
-                              controller: contenidoPorPiezaController,
-                              textInputAction: TextInputAction.next,
-                              onFieldSubmitted: (_) =>
-                                  FocusScope.of(context).nextFocus(),
-                              decoration: const InputDecoration(
-                                labelText: 'Cantidad por envase',
-                                border: OutlineInputBorder(),
-                                hintText: 'Ej: 5 kg, 12 piezas…',
+                            Text(
+                              'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14 : 13,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
-                              keyboardType: TextInputType.number,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad del ingrediente.',
+                              style: TextStyle(
+                                fontSize: isTablet ? 12 : 11,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                             ),
                             SizedBox(height: AppTheme.spacingMD),
-                            DropdownButtonFormField<String>(
-                              value: selectedUnidadContenido,
-                              decoration: const InputDecoration(
-                                labelText: 'Unidad',
-                                border: OutlineInputBorder(),
-                                hintText: 'kg, ml, piezas…',
-                              ),
-                              items: inventarioUnidadContenidoOpcionesConActual(
-                                      selectedUnidadContenido)
-                                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                                  .toList(),
-                              onChanged: (value) {
-                                setDialogState(() => selectedUnidadContenido = value);
-                              },
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                TextFormField(
+                                  controller: contenidoPorPiezaController,
+                                  textInputAction: TextInputAction.next,
+                                  onFieldSubmitted: (_) =>
+                                      FocusScope.of(context).nextFocus(),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Cantidad por envase',
+                                    border: OutlineInputBorder(),
+                                    hintText: 'Ej: 5 kg, 12 piezas…',
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                ),
+                                SizedBox(height: AppTheme.spacingMD),
+                                DropdownButtonFormField<String>(
+                                  value: selectedUnidadContenido,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Unidad',
+                                    border: OutlineInputBorder(),
+                                    hintText: 'kg, ml, piezas…',
+                                  ),
+                                  items:
+                                      inventarioUnidadContenidoOpcionesConActual(
+                                            selectedUnidadContenido,
+                                          )
+                                          .map(
+                                            (u) => DropdownMenuItem(
+                                              value: u,
+                                              child: Text(u),
+                                            ),
+                                          )
+                                          .toList(),
+                                  onChanged: (value) {
+                                    setDialogState(
+                                      () => selectedUnidadContenido = value,
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
+                      ),
+                    ],
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: stockController,
+                      onChanged: (_) => setDialogState(() {}),
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: InputDecoration(
+                        labelText: unidadEsPiezaForm()
+                            ? 'Stock actual (número de piezas) *'
+                            : 'Stock Actual *',
+                        border: const OutlineInputBorder(),
+                        hintText: unidadEsPiezaForm()
+                            ? 'Ej: 6 envases = 6'
+                            : null,
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
                     ),
-                  ),
-                ],
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: stockController,
-                  onChanged: (_) => setDialogState(() {}),
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: InputDecoration(
-                    labelText: unidadEsPiezaForm() ? 'Stock actual (número de piezas) *' : 'Stock Actual *',
-                    border: const OutlineInputBorder(),
-                    hintText: unidadEsPiezaForm() ? 'Ej: 6 envases = 6' : null,
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final stock = double.tryParse(value);
-                    if (stock == null || stock < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: minStockController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Stock Mínimo *',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final stock = double.tryParse(value);
-                    if (stock == null || stock < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: maxStockController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Stock Máximo *',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final stock = double.tryParse(value);
-                    if (stock == null || stock < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: costController,
-                  onChanged: (_) => setDialogState(() {}),
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Costo Unitario (\$) *',
-                    border: OutlineInputBorder(),
-                    prefixText: '\$',
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final cost = double.tryParse(value);
-                    if (cost == null || cost < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingSM),
-                Builder(
-                  builder: (_) {
-                    final stock = double.tryParse(stockController.text.trim()) ?? 0;
-                    final costText = costController.text
-                        .trim()
-                        .replaceAll('\$', '')
-                        .replaceAll(' ', '');
-                    final cost = double.tryParse(costText) ?? 0;
-                    final total = stock * cost;
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: minStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock Mínimo *',
+                        border: OutlineInputBorder(),
                       ),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: maxStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock Máximo *',
+                        border: OutlineInputBorder(),
                       ),
-                      child: Text(
-                        'Costo Total: \$${total.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: costController,
+                      onChanged: (_) => setDialogState(() {}),
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Costo Unitario (\$) *',
+                        border: OutlineInputBorder(),
+                        prefixText: '\$',
                       ),
-                    );
-                  },
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final cost = double.tryParse(value);
+                        if (cost == null || cost < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingSM),
+                    Builder(
+                      builder: (_) {
+                        final stock =
+                            double.tryParse(stockController.text.trim()) ?? 0;
+                        final costText = costController.text
+                            .trim()
+                            .replaceAll('\$', '')
+                            .replaceAll(' ', '');
+                        final cost = double.tryParse(costText) ?? 0;
+                        final total = stock * cost;
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                                .withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                            ),
+                          ),
+                          child: Text(
+                            'Costo Total: \$${total.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: supplierController,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Proveedor',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: supplierController,
-                  textInputAction: TextInputAction.done,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).unfocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Proveedor',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
+              ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (formKey.currentState!.validate()) {
-                // Validar que se haya seleccionado una categoría
-                if (selectedCategory == null || selectedCategory!.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Por favor selecciona una categoría'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                
-                final stock = double.parse(stockController.text.trim());
-                final minStock = double.parse(minStockController.text.trim());
-                final maxStock = double.parse(maxStockController.text.trim());
-                // Limpiar el símbolo $ si está presente
-                final costText = costController.text
-                    .trim()
-                    .replaceAll('\$', '')
-                    .replaceAll(' ', '');
-                final cost = double.parse(costText);
-                final totalPrice = stock * cost;
-
-                // Determinar status según stock
-                String status;
-                if (stock <= 0) {
-                  status = InventoryStatus.outOfStock;
-                } else if (stock < minStock) {
-                  status = InventoryStatus.lowStock;
-                } else {
-                  status = InventoryStatus.available;
-                }
-
-                final codigoBarras = codigoBarrasController.text.trim();
-                final bool unidadEsPieza = selectedUnit == 'pza' ||
-                    selectedUnit == 'Pieza' ||
-                    selectedUnit == 'Piezas' ||
-                    selectedUnit == 'Unidad' ||
-                    selectedUnit == 'Unidades';
-                double? contenidoPorPieza;
-                String? unidadContenido;
-                final uCont = selectedUnidadContenido;
-                if (unidadEsPieza &&
-                    contenidoPorPiezaController.text.trim().isNotEmpty &&
-                    uCont != null &&
-                    uCont.isNotEmpty) {
-                  contenidoPorPieza = double.tryParse(contenidoPorPiezaController.text.trim());
-                  if (contenidoPorPieza != null && contenidoPorPieza > 0) {
-                    unidadContenido = uCont;
-                  } else {
-                    contenidoPorPieza = null;
-                    unidadContenido = null;
-                  }
-                }
-                final newItem = InventoryItem(
-                  id: 'temp', // Temporal, se actualizará desde el backend
-                  name: nameController.text,
-                  codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
-                  category: selectedCategory!,
-                  currentStock: stock,
-                  minStock: minStock,
-                  maxStock: maxStock,
-                  minimumStock: minStock,
-                  unit: selectedUnit,
-                  cost: cost,
-                  price: totalPrice,
-                  unitPrice: cost,
-                  supplier: supplierController.text.isEmpty
-                      ? null
-                      : supplierController.text,
-                  lastRestock: date_utils.AppDateUtils.nowCdmx(),
-                  status: status,
-                  contenidoPorPieza: contenidoPorPieza,
-                  unidadContenido: unidadContenido,
-                );
-                // Mostrar indicador de carga
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) =>
-                      const Center(child: CircularProgressIndicator()),
-                );
-
-                try {
-                  await controller.addInventoryItem(newItem);
-                  
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  // Cerrar diálogo de creación
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (formKey.currentState!.validate()) {
+                  // Validar que se haya seleccionado una categoría
+                  if (selectedCategory == null || selectedCategory!.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text(
-                          'Producto agregado al inventario exitosamente',
-                        ),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Error al crear item: ${_extractErrorMessage(e)}',
-                        ),
+                        content: Text('Por favor selecciona una categoría'),
                         backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 5),
                       ),
                     );
+                    return;
+                  }
+
+                  final stock = double.parse(stockController.text.trim());
+                  final minStock = double.parse(minStockController.text.trim());
+                  final maxStock = double.parse(maxStockController.text.trim());
+                  // Limpiar el símbolo $ si está presente
+                  final costText = costController.text
+                      .trim()
+                      .replaceAll('\$', '')
+                      .replaceAll(' ', '');
+                  final cost = double.parse(costText);
+                  final totalPrice = stock * cost;
+
+                  // Determinar status según stock
+                  String status;
+                  if (stock <= 0) {
+                    status = InventoryStatus.outOfStock;
+                  } else if (stock < minStock) {
+                    status = InventoryStatus.lowStock;
+                  } else {
+                    status = InventoryStatus.available;
+                  }
+
+                  final codigoBarras = codigoBarrasController.text.trim();
+                  final bool unidadEsPieza =
+                      selectedUnit == 'pza' ||
+                      selectedUnit == 'Pieza' ||
+                      selectedUnit == 'Piezas' ||
+                      selectedUnit == 'Unidad' ||
+                      selectedUnit == 'Unidades';
+                  double? contenidoPorPieza;
+                  String? unidadContenido;
+                  final uCont = selectedUnidadContenido;
+                  if (unidadEsPieza &&
+                      contenidoPorPiezaController.text.trim().isNotEmpty &&
+                      uCont != null &&
+                      uCont.isNotEmpty) {
+                    contenidoPorPieza = double.tryParse(
+                      contenidoPorPiezaController.text.trim(),
+                    );
+                    if (contenidoPorPieza != null && contenidoPorPieza > 0) {
+                      unidadContenido = uCont;
+                    } else {
+                      contenidoPorPieza = null;
+                      unidadContenido = null;
+                    }
+                  }
+                  final newItem = InventoryItem(
+                    id: 'temp', // Temporal, se actualizará desde el backend
+                    name: nameController.text,
+                    codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
+                    category: selectedCategory!,
+                    currentStock: stock,
+                    minStock: minStock,
+                    maxStock: maxStock,
+                    minimumStock: minStock,
+                    unit: selectedUnit,
+                    cost: cost,
+                    price: totalPrice,
+                    unitPrice: cost,
+                    supplier: supplierController.text.isEmpty
+                        ? null
+                        : supplierController.text,
+                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
+                    status: status,
+                    contenidoPorPieza: contenidoPorPieza,
+                    unidadContenido: unidadContenido,
+                  );
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
+                  );
+
+                  try {
+                    await controller.addInventoryItem(newItem);
+
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    // Cerrar diálogo de creación
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Producto agregado al inventario exitosamente',
+                          ),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Error al crear item: ${_extractErrorMessage(e)}',
+                          ),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
                   }
                 }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Agregar al Inventario'),
             ),
-            child: const Text('Agregar al Inventario'),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
     );
   }
 
@@ -8483,6 +9923,16 @@ class AdminApp extends StatelessWidget {
     AdminController controller,
     bool isTablet,
   ) {
+    if (item.isFormulated) {
+      _showFormulatedInventoryProductDialog(
+        context,
+        controller,
+        isTablet,
+        editing: item,
+      );
+      return;
+    }
+
     // Helper para formatear números sin decimales innecesarios
     String formatNumber(double value, {int maxDecimals = 2}) {
       if (value == value.toInt()) {
@@ -8496,7 +9946,9 @@ class AdminApp extends StatelessWidget {
 
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item.name);
-    final codigoBarrasController = TextEditingController(text: item.codigoBarras ?? '');
+    final codigoBarrasController = TextEditingController(
+      text: item.codigoBarras ?? '',
+    );
     final stockController = TextEditingController(
       text: formatNumber(item.currentStock),
     );
@@ -8516,7 +9968,8 @@ class AdminApp extends StatelessWidget {
           : '',
     );
     String? selectedUnidadContenido = item.unidadContenido?.trim();
-    final unidadEsPieza = item.unit == 'pza' ||
+    final unidadEsPieza =
+        item.unit == 'pza' ||
         item.unit == 'Pieza' ||
         item.unit == 'Piezas' ||
         item.unit == 'Unidad' ||
@@ -8526,290 +9979,319 @@ class AdminApp extends StatelessWidget {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Text(
-                'Editar ${item.name}',
-                style: TextStyle(fontSize: isTablet ? 20 : 18),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'Editar ${item.name}',
+                  style: TextStyle(fontSize: isTablet ? 20 : 18),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-            IconButton(
-              icon: Icon(Icons.close, size: isTablet ? 24 : 20),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ],
-        ),
-        contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
-        content: SizedBox(
-          width: isTablet ? 500 : double.infinity,
-          child: SingleChildScrollView(
-            child: Form(
-              key: formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                TextFormField(
-                  controller: nameController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Nombre *',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    if (value.trim().length < 2) {
-                      return 'Mínimo 2 caracteres';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: codigoBarrasController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Código de barras (opcional)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: stockController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: InputDecoration(
-                    labelText: unidadEsPieza ? 'Stock actual (número de piezas) *' : 'Stock Actual *',
-                    border: const OutlineInputBorder(),
-                    hintText: unidadEsPieza ? 'Ej: 6 envases = 6' : null,
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final stock = double.tryParse(value);
-                    if (stock == null || stock < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                if (unidadEsPieza) ...[
-                  SizedBox(height: AppTheme.spacingMD),
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.all(AppTheme.spacingMD),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                        width: 1,
+              IconButton(
+                icon: Icon(Icons.close, size: isTablet ? 24 : 20),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+          contentPadding: EdgeInsets.all(isTablet ? 24 : 16),
+          content: SizedBox(
+            width: isTablet ? 500 : double.infinity,
+            child: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: nameController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre *',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        if (value.trim().length < 2) {
+                          return 'Mínimo 2 caracteres';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: codigoBarrasController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Código de barras (opcional)',
+                        border: OutlineInputBorder(),
                       ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14 : 13,
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.onSurface,
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: stockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: InputDecoration(
+                        labelText: unidadEsPieza
+                            ? 'Stock actual (número de piezas) *'
+                            : 'Stock Actual *',
+                        border: const OutlineInputBorder(),
+                        hintText: unidadEsPieza ? 'Ej: 6 envases = 6' : null,
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    if (unidadEsPieza) ...[
+                      SizedBox(height: AppTheme.spacingMD),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(AppTheme.spacingMD),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMD,
+                          ),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                            width: 1,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad de la receta.',
-                          style: TextStyle(
-                            fontSize: isTablet ? 12 : 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        SizedBox(height: AppTheme.spacingMD),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            TextFormField(
-                              controller: contenidoPorPiezaController,
-                              textInputAction: TextInputAction.next,
-                              onFieldSubmitted: (_) =>
-                                  FocusScope.of(context).nextFocus(),
-                              decoration: const InputDecoration(
-                                labelText: 'Cantidad por envase',
-                                border: OutlineInputBorder(),
-                                hintText: 'Ej: 5 kg, 12 piezas…',
+                            Text(
+                              'Contenido de cada envase (kg, g, L, ml, piezas o unidades)',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14 : 13,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
-                              keyboardType: TextInputType.number,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Ej.: 5 kg por bolsa, 2 L por garrafón, o 12 piezas por caja. Así el descuento en recetas cuadra con la unidad de la receta.',
+                              style: TextStyle(
+                                fontSize: isTablet ? 12 : 11,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                             ),
                             SizedBox(height: AppTheme.spacingMD),
-                            DropdownButtonFormField<String>(
-                              value: selectedUnidadContenido,
-                              decoration: const InputDecoration(
-                                labelText: 'Unidad',
-                                border: OutlineInputBorder(),
-                                hintText: 'kg, ml, piezas…',
-                              ),
-                              items: inventarioUnidadContenidoOpcionesConActual(
-                                      selectedUnidadContenido)
-                                  .map((u) => DropdownMenuItem(value: u, child: Text(u)))
-                                  .toList(),
-                              onChanged: (value) {
-                                setDialogState(() => selectedUnidadContenido = value);
-                              },
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                TextFormField(
+                                  controller: contenidoPorPiezaController,
+                                  textInputAction: TextInputAction.next,
+                                  onFieldSubmitted: (_) =>
+                                      FocusScope.of(context).nextFocus(),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Cantidad por envase',
+                                    border: OutlineInputBorder(),
+                                    hintText: 'Ej: 5 kg, 12 piezas…',
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                ),
+                                SizedBox(height: AppTheme.spacingMD),
+                                DropdownButtonFormField<String>(
+                                  value: selectedUnidadContenido,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Unidad',
+                                    border: OutlineInputBorder(),
+                                    hintText: 'kg, ml, piezas…',
+                                  ),
+                                  items:
+                                      inventarioUnidadContenidoOpcionesConActual(
+                                            selectedUnidadContenido,
+                                          )
+                                          .map(
+                                            (u) => DropdownMenuItem(
+                                              value: u,
+                                              child: Text(u),
+                                            ),
+                                          )
+                                          .toList(),
+                                  onChanged: (value) {
+                                    setDialogState(
+                                      () => selectedUnidadContenido = value,
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: minStockController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Stock Mínimo *',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final stock = double.tryParse(value);
-                    if (stock == null || stock < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: maxStockController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Stock Máximo *',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Campo obligatorio';
-                    }
-                    final stock = double.tryParse(value);
-                    if (stock == null || stock < 0) {
-                      return 'Debe ser un número válido';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: costController,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).nextFocus(),
-                  decoration: const InputDecoration(
-                      labelText: 'Costo Unitario (\$)',
-                    border: OutlineInputBorder(),
-                    prefixText: '\$',
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                        // Permitir campo vacío (se interpretará como 0)
+                      ),
+                    ],
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: minStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock Mínimo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
                         return null;
-                    }
-                    final cost = double.tryParse(value);
-                    if (cost == null || cost < 0) {
-                        return 'Debe ser un número válido mayor o igual a 0';
-                    }
-                    return null;
-                  },
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: maxStockController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Stock Máximo *',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Campo obligatorio';
+                        }
+                        final stock = double.tryParse(value);
+                        if (stock == null || stock < 0) {
+                          return 'Debe ser un número válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: costController,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Costo Unitario (\$)',
+                        border: OutlineInputBorder(),
+                        prefixText: '\$',
+                      ),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          // Permitir campo vacío (se interpretará como 0)
+                          return null;
+                        }
+                        final cost = double.tryParse(value);
+                        if (cost == null || cost < 0) {
+                          return 'Debe ser un número válido mayor o igual a 0';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: AppTheme.spacingMD),
+                    TextFormField(
+                      controller: supplierController,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+                      decoration: const InputDecoration(
+                        labelText: 'Proveedor',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(height: AppTheme.spacingMD),
-                TextFormField(
-                  controller: supplierController,
-                  textInputAction: TextInputAction.done,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).unfocus(),
-                  decoration: const InputDecoration(
-                    labelText: 'Proveedor',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
+              ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (formKey.currentState!.validate()) {
-                // Mostrar indicador de carga
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) =>
-                      const Center(child: CircularProgressIndicator()),
-                );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (formKey.currentState!.validate()) {
+                  // Mostrar indicador de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
+                  );
 
-                try {
-                  final stock = double.parse(stockController.text.trim());
-                  final minStock = double.parse(minStockController.text.trim());
-                  final maxStock = double.parse(maxStockController.text.trim());
-                  // Limpiar el símbolo $ si está presente
-                  final costText = costController.text
-                      .trim()
-                      .replaceAll('\$', '')
-                      .replaceAll(' ', '');
-                  // Si está vacío, interpretar como 0
-                  final cost = costText.isEmpty ? 0.0 : double.parse(costText);
-                  final totalPrice = stock * cost;
+                  try {
+                    final stock = double.parse(stockController.text.trim());
+                    final minStock = double.parse(
+                      minStockController.text.trim(),
+                    );
+                    final maxStock = double.parse(
+                      maxStockController.text.trim(),
+                    );
+                    // Limpiar el símbolo $ si está presente
+                    final costText = costController.text
+                        .trim()
+                        .replaceAll('\$', '')
+                        .replaceAll(' ', '');
+                    // Si está vacío, interpretar como 0
+                    final cost = costText.isEmpty
+                        ? 0.0
+                        : double.parse(costText);
+                    final totalPrice = stock * cost;
 
-                  // Determinar status según stock
-                  String status;
-                  if (stock <= 0) {
-                    status = InventoryStatus.outOfStock;
-                  } else if (stock < minStock) {
-                    status = InventoryStatus.lowStock;
-                  } else {
-                    status = InventoryStatus.available;
-                  }
+                    // Determinar status según stock
+                    String status;
+                    if (stock <= 0) {
+                      status = InventoryStatus.outOfStock;
+                    } else if (stock < minStock) {
+                      status = InventoryStatus.lowStock;
+                    } else {
+                      status = InventoryStatus.available;
+                    }
 
-                  final codigoBarras = codigoBarrasController.text.trim();
-                  double? contenidoPorPieza;
-                  String? unidadContenido;
-                  if (unidadEsPieza) {
-                    final uContEdit = selectedUnidadContenido;
-                    if (contenidoPorPiezaController.text.trim().isNotEmpty &&
-                        uContEdit != null &&
-                        uContEdit.isNotEmpty) {
-                      contenidoPorPieza =
-                          double.tryParse(contenidoPorPiezaController.text.trim());
-                      if (contenidoPorPieza != null && contenidoPorPieza > 0) {
-                        unidadContenido = uContEdit;
+                    final codigoBarras = codigoBarrasController.text.trim();
+                    double? contenidoPorPieza;
+                    String? unidadContenido;
+                    if (unidadEsPieza) {
+                      final uContEdit = selectedUnidadContenido;
+                      if (contenidoPorPiezaController.text.trim().isNotEmpty &&
+                          uContEdit != null &&
+                          uContEdit.isNotEmpty) {
+                        contenidoPorPieza = double.tryParse(
+                          contenidoPorPiezaController.text.trim(),
+                        );
+                        if (contenidoPorPieza != null &&
+                            contenidoPorPieza > 0) {
+                          unidadContenido = uContEdit;
+                        } else {
+                          contenidoPorPieza = null;
+                          unidadContenido = null;
+                        }
                       } else {
                         contenidoPorPieza = null;
                         unidadContenido = null;
@@ -8818,70 +10300,66 @@ class AdminApp extends StatelessWidget {
                       contenidoPorPieza = null;
                       unidadContenido = null;
                     }
-                  } else {
-                    contenidoPorPieza = null;
-                    unidadContenido = null;
-                  }
-                  final updatedItem = item.copyWith(
-                    name: nameController.text.trim(),
-                    codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
-                    currentStock: stock,
-                    minStock: minStock,
-                    maxStock: maxStock,
-                    minimumStock: minStock,
-                    cost: cost,
-                    price: totalPrice,
-                    unitPrice: cost,
-                    supplier: supplierController.text.isEmpty
-                        ? null
-                        : supplierController.text,
-                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
-                    status: status,
-                    contenidoPorPieza: contenidoPorPieza,
-                    unidadContenido: unidadContenido,
-                  );
-                  await controller.updateInventoryItem(updatedItem);
-                  
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  // Cerrar diálogo de edición
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Inventario actualizado exitosamente'),
-                        backgroundColor: Colors.green,
-                      ),
+                    final updatedItem = item.copyWith(
+                      name: nameController.text.trim(),
+                      codigoBarras: codigoBarras.isEmpty ? null : codigoBarras,
+                      currentStock: stock,
+                      minStock: minStock,
+                      maxStock: maxStock,
+                      minimumStock: minStock,
+                      cost: cost,
+                      price: totalPrice,
+                      unitPrice: cost,
+                      supplier: supplierController.text.isEmpty
+                          ? null
+                          : supplierController.text,
+                      lastRestock: date_utils.AppDateUtils.nowCdmx(),
+                      status: status,
+                      contenidoPorPieza: contenidoPorPieza,
+                      unidadContenido: unidadContenido,
                     );
-                  }
-                } catch (e) {
-                  // Cerrar diálogo de carga
-                  if (context.mounted) Navigator.of(context).pop();
-                  
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Error al actualizar inventario: ${_extractErrorMessage(e)}',
+                    await controller.updateInventoryItem(updatedItem);
+
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    // Cerrar diálogo de edición
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Inventario actualizado exitosamente'),
+                          backgroundColor: Colors.green,
                         ),
-                        backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 5),
-                      ),
-                    );
+                      );
+                    }
+                  } catch (e) {
+                    // Cerrar diálogo de carga
+                    if (context.mounted) Navigator.of(context).pop();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Error al actualizar inventario: ${_extractErrorMessage(e)}',
+                          ),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
                   }
                 }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Guardar Cambios'),
             ),
-            child: const Text('Guardar Cambios'),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
@@ -8899,18 +10377,24 @@ class AdminApp extends StatelessWidget {
         builder: (context, setState) {
           final query = codigoController.text.trim().toLowerCase();
           final allWithBarcode = controller.inventory
-              .where((i) => i.codigoBarras != null && i.codigoBarras!.trim().isNotEmpty)
+              .where(
+                (i) =>
+                    i.codigoBarras != null && i.codigoBarras!.trim().isNotEmpty,
+              )
               .toList();
           final matches = query.isEmpty
               ? <InventoryItem>[]
               : allWithBarcode
-                  .where((i) => (i.codigoBarras ?? '').toLowerCase().contains(query))
-                  .toList();
+                    .where(
+                      (i) =>
+                          (i.codigoBarras ?? '').toLowerCase().contains(query),
+                    )
+                    .toList();
           final exactMatches = query.isEmpty
               ? <InventoryItem>[]
               : allWithBarcode
-                  .where((i) => (i.codigoBarras ?? '').toLowerCase() == query)
-                  .toList();
+                    .where((i) => (i.codigoBarras ?? '').toLowerCase() == query)
+                    .toList();
           final exactMatch = exactMatches.isEmpty ? null : exactMatches.first;
 
           void openItemCard(InventoryItem item) {
@@ -8926,7 +10410,9 @@ class AdminApp extends StatelessWidget {
               return;
             }
             Navigator.of(dialogContext).pop();
-            final item = await controller.getInventoryItemByCodigoBarras(codigo);
+            final item = await controller.getInventoryItemByCodigoBarras(
+              codigo,
+            );
             if (!context.mounted) return;
             if (item == null) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -8979,9 +10465,8 @@ class AdminApp extends StatelessWidget {
                                 query.isEmpty
                                     ? 'Ingrese el número de código de barras para ver coincidencias'
                                     : 'Sin coincidencias para "$query"',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: AppColors.textSecondary,
-                                ),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: AppColors.textSecondary),
                                 textAlign: TextAlign.center,
                               ),
                             ),
@@ -8993,10 +10478,16 @@ class AdminApp extends StatelessWidget {
                               final item = matches[index];
                               return ListTile(
                                 dense: true,
-                                leading: Icon(Icons.inventory_2, size: 20, color: AppColors.primary),
+                                leading: Icon(
+                                  Icons.inventory_2,
+                                  size: 20,
+                                  color: AppColors.primary,
+                                ),
                                 title: Text(
                                   item.name,
-                                  style: const TextStyle(fontWeight: FontWeight.w500),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -9058,8 +10549,15 @@ class AdminApp extends StatelessWidget {
               ),
               child: SingleChildScrollView(
                 child: Padding(
-                  padding: EdgeInsets.all(isTablet ? AppTheme.spacingMD : AppTheme.spacingSM),
-                  child: _buildInventoryItemCard(ctx, displayItem, controller, isTablet),
+                  padding: EdgeInsets.all(
+                    isTablet ? AppTheme.spacingMD : AppTheme.spacingSM,
+                  ),
+                  child: _buildInventoryItemCard(
+                    ctx,
+                    displayItem,
+                    controller,
+                    isTablet,
+                  ),
                 ),
               ),
             ),
@@ -9158,44 +10656,20 @@ class AdminApp extends StatelessWidget {
 
                 try {
                   final quantity = double.parse(quantityController.text);
-                  // Asegurar que el stock base nunca sea negativo para el cálculo
-                  final stockBase = item.currentStock < 0
-                      ? 0.0
-                      : item.currentStock;
-                  final newStock = isDecrease
-                      ? (stockBase - quantity).clamp(0.0, double.infinity)
-                      : stockBase + quantity;
 
-                  // Determinar status según nuevo stock
-                  String status;
-                  if (newStock <= 0) {
-                    status = InventoryStatus.outOfStock;
-                  } else if (newStock < item.minStock) {
-                    status = InventoryStatus.lowStock;
-                  } else {
-                    status = InventoryStatus.available;
-                  }
-
-                  final updatedItem = item.copyWith(
-                    currentStock: newStock,
-                    price: newStock * item.unitPrice,
-                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
-                    status: status,
-                  );
-                  
                   // Si es aumento, usar restockInventoryItem para registrar movimiento
                   if (!isDecrease) {
                     await controller.restockInventoryItem(item.id, quantity);
                   } else {
-                    await controller.updateInventoryItem(updatedItem);
+                    await controller.reduceInventoryStock(item.id, quantity);
                   }
-                  
+
                   // Cerrar diálogo de carga
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   // Cerrar diálogo de ajuste
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -9211,7 +10685,7 @@ class AdminApp extends StatelessWidget {
                 } catch (e) {
                   // Cerrar diálogo de carga
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -9267,13 +10741,13 @@ class AdminApp extends StatelessWidget {
 
               try {
                 await controller.deleteInventoryItem(item.id);
-                
+
                 // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 // Cerrar diálogo de confirmación
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -9285,7 +10759,7 @@ class AdminApp extends StatelessWidget {
               } catch (e) {
                 // Cerrar diálogo de carga
                 if (context.mounted) Navigator.of(context).pop();
-                
+
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -10186,13 +11660,15 @@ class AdminApp extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 print('🔵 Botón "Crear Usuario" presionado');
-                
+
                 // Validar que el formulario esté inicializado
                 if (formKey.currentState == null) {
                   print('❌ formKey.currentState es null');
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Error: El formulario no está inicializado. Por favor, intenta nuevamente.'),
+                      content: Text(
+                        'Error: El formulario no está inicializado. Por favor, intenta nuevamente.',
+                      ),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -10202,11 +11678,13 @@ class AdminApp extends StatelessWidget {
                 // Validar formulario
                 final isValid = formKey.currentState!.validate();
                 print('🔵 Validación del formulario: $isValid');
-                
+
                 if (!isValid) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Por favor, completa todos los campos requeridos correctamente'),
+                      content: Text(
+                        'Por favor, completa todos los campos requeridos correctamente',
+                      ),
                       backgroundColor: Colors.orange,
                       duration: Duration(seconds: 3),
                     ),
@@ -10256,13 +11734,15 @@ class AdminApp extends StatelessWidget {
                   );
                   return;
                 }
-                
+
                 print('🔵 Todos los campos son válidos. Creando usuario...');
                 print('🔵 Datos del usuario:');
                 print('  - Nombre: ${nameController.text.trim()}');
-                print('  - Username: ${usernameController.text.trim().toLowerCase()}');
+                print(
+                  '  - Username: ${usernameController.text.trim().toLowerCase()}',
+                );
                 print('  - Roles: $selectedRoles');
-                
+
                 // Mostrar indicador de carga
                 showDialog(
                   context: context,
@@ -10285,17 +11765,17 @@ class AdminApp extends StatelessWidget {
                     createdAt: date_utils.AppDateUtils.nowCdmx(),
                     createdBy: 'current_admin',
                   );
-                  
+
                   print('🔵 Llamando a controller.addUser...');
                   await controller.addUser(newUser);
                   print('✅ Usuario creado exitosamente');
-                  
+
                   // Cerrar diálogo de carga
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   // Cerrar diálogo de creación
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -10308,44 +11788,54 @@ class AdminApp extends StatelessWidget {
                 } catch (e, stackTrace) {
                   print('❌ Error al crear usuario: $e');
                   print('❌ Stack trace: $stackTrace');
-                  
+
                   // Cerrar diálogo de carga
                   if (context.mounted) Navigator.of(context).pop();
-                  
+
                   if (context.mounted) {
                     // Extraer mensaje de error más claro
                     String errorMessage = 'Error al crear usuario';
                     final errorStr = e.toString();
-                    
+
                     if (errorStr.contains('Error al obtener roles')) {
                       errorMessage =
                           'Error al obtener roles del sistema. Verifica que el backend esté funcionando correctamente.';
-                    } else if (errorStr.contains('Rol no encontrado') || 
-                               errorStr.contains('Roles no encontrados')) {
+                    } else if (errorStr.contains('Rol no encontrado') ||
+                        errorStr.contains('Roles no encontrados')) {
                       errorMessage =
                           'Uno o más roles seleccionados no existen en el sistema. Verifica los roles disponibles.';
-                    } else if (errorStr.contains('Error de conexión') || 
-                               errorStr.contains('No se pudo conectar') ||
-                               errorStr.contains('backend esté corriendo')) {
+                    } else if (errorStr.contains('Error de conexión') ||
+                        errorStr.contains('No se pudo conectar') ||
+                        errorStr.contains('backend esté corriendo')) {
                       errorMessage =
                           'No se pudo conectar al backend. Verifica que esté disponible en ${ApiConfig.baseUrl}';
                     } else if (errorStr.contains('401')) {
                       errorMessage =
                           'No autorizado. Por favor, inicia sesión nuevamente.';
                     } else if (errorStr.contains('403')) {
+                      errorMessage = 'No tienes permisos para crear usuarios.';
+                    } else if (errorStr.contains('username') ||
+                        errorStr.contains('ya existe')) {
                       errorMessage =
-                          'No tienes permisos para crear usuarios.';
-                    } else if (errorStr.contains('username') || 
-                               errorStr.contains('ya existe')) {
-                      errorMessage = 'El nombre de usuario ya existe. Por favor, elige otro.';
-                    } else if (errorStr.contains('Debe seleccionar al menos un rol')) {
-                      errorMessage = 'Debe seleccionar al menos un rol para el usuario.';
-                    } else if (errorStr.contains('El nombre no puede estar vacío')) {
+                          'El nombre de usuario ya existe. Por favor, elige otro.';
+                    } else if (errorStr.contains(
+                      'Debe seleccionar al menos un rol',
+                    )) {
+                      errorMessage =
+                          'Debe seleccionar al menos un rol para el usuario.';
+                    } else if (errorStr.contains(
+                      'El nombre no puede estar vacío',
+                    )) {
                       errorMessage = 'El nombre completo es obligatorio.';
-                    } else if (errorStr.contains('El nombre de usuario no puede estar vacío')) {
+                    } else if (errorStr.contains(
+                      'El nombre de usuario no puede estar vacío',
+                    )) {
                       errorMessage = 'El nombre de usuario es obligatorio.';
-                    } else if (errorStr.contains('La contraseña debe tener al menos')) {
-                      errorMessage = 'La contraseña debe tener al menos 6 caracteres.';
+                    } else if (errorStr.contains(
+                      'La contraseña debe tener al menos',
+                    )) {
+                      errorMessage =
+                          'La contraseña debe tener al menos 6 caracteres.';
                     } else {
                       // Extraer el mensaje más relevante
                       final match = RegExp(
@@ -10360,15 +11850,16 @@ class AdminApp extends StatelessWidget {
                           caseSensitive: false,
                         ).firstMatch(errorStr);
                         if (errorMatch != null) {
-                          errorMessage = errorMatch.group(1)?.trim() ?? errorMessage;
+                          errorMessage =
+                              errorMatch.group(1)?.trim() ?? errorMessage;
                         } else {
-                          errorMessage = errorStr.length > 150 
-                              ? '${errorStr.substring(0, 150)}...' 
+                          errorMessage = errorStr.length > 150
+                              ? '${errorStr.substring(0, 150)}...'
                               : errorStr;
                         }
                       }
                     }
-                    
+
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(errorMessage),
@@ -10551,7 +12042,9 @@ class AdminApp extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        date_utils.AppDateUtils.nowCdmx().isAfter(user.createdAt)
+                        date_utils.AppDateUtils.nowCdmx().isAfter(
+                              user.createdAt,
+                            )
                             ? _formatDate(date_utils.AppDateUtils.nowCdmx())
                             : _formatDate(user.createdAt),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -10618,13 +12111,13 @@ class AdminApp extends StatelessWidget {
                       isActive: isActive,
                     );
                     await controller.updateUser(updatedUser);
-                    
+
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     // Cerrar diálogo de edición
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -10636,7 +12129,7 @@ class AdminApp extends StatelessWidget {
                   } catch (e) {
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -10864,13 +12357,13 @@ class AdminApp extends StatelessWidget {
                       user.id,
                       passwordController.text,
                     );
-                    
+
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     // Cerrar diálogo de contraseña
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -10882,7 +12375,7 @@ class AdminApp extends StatelessWidget {
                   } catch (e) {
                     // Cerrar diálogo de carga
                     if (context.mounted) Navigator.of(context).pop();
-                    
+
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -11011,7 +12504,9 @@ class AdminApp extends StatelessWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Usuario "${user.name}" eliminado definitivamente'),
+                      content: Text(
+                        'Usuario "${user.name}" eliminado definitivamente',
+                      ),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -11052,7 +12547,7 @@ class AdminApp extends StatelessWidget {
   ) {
     // NOTA: La carga de tickets ya se hace en setCurrentView('tickets')
     // No llamar a loadTickets() aquí para evitar llamadas duplicadas y parpadeo
-    
+
     final filteredTickets = controller.filteredTickets;
 
     return SingleChildScrollView(
@@ -11088,7 +12583,9 @@ class AdminApp extends StatelessWidget {
                         width: buttonWidth,
                         child: ElevatedButton.icon(
                           onPressed: () {
-                            print('🔄 AdminView: Refrescando tickets manualmente...');
+                            print(
+                              '🔄 AdminView: Refrescando tickets manualmente...',
+                            );
                             controller.loadTickets();
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
@@ -11109,8 +12606,11 @@ class AdminApp extends StatelessWidget {
                       SizedBox(
                         width: buttonWidth,
                         child: ElevatedButton.icon(
-                          onPressed: () =>
-                              _showDownloadCSVDialog(context, controller, isTablet),
+                          onPressed: () => _showDownloadCSVDialog(
+                            context,
+                            controller,
+                            isTablet,
+                          ),
                           icon: const Icon(Icons.download),
                           label: const Text('Descargar CSV'),
                           style: ElevatedButton.styleFrom(
@@ -11304,7 +12804,9 @@ class AdminApp extends StatelessWidget {
                   onTap: () async {
                     final date = await showDatePicker(
                       context: context,
-                      initialDate: controller.ticketStartDate ?? date_utils.AppDateUtils.nowCdmx(),
+                      initialDate:
+                          controller.ticketStartDate ??
+                          date_utils.AppDateUtils.nowCdmx(),
                       firstDate: DateTime(2020),
                       lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
@@ -11314,7 +12816,8 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final endDate =
-                          controller.ticketEndDate ?? date_utils.AppDateUtils.nowCdmx();
+                          controller.ticketEndDate ??
+                          date_utils.AppDateUtils.nowCdmx();
                       controller.setTicketDateRange(date, endDate);
                     }
                   },
@@ -11345,7 +12848,9 @@ class AdminApp extends StatelessWidget {
                   onTap: () async {
                     final date = await showDatePicker(
                       context: context,
-                      initialDate: controller.ticketEndDate ?? date_utils.AppDateUtils.nowCdmx(),
+                      initialDate:
+                          controller.ticketEndDate ??
+                          date_utils.AppDateUtils.nowCdmx(),
                       firstDate: controller.ticketStartDate ?? DateTime(2020),
                       lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
@@ -11355,7 +12860,8 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final startDate =
-                          controller.ticketStartDate ?? date_utils.AppDateUtils.nowCdmx();
+                          controller.ticketStartDate ??
+                          date_utils.AppDateUtils.nowCdmx();
                       controller.setTicketDateRange(startDate, date);
                     }
                   },
@@ -11394,7 +12900,7 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
   ) {
     final periodoTexto = _getPeriodoTexto(controller.selectedTicketPeriod);
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -11420,13 +12926,13 @@ class AdminApp extends StatelessWidget {
                   builder: (context) =>
                       const Center(child: CircularProgressIndicator()),
                 );
-                
+
                 await controller.exportTicketsToCSV();
-                
+
                 // Cerrar indicador de carga
                 if (context.mounted) {
                   Navigator.of(context).pop();
-                  
+
                   // Mostrar mensaje de éxito
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -11440,7 +12946,7 @@ class AdminApp extends StatelessWidget {
                 // Cerrar indicador de carga si está abierto
                 if (context.mounted) {
                   Navigator.of(context).pop();
-                  
+
                   // Mostrar mensaje de error
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -11484,7 +12990,7 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
   ) {
     final periodoTexto = _getPeriodoTexto(controller.selectedCashClosePeriod);
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -11510,13 +13016,13 @@ class AdminApp extends StatelessWidget {
                   builder: (context) =>
                       const Center(child: CircularProgressIndicator()),
                 );
-                
+
                 await controller.exportCashClosuresToCSV();
-                
+
                 // Cerrar indicador de carga
                 if (context.mounted) {
                   Navigator.of(context).pop();
-                  
+
                   // Mostrar mensaje de éxito
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -11530,7 +13036,7 @@ class AdminApp extends StatelessWidget {
                 // Cerrar indicador de carga si está abierto
                 if (context.mounted) {
                   Navigator.of(context).pop();
-                  
+
                   // Mostrar mensaje de error
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -11556,7 +13062,7 @@ class AdminApp extends StatelessWidget {
     bool isTablet,
   ) {
     final periodoTexto = _getPeriodoTexto(controller.selectedCashClosePeriod);
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -11582,13 +13088,13 @@ class AdminApp extends StatelessWidget {
                   builder: (context) =>
                       const Center(child: CircularProgressIndicator()),
                 );
-                
+
                 await controller.generateCashClosuresPDF();
-                
+
                 // Cerrar indicador de carga
                 if (context.mounted) {
                   Navigator.of(context).pop();
-                  
+
                   // Mostrar mensaje de éxito
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -11602,7 +13108,7 @@ class AdminApp extends StatelessWidget {
                 // Cerrar indicador de carga si está abierto
                 if (context.mounted) {
                   Navigator.of(context).pop();
-                  
+
                   // Mostrar mensaje de error
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -11651,7 +13157,7 @@ class AdminApp extends StatelessWidget {
         ),
       );
     }
-    
+
     if (tickets.isEmpty) {
       return Container(
         padding: EdgeInsets.all(AppTheme.spacingXL),
@@ -11673,13 +13179,14 @@ class AdminApp extends StatelessWidget {
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
-              if (controller.tickets.isEmpty) const SizedBox(height: AppTheme.spacingSM),
+              if (controller.tickets.isEmpty)
+                const SizedBox(height: AppTheme.spacingSM),
               if (controller.tickets.isEmpty)
                 Text(
                   'Los tickets aparecerán aquí cuando se cierren cuentas',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               const SizedBox(height: AppTheme.spacingLG),
@@ -11795,7 +13302,7 @@ class AdminApp extends StatelessWidget {
               final esParaLlevar =
                   ticket.isTakeaway ||
                   (ticket.tableNumber == null && ticket.customerName != null);
-              
+
               // Formatear ID del ticket para mostrar
               String ticketDisplayId = ticket.id;
               if (ticket.id.startsWith('CUENTA-AGRUPADA-')) {
@@ -11821,7 +13328,7 @@ class AdminApp extends StatelessWidget {
                 // Ya está bien formateado
                 ticketDisplayId = ticket.id;
               }
-              
+
               return DataRow(
                 cells: [
                   DataCell(
@@ -11986,7 +13493,9 @@ class AdminApp extends StatelessWidget {
                         IconButton(
                           icon: const Icon(Icons.print, size: 18),
                           color: AppColors.primary,
-                          tooltip: ticket.isPrinted ? 'Reimprimir ticket' : 'Imprimir ticket',
+                          tooltip: ticket.isPrinted
+                              ? 'Reimprimir ticket'
+                              : 'Imprimir ticket',
                           onPressed: () => _showPrintTicketDialog(
                             context,
                             ticket,
@@ -12099,10 +13608,10 @@ class AdminApp extends StatelessWidget {
                                 'PARA LLEVAR',
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 10,
-                                ),
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 10,
+                                    ),
                               ),
                             ],
                           ),
@@ -12176,13 +13685,19 @@ class AdminApp extends StatelessWidget {
                 IconButton(
                   icon: const Icon(Icons.visibility),
                   color: AppColors.primary,
-                  onPressed: () =>
-                      _showTicketDetailsModal(context, ticket, isTablet, controller),
+                  onPressed: () => _showTicketDetailsModal(
+                    context,
+                    ticket,
+                    isTablet,
+                    controller,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.print),
                   color: AppColors.primary,
-                  tooltip: ticket.isPrinted ? 'Reimprimir ticket' : 'Imprimir ticket',
+                  tooltip: ticket.isPrinted
+                      ? 'Reimprimir ticket'
+                      : 'Imprimir ticket',
                   onPressed: () =>
                       _showPrintTicketDialog(context, ticket, controller),
                 ),
@@ -12224,8 +13739,11 @@ class AdminApp extends StatelessWidget {
   ) {
     showDialog(
       context: context,
-      builder: (dialogContext) =>
-          _TicketDetailsModal(ticket: ticket, isTablet: isTablet, controller: controller),
+      builder: (dialogContext) => _TicketDetailsModal(
+        ticket: ticket,
+        isTablet: isTablet,
+        controller: controller,
+      ),
     );
   }
 
@@ -12286,9 +13804,11 @@ class AdminApp extends StatelessWidget {
     controller.markTicketAsDelivered(ticket.id);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(wasPending
-            ? 'Ticket aceptado y marcado como entregado'
-            : 'Ticket marcado como entregado'),
+        content: Text(
+          wasPending
+              ? 'Ticket aceptado y marcado como entregado'
+              : 'Ticket marcado como entregado',
+        ),
         backgroundColor: Colors.green,
         duration: const Duration(seconds: 2),
       ),
@@ -12304,7 +13824,7 @@ class AdminApp extends StatelessWidget {
   ) {
     // NOTA: La carga de cierres ya se hace en setCurrentView('cash_closures')
     // No llamar a loadCashClosures() aquí para evitar llamadas duplicadas y parpadeo
-    
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(
         isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
@@ -12319,7 +13839,9 @@ class AdminApp extends StatelessWidget {
               final btnPaddingH = isTablet ? 16.0 : 10.0;
               final btnPaddingV = isTablet ? 12.0 : 8.0;
               final iconSize = isTablet ? 20.0 : 18.0;
-              final labelFontSize = isTablet ? AppTheme.fontSizeSM : AppTheme.fontSizeXS;
+              final labelFontSize = isTablet
+                  ? AppTheme.fontSizeSM
+                  : AppTheme.fontSizeXS;
 
               Widget titleWidget = Text(
                 'Cierre de Caja',
@@ -12347,11 +13869,17 @@ class AdminApp extends StatelessWidget {
                       );
                     },
                     icon: Icon(Icons.refresh, size: iconSize),
-                    label: Text('Refrescar', style: TextStyle(fontSize: labelFontSize)),
+                    label: Text(
+                      'Refrescar',
+                      style: TextStyle(fontSize: labelFontSize),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
                       foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(horizontal: btnPaddingH, vertical: btnPaddingV),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: btnPaddingH,
+                        vertical: btnPaddingV,
+                      ),
                     ),
                   ),
                   ElevatedButton.icon(
@@ -12361,11 +13889,17 @@ class AdminApp extends StatelessWidget {
                       isTablet,
                     ),
                     icon: Icon(Icons.download, size: iconSize),
-                    label: Text('Descargar CSV', style: TextStyle(fontSize: labelFontSize)),
+                    label: Text(
+                      'Descargar CSV',
+                      style: TextStyle(fontSize: labelFontSize),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(horizontal: btnPaddingH, vertical: btnPaddingV),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: btnPaddingH,
+                        vertical: btnPaddingV,
+                      ),
                     ),
                   ),
                   ElevatedButton.icon(
@@ -12375,11 +13909,17 @@ class AdminApp extends StatelessWidget {
                       isTablet,
                     ),
                     icon: Icon(Icons.picture_as_pdf, size: iconSize),
-                    label: Text('Descargar PDF', style: TextStyle(fontSize: labelFontSize)),
+                    label: Text(
+                      'Descargar PDF',
+                      style: TextStyle(fontSize: labelFontSize),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(horizontal: btnPaddingH, vertical: btnPaddingV),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: btnPaddingH,
+                        vertical: btnPaddingV,
+                      ),
                     ),
                   ),
                 ],
@@ -12398,10 +13938,7 @@ class AdminApp extends StatelessWidget {
               return Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  titleWidget,
-                  buttonsRow,
-                ],
+                children: [titleWidget, buttonsRow],
               );
             },
           ),
@@ -12414,7 +13951,11 @@ class AdminApp extends StatelessWidget {
           // Información de apertura de caja del día (en tiempo real)
           Consumer<AdminController>(
             builder: (context, adminController, child) {
-              return _buildCashOpeningInfoInClosures(context, adminController, isTablet);
+              return _buildCashOpeningInfoInClosures(
+                context,
+                adminController,
+                isTablet,
+              );
             },
           ),
           SizedBox(height: AppTheme.spacingLG),
@@ -12507,7 +14048,8 @@ class AdminApp extends StatelessWidget {
                     final date = await showDatePicker(
                       context: context,
                       initialDate:
-                          controller.cashCloseStartDate ?? date_utils.AppDateUtils.nowCdmx(),
+                          controller.cashCloseStartDate ??
+                          date_utils.AppDateUtils.nowCdmx(),
                       firstDate: DateTime(2020),
                       lastDate: date_utils.AppDateUtils.nowCdmx(),
                       locale: const Locale('es', 'MX'),
@@ -12517,7 +14059,8 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final endDate =
-                          controller.cashCloseEndDate ?? date_utils.AppDateUtils.nowCdmx();
+                          controller.cashCloseEndDate ??
+                          date_utils.AppDateUtils.nowCdmx();
                       controller.setCashCloseDateRange(date, endDate);
                     }
                   },
@@ -12549,7 +14092,8 @@ class AdminApp extends StatelessWidget {
                     final date = await showDatePicker(
                       context: context,
                       initialDate:
-                          controller.cashCloseEndDate ?? date_utils.AppDateUtils.nowCdmx(),
+                          controller.cashCloseEndDate ??
+                          date_utils.AppDateUtils.nowCdmx(),
                       firstDate:
                           controller.cashCloseStartDate ?? DateTime(2020),
                       lastDate: date_utils.AppDateUtils.nowCdmx(),
@@ -12560,7 +14104,8 @@ class AdminApp extends StatelessWidget {
                     );
                     if (date != null) {
                       final startDate =
-                          controller.cashCloseStartDate ?? date_utils.AppDateUtils.nowCdmx();
+                          controller.cashCloseStartDate ??
+                          date_utils.AppDateUtils.nowCdmx();
                       controller.setCashCloseDateRange(startDate, date);
                     }
                   },
@@ -12619,224 +14164,225 @@ class AdminApp extends StatelessWidget {
         final isOpen = ctrl.isCashRegisterOpen();
 
         return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusLG),
-        side: BorderSide(
-          color: isOpen ? AppColors.success : AppColors.warning,
-          width: 2,
-        ),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(
-          isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLG),
+            side: BorderSide(
+              color: isOpen ? AppColors.success : AppColors.warning,
+              width: 2,
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(
+              isTablet ? AppTheme.spacingXL : AppTheme.spacingLG,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Icon(
-                      isOpen ? Icons.lock_open : Icons.lock,
-                      color: isOpen ? AppColors.success : AppColors.warning,
-                      size: isTablet ? 28.0 : 24.0,
+                    Row(
+                      children: [
+                        Icon(
+                          isOpen ? Icons.lock_open : Icons.lock,
+                          color: isOpen ? AppColors.success : AppColors.warning,
+                          size: isTablet ? 28.0 : 24.0,
+                        ),
+                        SizedBox(width: AppTheme.spacingMD),
+                        Text(
+                          'Apertura de Caja del Día',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: AppTheme.fontWeightBold,
+                                color: AppColors.textPrimary,
+                              ),
+                        ),
+                      ],
                     ),
-                    SizedBox(width: AppTheme.spacingMD),
-                    Text(
-                      'Apertura de Caja del Día',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: AppTheme.fontWeightBold,
-                        color: AppColors.textPrimary,
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isTablet ? 16.0 : 12.0,
+                        vertical: isTablet ? 8.0 : 6.0,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isOpen
+                            ? AppColors.success.withValues(alpha: 0.1)
+                            : AppColors.warning.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                        style: TextStyle(
+                          fontSize: isTablet ? 14.0 : 12.0,
+                          fontWeight: FontWeight.w600,
+                          color: isOpen ? AppColors.success : AppColors.warning,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 16.0 : 12.0,
-                    vertical: isTablet ? 8.0 : 6.0,
+                if (apertura != null) ...[
+                  SizedBox(height: AppTheme.spacingLG),
+                  Divider(color: AppColors.border),
+                  SizedBox(height: AppTheme.spacingMD),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Efectivo Inicial',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: isTablet ? 24.0 : 20.0,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Cajero',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              apertura.usuario,
+                              style: TextStyle(
+                                fontSize: isTablet ? 16.0 : 14.0,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'Fecha y Hora',
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              date_utils.AppDateUtils.formatDateTime(
+                                apertura.fecha,
+                              ),
+                              style: TextStyle(
+                                fontSize: isTablet ? 14.0 : 12.0,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  decoration: BoxDecoration(
-                    color: isOpen
-                        ? AppColors.success.withValues(alpha: 0.1)
-                        : AppColors.warning.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isOpen ? 'Caja Abierta' : 'Caja Cerrada',
+                  // Mostrar notas solo cuando es apertura real (no del cierre)
+                  if (apertura.totalNeto < 1 &&
+                      apertura.notaCajero != null &&
+                      apertura.notaCajero!.isNotEmpty) ...[
+                    SizedBox(height: AppTheme.spacingMD),
+                    Container(
+                      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                      decoration: BoxDecoration(
+                        color: AppColors.inputBackground,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.note,
+                            size: isTablet ? 18.0 : 16.0,
+                            color: AppColors.textSecondary,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              apertura.notaCajero!,
+                              style: TextStyle(
+                                fontSize: isTablet ? 13.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (!isOpen) ...[
+                    SizedBox(height: AppTheme.spacingMD),
+                    Container(
+                      padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.warning.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: isTablet ? 18.0 : 16.0,
+                            color: AppColors.warning,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'La caja fue cerrada. Los detalles del cierre están en la tabla inferior.',
+                              style: TextStyle(
+                                fontSize: isTablet ? 13.0 : 12.0,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  SizedBox(height: AppTheme.spacingMD),
+                  Text(
+                    'No se ha registrado una apertura de caja hoy',
                     style: TextStyle(
                       fontSize: isTablet ? 14.0 : 12.0,
-                      fontWeight: FontWeight.w600,
-                      color: isOpen ? AppColors.success : AppColors.warning,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (apertura != null) ...[
-              SizedBox(height: AppTheme.spacingLG),
-              Divider(color: AppColors.border),
-              SizedBox(height: AppTheme.spacingMD),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Efectivo Inicial',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          '\$${apertura.efectivoInicial.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: isTablet ? 24.0 : 20.0,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Cajero',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          apertura.usuario,
-                          style: TextStyle(
-                            fontSize: isTablet ? 16.0 : 14.0,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          'Fecha y Hora',
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          date_utils.AppDateUtils.formatDateTime(
-                            apertura.fecha,
-                          ),
-                          style: TextStyle(
-                            fontSize: isTablet ? 14.0 : 12.0,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic,
                     ),
                   ),
                 ],
-              ),
-              // Mostrar notas solo cuando es apertura real (no del cierre)
-              if (apertura.totalNeto < 1 &&
-                  apertura.notaCajero != null &&
-                  apertura.notaCajero!.isNotEmpty) ...[
-                SizedBox(height: AppTheme.spacingMD),
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
-                  decoration: BoxDecoration(
-                    color: AppColors.inputBackground,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.note,
-                        size: isTablet ? 18.0 : 16.0,
-                        color: AppColors.textSecondary,
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          apertura.notaCajero!,
-                          style: TextStyle(
-                            fontSize: isTablet ? 13.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
-              if (!isOpen) ...[
-                SizedBox(height: AppTheme.spacingMD),
-                Container(
-                  padding: EdgeInsets.all(isTablet ? 12.0 : 10.0),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: AppColors.warning.withValues(alpha: 0.2),
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: isTablet ? 18.0 : 16.0,
-                        color: AppColors.warning,
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'La caja fue cerrada. Los detalles del cierre están en la tabla inferior.',
-                          style: TextStyle(
-                            fontSize: isTablet ? 13.0 : 12.0,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ] else ...[
-              SizedBox(height: AppTheme.spacingMD),
-              Text(
-                'No se ha registrado una apertura de caja hoy',
-                style: TextStyle(
-                  fontSize: isTablet ? 14.0 : 12.0,
-                  color: AppColors.textSecondary,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
+            ),
+          ),
+        );
       },
     );
   }
@@ -12870,7 +14416,7 @@ class AdminApp extends StatelessWidget {
         ),
       );
     }
-    
+
     final closures = controller.filteredCashClosures;
     print(
       '🎨 AdminView: _buildCashClosuresList - ${closures.length} cierres para mostrar',
@@ -12902,13 +14448,14 @@ class AdminApp extends StatelessWidget {
                 ).textTheme.bodyLarge?.copyWith(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
-              if (controller.cashClosures.isEmpty) const SizedBox(height: AppTheme.spacingSM),
+              if (controller.cashClosures.isEmpty)
+                const SizedBox(height: AppTheme.spacingSM),
               if (controller.cashClosures.isEmpty)
                 Text(
                   'Los cierres aparecerán aquí cuando el cajero los envíe',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               const SizedBox(height: AppTheme.spacingLG),
@@ -12958,384 +14505,394 @@ class AdminApp extends StatelessWidget {
               Theme.of(context).dividerColor.withValues(alpha: 0.06),
             ),
             dataRowColor: MaterialStateProperty.all(Colors.transparent),
-              dataRowMinHeight: 56,
-              dataRowMaxHeight: 72,
-              border: TableBorder(
-                horizontalInside: BorderSide(
-                  color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
-                ),
-              ),
-              columns: [
-                DataColumn(
-              label: Text(
-                'Fecha/Periodo',
-                style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
-                  fontSize: isTablet ? 14 : 12,
-                ),
+            dataRowMinHeight: 56,
+            dataRowMaxHeight: 72,
+            border: TableBorder(
+              horizontalInside: BorderSide(
+                color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
               ),
             ),
-            DataColumn(
-              label: Text(
-                'Usuario',
-                style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
-                  fontSize: isTablet ? 14 : 12,
-                ),
-              ),
-            ),
-            DataColumn(
-              label: Tooltip(
-                message: 'Indica si el registro es una apertura de caja o un cierre.',
-                child: Text(
-                  'Tipo',
+            columns: [
+              DataColumn(
+                label: Text(
+                  'Fecha/Periodo',
                   style: TextStyle(
                     fontWeight: AppTheme.fontWeightSemibold,
                     fontSize: isTablet ? 14 : 12,
                   ),
                 ),
               ),
-            ),
-            DataColumn(
-              label: Tooltip(
-                message:
-                    'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Total Neto',
-                      style: TextStyle(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                        fontSize: isTablet ? 14 : 12,
-                      ),
-                    ),
-                    SizedBox(width: 4),
-                    Icon(
-                      Icons.help_outline,
-                      size: 14,
-                      color: AppColors.textSecondary,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            DataColumn(
-              label: Tooltip(
-                message: 'Dinero recibido en efectivo',
-                child: Text(
-                  'Efectivo',
+              DataColumn(
+                label: Text(
+                  'Usuario',
                   style: TextStyle(
                     fontWeight: AppTheme.fontWeightSemibold,
                     fontSize: isTablet ? 14 : 12,
                   ),
                 ),
               ),
-            ),
-            DataColumn(
-              label: Tooltip(
-                message: 'Dinero recibido con tarjeta de crédito/débito',
-                child: Text(
-                  'Tarjeta',
-                  style: TextStyle(
-                    fontWeight: AppTheme.fontWeightSemibold,
-                    fontSize: isTablet ? 14 : 12,
+              DataColumn(
+                label: Tooltip(
+                  message:
+                      'Indica si el registro es una apertura de caja o un cierre.',
+                  child: Text(
+                    'Tipo',
+                    style: TextStyle(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      fontSize: isTablet ? 14 : 12,
+                    ),
                   ),
                 ),
               ),
-            ),
-            DataColumn(
-              label: Tooltip(
-                message: 'Notas del cajero al enviar el cierre',
-                child: Text(
-                  'Notas',
-                  style: TextStyle(
-                    fontWeight: AppTheme.fontWeightSemibold,
-                    fontSize: isTablet ? 14 : 12,
-                  ),
-                ),
-              ),
-            ),
-            DataColumn(
-              label: Tooltip(
-                message:
-                    'Estados: Pendiente (revisión pendiente), Aprobado (verificado), Rechazado (con problemas), Aclaración (requiere más información)',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Estado',
-                      style: TextStyle(
-                        fontWeight: AppTheme.fontWeightSemibold,
-                        fontSize: isTablet ? 14 : 12,
-                      ),
-                    ),
-                    SizedBox(width: 4),
-                    Icon(
-                      Icons.info_outline,
-                      size: 14,
-                      color: AppColors.textSecondary,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            DataColumn(
-              label: Text(
-                'Acciones',
-                style: TextStyle(
-                  fontWeight: AppTheme.fontWeightSemibold,
-                  fontSize: isTablet ? 14 : 12,
-                ),
-              ),
-            ),
-          ],
-          rows: closures.map((closure) {
-            final hasNotes =
-                closure.notaCajero != null && closure.notaCajero!.isNotEmpty;
-            final tipoMov = closure_utils.cashCloseTipoEtiqueta(closure);
-            final esAperturaRow = closure_utils.cashCloseEsApertura(closure);
-            return DataRow(
-              cells: [
-                DataCell(
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              DataColumn(
+                label: Tooltip(
+                  message:
+                      'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        _formatDate(closure.fecha),
+                        'Total Neto',
                         style: TextStyle(
-                          fontSize: isTablet ? 13 : 11,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: AppTheme.fontWeightSemibold,
+                          fontSize: isTablet ? 14 : 12,
                         ),
                       ),
-                      if (hasNotes)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4.0),
-                          child: Icon(
-                            Icons.note_alt,
-                            size: 14,
-                            color: Colors.amber.shade700,
-                          ),
-                        ),
+                      SizedBox(width: 4),
+                      Icon(
+                        Icons.help_outline,
+                        size: 14,
+                        color: AppColors.textSecondary,
+                      ),
                     ],
                   ),
                 ),
-                DataCell(
-                  Text(
-                    closure.usuario,
-                    style: TextStyle(fontSize: isTablet ? 13 : 11),
+              ),
+              DataColumn(
+                label: Tooltip(
+                  message: 'Dinero recibido en efectivo',
+                  child: Text(
+                    'Efectivo',
+                    style: TextStyle(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      fontSize: isTablet ? 14 : 12,
+                    ),
                   ),
                 ),
-                DataCell(
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: esAperturaRow
-                          ? Colors.teal.withValues(alpha: 0.12)
-                          : Colors.indigo.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: esAperturaRow
-                            ? Colors.teal.withValues(alpha: 0.35)
-                            : Colors.indigo.withValues(alpha: 0.3),
+              ),
+              DataColumn(
+                label: Tooltip(
+                  message: 'Dinero recibido con tarjeta de crédito/débito',
+                  child: Text(
+                    'Tarjeta',
+                    style: TextStyle(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      fontSize: isTablet ? 14 : 12,
+                    ),
+                  ),
+                ),
+              ),
+              DataColumn(
+                label: Tooltip(
+                  message: 'Notas del cajero al enviar el cierre',
+                  child: Text(
+                    'Notas',
+                    style: TextStyle(
+                      fontWeight: AppTheme.fontWeightSemibold,
+                      fontSize: isTablet ? 14 : 12,
+                    ),
+                  ),
+                ),
+              ),
+              DataColumn(
+                label: Tooltip(
+                  message:
+                      'Estados: Pendiente (revisión pendiente), Aprobado (verificado), Rechazado (con problemas), Aclaración (requiere más información)',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Estado',
+                        style: TextStyle(
+                          fontWeight: AppTheme.fontWeightSemibold,
+                          fontSize: isTablet ? 14 : 12,
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      tipoMov,
-                      style: TextStyle(
-                        fontSize: isTablet ? 12 : 10,
-                        fontWeight: FontWeight.w600,
-                        color: esAperturaRow
-                            ? Colors.teal.shade800
-                            : Colors.indigo.shade800,
+                      SizedBox(width: 4),
+                      Icon(
+                        Icons.info_outline,
+                        size: 14,
+                        color: AppColors.textSecondary,
                       ),
-                    ),
+                    ],
                   ),
                 ),
-                DataCell(
-                  Text(
-                    '\$${closure.totalNeto.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 13 : 11,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Acciones',
+                  style: TextStyle(
+                    fontWeight: AppTheme.fontWeightSemibold,
+                    fontSize: isTablet ? 14 : 12,
                   ),
                 ),
-                DataCell(
-                  Text(
-                    '\$${closure.efectivo.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 13 : 11,
-                      color: Colors.green.shade700,
-                    ),
-                  ),
-                ),
-                DataCell(
-                  Text(
-                    '\$${closure.tarjeta.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isTablet ? 13 : 11,
-                      color: Colors.blue.shade700,
-                    ),
-                  ),
-                ),
-                DataCell(
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: isTablet ? 200 : 120),
-                    child: Builder(
-                      builder: (_) {
-                        final notas = closure_utils.deduplicateNoteParts(closure.notaCajero);
-                        return Text(
-                          notas.isNotEmpty ? notas : '—',
+              ),
+            ],
+            rows: closures.map((closure) {
+              final hasNotes =
+                  closure.notaCajero != null && closure.notaCajero!.isNotEmpty;
+              final tipoMov = closure_utils.cashCloseTipoEtiqueta(closure);
+              final esAperturaRow = closure_utils.cashCloseEsApertura(closure);
+              return DataRow(
+                cells: [
+                  DataCell(
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _formatDate(closure.fecha),
                           style: TextStyle(
-                            fontSize: isTablet ? 12 : 10,
-                            color: notas.isNotEmpty ? AppColors.textPrimary : AppColors.textSecondary,
+                            fontSize: isTablet ? 13 : 11,
+                            fontWeight: FontWeight.w500,
                           ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                DataCell(
-                  Tooltip(
-                    message: _getStatusDescription(closure.estado),
-                    child: Chip(
-                      label: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _getStatusIcon(closure.estado),
-                            size: 12,
-                            color: Colors.white,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            CashCloseStatus.getStatusText(closure.estado),
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.white,
+                        ),
+                        if (hasNotes)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Icon(
+                              Icons.note_alt,
+                              size: 14,
+                              color: Colors.amber.shade700,
                             ),
                           ),
-                        ],
-                      ),
-                      backgroundColor: CashCloseStatus.getStatusColor(
-                        closure.estado,
-                      ),
+                      ],
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      closure.usuario,
+                      style: TextStyle(fontSize: isTablet ? 13 : 11),
+                    ),
+                  ),
+                  DataCell(
+                    Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 4,
                       ),
-                    ),
-                  ),
-                ),
-                DataCell(
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Botón ver detalles
-                      Tooltip(
-                        message: esAperturaRow
-                            ? 'Ver detalles de la apertura${hasNotes ? ' (tiene notas)' : ''}'
-                            : 'Ver detalles del cierre${hasNotes ? ' (tiene notas)' : ''}',
-                        child: IconButton(
-                          icon: Icon(
-                            hasNotes
-                                ? Icons.visibility
-                                : Icons.visibility_outlined,
-                            size: 18,
-                            color: hasNotes
-                                ? Colors.amber.shade700
-                                : AppColors.primary,
-                          ),
-                          onPressed: () => _showCashCloseDetailsModal(
-                            context,
-                            closure,
-                            controller,
-                            isTablet,
-                          ),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                      decoration: BoxDecoration(
+                        color: esAperturaRow
+                            ? Colors.teal.withValues(alpha: 0.12)
+                            : Colors.indigo.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: esAperturaRow
+                              ? Colors.teal.withValues(alpha: 0.35)
+                              : Colors.indigo.withValues(alpha: 0.3),
                         ),
                       ),
-                      // Botones de acción (mostrar para estados pending y clarification)
-                      if (closure.cierreId != null && 
-                          (closure.estado == CashCloseStatus.pending || 
-                              closure.estado ==
-                                  CashCloseStatus.clarification)) ...[
-                        SizedBox(width: 4),
-                        // Botón aprobar (solo si está pendiente)
-                        if (closure.estado == CashCloseStatus.pending)
-                          Tooltip(
-                            message: esAperturaRow
-                                ? 'Aprobar apertura'
-                                : 'Aprobar cierre',
-                            child: IconButton(
-                              icon: const Icon(Icons.check_circle, size: 18),
-                              color: Colors.green,
-                              onPressed: () => _handleApproveClosure(
-                                context,
-                                closure,
-                                controller,
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
+                      child: Text(
+                        tipoMov,
+                        style: TextStyle(
+                          fontSize: isTablet ? 12 : 10,
+                          fontWeight: FontWeight.w600,
+                          color: esAperturaRow
+                              ? Colors.teal.shade800
+                              : Colors.indigo.shade800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      '\$${closure.totalNeto.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 13 : 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      '\$${closure.efectivo.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 13 : 11,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      '\$${closure.tarjeta.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: isTablet ? 13 : 11,
+                        color: Colors.blue.shade700,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: isTablet ? 200 : 120,
+                      ),
+                      child: Builder(
+                        builder: (_) {
+                          final notas = closure_utils.deduplicateNoteParts(
+                            closure.notaCajero,
+                          );
+                          return Text(
+                            notas.isNotEmpty ? notas : '—',
+                            style: TextStyle(
+                              fontSize: isTablet ? 12 : 10,
+                              color: notas.isNotEmpty
+                                  ? AppColors.textPrimary
+                                  : AppColors.textSecondary,
                             ),
-                          ),
-                        // Botón rechazar (solo si está pendiente)
-                        if (closure.estado == CashCloseStatus.pending)
-                          Tooltip(
-                            message: esAperturaRow
-                                ? 'Rechazar apertura'
-                                : 'Rechazar cierre',
-                            child: IconButton(
-                              icon: const Icon(Icons.cancel, size: 18),
-                              color: Colors.red,
-                              onPressed: () => _handleRejectClosure(
-                                context,
-                                closure,
-                                controller,
-                              ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Tooltip(
+                      message: _getStatusDescription(closure.estado),
+                      child: Chip(
+                        label: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _getStatusIcon(closure.estado),
+                              size: 12,
+                              color: Colors.white,
                             ),
-                          ),
-                        // Botón pedir aclaración (si está pendiente o ya en aclaración)
+                            SizedBox(width: 4),
+                            Text(
+                              CashCloseStatus.getStatusText(closure.estado),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                        backgroundColor: CashCloseStatus.getStatusColor(
+                          closure.estado,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Botón ver detalles
                         Tooltip(
-                          message:
-                              closure.estado == CashCloseStatus.clarification
-                              ? 'Ver aclaración solicitada' 
-                              : 'Pedir aclaración',
+                          message: esAperturaRow
+                              ? 'Ver detalles de la apertura${hasNotes ? ' (tiene notas)' : ''}'
+                              : 'Ver detalles del cierre${hasNotes ? ' (tiene notas)' : ''}',
                           child: IconButton(
                             icon: Icon(
-                              closure.estado == CashCloseStatus.clarification 
-                                  ? Icons.info_outline 
-                                  : Icons.help_outline, 
+                              hasNotes
+                                  ? Icons.visibility
+                                  : Icons.visibility_outlined,
                               size: 18,
+                              color: hasNotes
+                                  ? Colors.amber.shade700
+                                  : AppColors.primary,
                             ),
-                            color: Colors.blue,
-                            onPressed: () => _handleRequestClarification(
+                            onPressed: () => _showCashCloseDetailsModal(
                               context,
                               closure,
                               controller,
+                              isTablet,
                             ),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                           ),
                         ),
+                        // Botones de acción (mostrar para estados pending y clarification)
+                        if (closure.cierreId != null &&
+                            (closure.estado == CashCloseStatus.pending ||
+                                closure.estado ==
+                                    CashCloseStatus.clarification)) ...[
+                          SizedBox(width: 4),
+                          // Botón aprobar (solo si está pendiente)
+                          if (closure.estado == CashCloseStatus.pending)
+                            Tooltip(
+                              message: esAperturaRow
+                                  ? 'Aprobar apertura'
+                                  : 'Aprobar cierre',
+                              child: IconButton(
+                                icon: const Icon(Icons.check_circle, size: 18),
+                                color: Colors.green,
+                                onPressed: () => _handleApproveClosure(
+                                  context,
+                                  closure,
+                                  controller,
+                                ),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ),
+                          // Botón rechazar (solo si está pendiente)
+                          if (closure.estado == CashCloseStatus.pending)
+                            Tooltip(
+                              message: esAperturaRow
+                                  ? 'Rechazar apertura'
+                                  : 'Rechazar cierre',
+                              child: IconButton(
+                                icon: const Icon(Icons.cancel, size: 18),
+                                color: Colors.red,
+                                onPressed: () => _handleRejectClosure(
+                                  context,
+                                  closure,
+                                  controller,
+                                ),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ),
+                          // Botón pedir aclaración (si está pendiente o ya en aclaración)
+                          Tooltip(
+                            message:
+                                closure.estado == CashCloseStatus.clarification
+                                ? 'Ver aclaración solicitada'
+                                : 'Pedir aclaración',
+                            child: IconButton(
+                              icon: Icon(
+                                closure.estado == CashCloseStatus.clarification
+                                    ? Icons.info_outline
+                                    : Icons.help_outline,
+                                size: 18,
+                              ),
+                              color: Colors.blue,
+                              onPressed: () => _handleRequestClarification(
+                                context,
+                                closure,
+                                controller,
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ],
-            );
-          }).toList(),
-            ),
+                ],
+              );
+            }).toList(),
           ),
-        ],
+        ),
+      ],
     );
   }
 
@@ -13429,7 +14986,8 @@ class AdminApp extends StatelessWidget {
                 ),
               ],
             ),
-            if (closure.notaCajero != null && closure.notaCajero!.isNotEmpty) ...[
+            if (closure.notaCajero != null &&
+                closure.notaCajero!.isNotEmpty) ...[
               SizedBox(height: AppTheme.spacingSM),
               Divider(height: 1, color: AppColors.border),
               SizedBox(height: AppTheme.spacingSM),
@@ -13468,8 +15026,9 @@ class AdminApp extends StatelessWidget {
     final tituloModal = esAperturaDet
         ? 'Detalle de la apertura'
         : 'Detalle del cierre';
-    final etiquetaMovimiento =
-        esAperturaDet ? 'Apertura de caja' : 'Cierre de caja';
+    final etiquetaMovimiento = esAperturaDet
+        ? 'Apertura de caja'
+        : 'Cierre de caja';
     final isPending = closure.estado == CashCloseStatus.pending;
     final isClarification = closure.estado == CashCloseStatus.clarification;
 
@@ -13507,9 +15066,9 @@ class AdminApp extends StatelessWidget {
                           tituloModal,
                           style: Theme.of(context).textTheme.titleLarge
                               ?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
                         ),
                       ),
                       IconButton(
@@ -13522,584 +15081,655 @@ class AdminApp extends StatelessWidget {
                 // Contenido del modal
                 Expanded(
                   child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Información básica mejorada
-                Container(
-                  padding: EdgeInsets.all(AppTheme.spacingMD),
-                  decoration: BoxDecoration(
-                    color: AppColors.inputBackground,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Información básica mejorada
+                        Container(
+                          padding: EdgeInsets.all(AppTheme.spacingMD),
+                          decoration: BoxDecoration(
+                            color: AppColors.inputBackground,
                             borderRadius: BorderRadius.circular(
                               AppTheme.radiusMD,
                             ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Column(
+                                children: [
+                                  Expanded(
+                                    child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  etiquetaMovimiento,
+                                      children: [
+                                        Text(
+                                          etiquetaMovimiento,
                                           style: Theme.of(context)
                                               .textTheme
                                               .bodySmall
                                               ?.copyWith(
-                                    color: AppColors.textSecondary,
-                                  ),
-                                ),
-                                Text(
-                                  closure.id,
+                                                color: AppColors.textSecondary,
+                                              ),
+                                        ),
+                                        Text(
+                                          closure.id,
                                           style: Theme.of(context)
                                               .textTheme
                                               .titleMedium
                                               ?.copyWith(
-                                    fontWeight: FontWeight.bold,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Tooltip(
+                                    message: _getStatusDescription(
+                                      closure.estado,
+                                    ),
+                                    child: Chip(
+                                      label: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            _getStatusIcon(closure.estado),
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                          SizedBox(width: 6),
+                                          Text(
+                                            CashCloseStatus.getStatusText(
+                                              closure.estado,
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      backgroundColor:
+                                          CashCloseStatus.getStatusColor(
+                                            closure.estado,
+                                          ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: AppTheme.spacingMD),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildInfoItem(
+                                      context,
+                                      'Usuario',
+                                      closure.usuario,
+                                      Icons.person,
+                                    ),
+                                  ),
+                                  SizedBox(width: AppTheme.spacingMD),
+                                  Expanded(
+                                    child: _buildInfoItem(
+                                      context,
+                                      'Período',
+                                      closure.periodo,
+                                      Icons.calendar_today,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: AppTheme.spacingSM),
+                              _buildInfoItem(
+                                context,
+                                'Tipo',
+                                closure_utils.cashCloseTipoEtiqueta(closure),
+                                Icons.bookmark_outline,
+                              ),
+                              SizedBox(height: AppTheme.spacingSM),
+                              _buildInfoItem(
+                                context,
+                                'Fecha',
+                                _formatDate(closure.fecha),
+                                Icons.access_time,
+                              ),
+                              if (closure.efectivoInicial > 0) ...[
+                                SizedBox(height: AppTheme.spacingSM),
+                                _buildInfoItem(
+                                  context,
+                                  'Efectivo inicial',
+                                  '\$${closure.efectivoInicial.toStringAsFixed(2)}',
+                                  Icons.savings,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: AppTheme.spacingMD),
+
+                        // Explicación de Total Neto (en aperturas no aplica el mismo significado)
+                        if (!esAperturaDet)
+                          Container(
+                            padding: EdgeInsets.all(AppTheme.spacingSM),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMD,
+                              ),
+                              border: Border.all(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                                SizedBox(width: AppTheme.spacingSM),
+                                Expanded(
+                                  child: Text(
+                                    'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 11,
+                                        ),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          Tooltip(
-                                    message: _getStatusDescription(
-                                      closure.estado,
-                                    ),
-                            child: Chip(
-                              label: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _getStatusIcon(closure.estado),
-                                    size: 14,
-                                    color: Colors.white,
-                                  ),
-                                  SizedBox(width: 6),
-                                  Text(
-                                            CashCloseStatus.getStatusText(
-                                              closure.estado,
-                                            ),
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                                      backgroundColor:
-                                          CashCloseStatus.getStatusColor(
-                                closure.estado,
-                              ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 6,
-                                      ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: AppTheme.spacingMD),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildInfoItem(
-                              context,
-                              'Usuario',
-                              closure.usuario,
-                              Icons.person,
-                            ),
-                          ),
-                          SizedBox(width: AppTheme.spacingMD),
-                          Expanded(
-                            child: _buildInfoItem(
-                              context,
-                              'Período',
-                              closure.periodo,
-                              Icons.calendar_today,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: AppTheme.spacingSM),
-                      _buildInfoItem(
-                        context,
-                        'Tipo',
-                        closure_utils.cashCloseTipoEtiqueta(closure),
-                        Icons.bookmark_outline,
-                      ),
-                      SizedBox(height: AppTheme.spacingSM),
-                      _buildInfoItem(
-                        context,
-                        'Fecha',
-                        _formatDate(closure.fecha),
-                        Icons.access_time,
-                      ),
-                      if (closure.efectivoInicial > 0) ...[
-                        SizedBox(height: AppTheme.spacingSM),
-                        _buildInfoItem(
-                          context,
-                          'Efectivo inicial',
-                          '\$${closure.efectivoInicial.toStringAsFixed(2)}',
-                          Icons.savings,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                SizedBox(height: AppTheme.spacingMD),
-
-                // Explicación de Total Neto (en aperturas no aplica el mismo significado)
-                if (!esAperturaDet)
-                  Container(
-                  padding: EdgeInsets.all(AppTheme.spacingSM),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(
-                              AppTheme.radiusMD,
-                            ),
-                            border: Border.all(
-                              color: AppColors.primary.withValues(alpha: 0.3),
-                            ),
-                  ),
-                  child: Row(
-                    children: [
-                              Icon(
-                                Icons.info_outline,
-                                size: 18,
-                                color: AppColors.primary,
-                              ),
-                      SizedBox(width: AppTheme.spacingSM),
-                      Expanded(
-                        child: Text(
-                          'Total Neto: Suma de todas las ventas del día (efectivo + tarjeta + otros ingresos). Es el dinero total recibido sin incluir propinas.',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                            color: AppColors.textSecondary,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (!esAperturaDet) SizedBox(height: AppTheme.spacingMD),
-                if (esAperturaDet)
-                  Container(
-                    padding: EdgeInsets.all(AppTheme.spacingSM),
-                    decoration: BoxDecoration(
-                      color: Colors.teal.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                      border: Border.all(
-                        color: Colors.teal.withValues(alpha: 0.25),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.lock_open, size: 18, color: Colors.teal.shade700),
-                        SizedBox(width: AppTheme.spacingSM),
-                        Expanded(
-                          child: Text(
-                            'Registro de apertura: el efectivo inicial queda registrado; el total neto de ventas suele ser cero hasta que haya cobros.',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 11,
-                                ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (esAperturaDet) SizedBox(height: AppTheme.spacingMD),
-
-                // Tarjetas de resumen
-                Wrap(
-                  spacing: AppTheme.spacingSM,
-                  runSpacing: AppTheme.spacingSM,
-                  children: [
-                    _buildSummaryCard(
-                      'Total Neto',
-                      '\$${closure.totalNeto.toStringAsFixed(2)}',
-                      AppColors.primary,
-                      isTablet,
-                      tooltip: 'Suma total de ventas sin propinas',
-                    ),
-                    _buildSummaryCard(
-                      'Efectivo Contado',
-                      '\$${closure.efectivoContado.toStringAsFixed(2)}',
-                      Colors.green,
-                      isTablet,
-                              tooltip:
-                                  'Dinero en efectivo que el cajero contó físicamente',
-                    ),
-                    _buildSummaryCard(
-                      'Tarjeta Total',
-                      '\$${closure.totalTarjeta.toStringAsFixed(2)}',
-                      Colors.blue,
-                      isTablet,
-                      tooltip: 'Total de pagos recibidos con tarjeta',
-                    ),
-                    _buildSummaryCard(
-                      'Propinas Tarjeta',
-                      '\$${closure.propinasTarjeta.toStringAsFixed(2)}',
-                      Colors.purple,
-                      isTablet,
-                              tooltip:
-                                  'Propinas recibidas por pagos con tarjeta',
-                    ),
-                    _buildSummaryCard(
-                      'Propinas Efectivo',
-                      '\$${closure.propinasEfectivo.toStringAsFixed(2)}',
-                      Colors.orange,
-                      isTablet,
-                      tooltip: 'Propinas recibidas en efectivo',
-                    ),
-                    _buildSummaryCard(
-                      'Otros Ingresos',
-                      '\$${closure.otrosIngresos.toStringAsFixed(2)}',
-                      Colors.teal,
-                      isTablet,
-                      tooltip: closure.otrosIngresosTexto ?? 'Otros ingresos adicionales',
-                    ),
-                    if (controller.ivaHabilitado && closure.totalNeto > 0)
-                      _buildSummaryCard(
-                        'IVA Total (16%)',
-                        '\$${(closure.totalNeto - closure.totalNeto / 1.16).toStringAsFixed(2)}',
-                        Colors.blue,
-                        isTablet,
-                        tooltip: 'Impuesto al valor agregado calculado sobre el total',
-                      ),
-                  ],
-                ),
-                if (controller.ivaHabilitado && closure.totalNeto > 0) ...[
-                  SizedBox(height: AppTheme.spacingMD),
-                  Container(
-                    padding: EdgeInsets.all(AppTheme.spacingMD),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Desglose IVA (16%)',
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.blue.shade900,
-                          ),
-                        ),
-                        SizedBox(height: AppTheme.spacingSM),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('Subtotal', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary)),
-                            Text('\$${(closure.totalNeto / 1.16).toStringAsFixed(2)}', style: Theme.of(context).textTheme.bodySmall),
-                          ],
-                        ),
-                        SizedBox(height: 4),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('IVA (16%)', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary)),
-                            Text('\$${(closure.totalNeto - closure.totalNeto / 1.16).toStringAsFixed(2)}', style: Theme.of(context).textTheme.bodySmall),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                SizedBox(height: AppTheme.spacingMD),
-
-                // Notas del cajero
-                        if (closure.notaCajero != null &&
-                            closure.notaCajero!.isNotEmpty) ...[
-                  Container(
-                    padding: EdgeInsets.all(AppTheme.spacingMD),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.shade50,
+                        if (!esAperturaDet)
+                          SizedBox(height: AppTheme.spacingMD),
+                        if (esAperturaDet)
+                          Container(
+                            padding: EdgeInsets.all(AppTheme.spacingSM),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.withValues(alpha: 0.08),
                               borderRadius: BorderRadius.circular(
                                 AppTheme.radiusMD,
                               ),
-                      border: Border.all(color: Colors.amber.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.note_alt,
-                              size: 20,
-                              color: Colors.amber.shade800,
+                              border: Border.all(
+                                color: Colors.teal.withValues(alpha: 0.25),
+                              ),
                             ),
-                            SizedBox(width: AppTheme.spacingSM),
-                            Text(
-                              'Notas del Cajero',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.lock_open,
+                                  size: 18,
+                                  color: Colors.teal.shade700,
+                                ),
+                                SizedBox(width: AppTheme.spacingSM),
+                                Expanded(
+                                  child: Text(
+                                    'Registro de apertura: el efectivo inicial queda registrado; el total neto de ventas suele ser cero hasta que haya cobros.',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 11,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (esAperturaDet) SizedBox(height: AppTheme.spacingMD),
+
+                        // Tarjetas de resumen
+                        Wrap(
+                          spacing: AppTheme.spacingSM,
+                          runSpacing: AppTheme.spacingSM,
+                          children: [
+                            _buildSummaryCard(
+                              'Total Neto',
+                              '\$${closure.totalNeto.toStringAsFixed(2)}',
+                              AppColors.primary,
+                              isTablet,
+                              tooltip: 'Suma total de ventas sin propinas',
+                            ),
+                            _buildSummaryCard(
+                              'Efectivo Contado',
+                              '\$${closure.efectivoContado.toStringAsFixed(2)}',
+                              Colors.green,
+                              isTablet,
+                              tooltip:
+                                  'Dinero en efectivo que el cajero contó físicamente',
+                            ),
+                            _buildSummaryCard(
+                              'Tarjeta Total',
+                              '\$${closure.totalTarjeta.toStringAsFixed(2)}',
+                              Colors.blue,
+                              isTablet,
+                              tooltip: 'Total de pagos recibidos con tarjeta',
+                            ),
+                            _buildSummaryCard(
+                              'Propinas Tarjeta',
+                              '\$${closure.propinasTarjeta.toStringAsFixed(2)}',
+                              Colors.purple,
+                              isTablet,
+                              tooltip:
+                                  'Propinas recibidas por pagos con tarjeta',
+                            ),
+                            _buildSummaryCard(
+                              'Propinas Efectivo',
+                              '\$${closure.propinasEfectivo.toStringAsFixed(2)}',
+                              Colors.orange,
+                              isTablet,
+                              tooltip: 'Propinas recibidas en efectivo',
+                            ),
+                            _buildSummaryCard(
+                              'Otros Ingresos',
+                              '\$${closure.otrosIngresos.toStringAsFixed(2)}',
+                              Colors.teal,
+                              isTablet,
+                              tooltip:
+                                  closure.otrosIngresosTexto ??
+                                  'Otros ingresos adicionales',
+                            ),
+                            if (controller.ivaHabilitado &&
+                                closure.totalNeto > 0)
+                              _buildSummaryCard(
+                                'IVA Total (16%)',
+                                '\$${(closure.totalNeto - closure.totalNeto / 1.16).toStringAsFixed(2)}',
+                                Colors.blue,
+                                isTablet,
+                                tooltip:
+                                    'Impuesto al valor agregado calculado sobre el total',
+                              ),
+                          ],
+                        ),
+                        if (controller.ivaHabilitado &&
+                            closure.totalNeto > 0) ...[
+                          SizedBox(height: AppTheme.spacingMD),
+                          Container(
+                            padding: EdgeInsets.all(AppTheme.spacingMD),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade50,
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMD,
+                              ),
+                              border: Border.all(color: Colors.blue.shade200),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Desglose IVA (16%)',
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.blue.shade900,
+                                      ),
+                                ),
+                                SizedBox(height: AppTheme.spacingSM),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Subtotal',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: AppColors.textSecondary,
+                                          ),
+                                    ),
+                                    Text(
+                                      '\$${(closure.totalNeto / 1.16).toStringAsFixed(2)}',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'IVA (16%)',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: AppColors.textSecondary,
+                                          ),
+                                    ),
+                                    Text(
+                                      '\$${(closure.totalNeto - closure.totalNeto / 1.16).toStringAsFixed(2)}',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        SizedBox(height: AppTheme.spacingMD),
+
+                        // Notas del cajero
+                        if (closure.notaCajero != null &&
+                            closure.notaCajero!.isNotEmpty) ...[
+                          Container(
+                            padding: EdgeInsets.all(AppTheme.spacingMD),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade50,
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMD,
+                              ),
+                              border: Border.all(color: Colors.amber.shade200),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.note_alt,
+                                      size: 20,
+                                      color: Colors.amber.shade800,
+                                    ),
+                                    SizedBox(width: AppTheme.spacingSM),
+                                    Text(
+                                      'Notas del Cajero',
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleSmall
                                           ?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: Colors.amber.shade900,
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: AppTheme.spacingSM),
-                        if (closure.notaCajero!.contains('|'))
-                          ...closure_utils.deduplicateNoteParts(closure.notaCajero)
-                              .split('|')
-                              .map((s) => s.trim())
-                              .where((s) => s.isNotEmpty)
-                              .map((line) => Padding(
-                                    padding: EdgeInsets.only(bottom: AppTheme.spacingXS),
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('• ', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.amber.shade800)),
-                                        Expanded(
-                                          child: Text(
-                                            line,
-                                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.amber.shade800),
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.amber.shade900,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: AppTheme.spacingSM),
+                                if (closure.notaCajero!.contains('|'))
+                                  ...closure_utils
+                                      .deduplicateNoteParts(closure.notaCajero)
+                                      .split('|')
+                                      .map((s) => s.trim())
+                                      .where((s) => s.isNotEmpty)
+                                      .map(
+                                        (line) => Padding(
+                                          padding: EdgeInsets.only(
+                                            bottom: AppTheme.spacingXS,
+                                          ),
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                '• ',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                      color:
+                                                          Colors.amber.shade800,
+                                                    ),
+                                              ),
+                                              Expanded(
+                                                child: Text(
+                                                  line,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium
+                                                      ?.copyWith(
+                                                        color: Colors
+                                                            .amber
+                                                            .shade800,
+                                                      ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                      ],
-                                    ),
-                                  )),
-                        if (!closure.notaCajero!.contains('|'))
-                          Text(
-                            closure.notaCajero!,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.amber.shade800),
+                                      ),
+                                if (!closure.notaCajero!.contains('|'))
+                                  Text(
+                                    closure.notaCajero!,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: Colors.amber.shade800,
+                                        ),
+                                  ),
+                              ],
+                            ),
                           ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                ],
+                          SizedBox(height: AppTheme.spacingMD),
+                        ],
 
-                // Otros ingresos texto si existe
+                        // Otros ingresos texto si existe
                         if (closure.otrosIngresosTexto != null &&
                             closure.otrosIngresosTexto!.isNotEmpty) ...[
-                  Container(
-                    padding: EdgeInsets.all(AppTheme.spacingSM),
-                    decoration: BoxDecoration(
-                      color: Colors.teal.shade50,
+                          Container(
+                            padding: EdgeInsets.all(AppTheme.spacingSM),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.shade50,
                               borderRadius: BorderRadius.circular(
                                 AppTheme.radiusMD,
                               ),
-                      border: Border.all(color: Colors.teal.shade200),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 18,
-                          color: Colors.teal.shade800,
-                        ),
-                        SizedBox(width: AppTheme.spacingSM),
-                        Expanded(
-                          child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Otros Ingresos',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.teal.shade900,
-                                ),
-                              ),
-                              SizedBox(height: AppTheme.spacingXS),
-                              Text(
-                                closure.otrosIngresosTexto!,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
+                              border: Border.all(color: Colors.teal.shade200),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: 18,
                                   color: Colors.teal.shade800,
                                 ),
-                              ),
-                            ],
+                                SizedBox(width: AppTheme.spacingSM),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Otros Ingresos',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.teal.shade900,
+                                            ),
+                                      ),
+                                      SizedBox(height: AppTheme.spacingXS),
+                                      Text(
+                                        closure.otrosIngresosTexto!,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Colors.teal.shade800,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                ],
+                          SizedBox(height: AppTheme.spacingMD),
+                        ],
 
-                // Movimientos individuales (simulado - en producción vendría de la BD)
-                const Text(
-                  'Movimientos Individuales',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                SizedBox(height: AppTheme.spacingSM),
-                Container(
-                  padding: EdgeInsets.all(AppTheme.spacingSM),
-                  decoration: BoxDecoration(
-                    color: AppColors.inputBackground,
+                        // Movimientos individuales (simulado - en producción vendría de la BD)
+                        const Text(
+                          'Movimientos Individuales',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        SizedBox(height: AppTheme.spacingSM),
+                        Container(
+                          padding: EdgeInsets.all(AppTheme.spacingSM),
+                          decoration: BoxDecoration(
+                            color: AppColors.inputBackground,
                             borderRadius: BorderRadius.circular(
                               AppTheme.radiusMD,
                             ),
-                  ),
-                  child: Text(
-                    'Los movimientos individuales se mostrarán aquí cuando estén disponibles.',
+                          ),
+                          child: Text(
+                            'Los movimientos individuales se mostrarán aquí cuando estén disponibles.',
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(color: AppColors.textSecondary),
-                  ),
-                ),
+                          ),
+                        ),
 
-                // Historial de auditoría
-                if (closure.auditLog.isNotEmpty) ...[
-                  SizedBox(height: AppTheme.spacingMD),
-                  const Text(
-                    'Historial de Auditoría',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: AppTheme.spacingSM),
-                  for (final log in closure.auditLog)
-                    Padding(
+                        // Historial de auditoría
+                        if (closure.auditLog.isNotEmpty) ...[
+                          SizedBox(height: AppTheme.spacingMD),
+                          const Text(
+                            'Historial de Auditoría',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          SizedBox(height: AppTheme.spacingSM),
+                          for (final log in closure.auditLog)
+                            Padding(
                               padding: EdgeInsets.only(
                                 bottom: AppTheme.spacingXS,
                               ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                   Icon(
                                     Icons.circle,
                                     size: 8,
                                     color: AppColors.primary,
                                   ),
-                          SizedBox(width: AppTheme.spacingSM),
-                          Expanded(
-                            child: Column(
+                                  SizedBox(width: AppTheme.spacingSM),
+                                  Expanded(
+                                    child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${log.usuario}: ${log.mensaje}',
+                                      children: [
+                                        Text(
+                                          '${log.usuario}: ${log.mensaje}',
                                           style: Theme.of(
                                             context,
                                           ).textTheme.bodySmall,
-                                ),
-                                Text(
-                                  _formatDate(log.timestamp),
+                                        ),
+                                        Text(
+                                          _formatDate(log.timestamp),
                                           style: Theme.of(context)
                                               .textTheme
                                               .bodySmall
-                                      ?.copyWith(
-                                        color: AppColors.textSecondary,
-                                        fontSize: AppTheme.fontSizeXS,
-                                      ),
-                                ),
-                              ],
+                                              ?.copyWith(
+                                                color: AppColors.textSecondary,
+                                                fontSize: AppTheme.fontSizeXS,
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
                         ],
-                      ),
-                    ),
-                ],
 
-                // Botones de acción si está pendiente
-                if (isPending || isClarification) ...[
-                  SizedBox(height: AppTheme.spacingMD),
-                  if (isClarification)
-                    ElevatedButton.icon(
-                      onPressed: () {
+                        // Botones de acción si está pendiente
+                        if (isPending || isClarification) ...[
+                          SizedBox(height: AppTheme.spacingMD),
+                          if (isClarification)
+                            ElevatedButton.icon(
+                              onPressed: () {
                                 final reasonController =
                                     TextEditingController();
-                        showDialog(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Solicitar Aclaración'),
-                            content: TextField(
-                              controller: reasonController,
-                              decoration: const InputDecoration(
-                                labelText: 'Razón de la aclaración *',
-                                border: OutlineInputBorder(),
-                              ),
-                              maxLines: 3,
-                            ),
-                            actions: [
-                              TextButton(
+                                showDialog(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Solicitar Aclaración'),
+                                    content: TextField(
+                                      controller: reasonController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Razón de la aclaración *',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      maxLines: 3,
+                                    ),
+                                    actions: [
+                                      TextButton(
                                         onPressed: () =>
                                             Navigator.of(context).pop(),
-                                child: const Text('Cancelar'),
-                              ),
-                              ElevatedButton(
-                                onPressed: () {
+                                        child: const Text('Cancelar'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () {
                                           if (reasonController
                                               .text
                                               .isNotEmpty) {
                                             controller
                                                 .requestCashCloseClarification(
-                                      closure.id,
-                                      reasonController.text,
-                                    );
-                                    Navigator.of(context).pop();
-                                    Navigator.of(context).pop();
+                                                  closure.id,
+                                                  reasonController.text,
+                                                );
+                                            Navigator.of(context).pop();
+                                            Navigator.of(context).pop();
                                             ScaffoldMessenger.of(
                                               context,
                                             ).showSnackBar(
-                                      const SnackBar(
+                                              const SnackBar(
                                                 content: Text(
                                                   'Aclaración solicitada',
                                                 ),
-                                        backgroundColor: Colors.orange,
+                                                backgroundColor: Colors.orange,
+                                              ),
+                                            );
+                                          }
+                                        },
+                                        child: const Text('Enviar'),
                                       ),
-                                    );
-                                  }
-                                },
-                                child: const Text('Enviar'),
+                                    ],
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.help_outline),
+                              label: const Text('Solicitar aclaración'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orange,
+                                foregroundColor: Colors.white,
                               ),
-                            ],
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.help_outline),
-                      label: const Text('Solicitar aclaración'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  SizedBox(width: AppTheme.spacingSM),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      controller.markCashCloseAsVerified(closure.id);
-                      Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
+                            ),
+                          SizedBox(width: AppTheme.spacingSM),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              controller.markCashCloseAsVerified(closure.id);
+                              Navigator.of(context).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
                                   content: Text(
                                     'Cierre marcado como verificado',
                                   ),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.check_circle),
-                    label: const Text('Marcar verificado'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.check_circle),
+                            label: const Text('Marcar verificado'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                  ),
-                ],
-              ],
-            ),
                   ),
                 ),
                 // Footer con botones
@@ -14286,7 +15916,9 @@ class AdminApp extends StatelessWidget {
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(esAp ? 'Aprobar apertura de caja' : 'Aprobar cierre de caja'),
+        title: Text(
+          esAp ? 'Aprobar apertura de caja' : 'Aprobar cierre de caja',
+        ),
         content: Text(
           esAp
               ? '¿Confirmas aprobar esta apertura de caja?'
@@ -14356,7 +15988,9 @@ class AdminApp extends StatelessWidget {
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(esAp ? 'Rechazar apertura de caja' : 'Rechazar cierre de caja'),
+        title: Text(
+          esAp ? 'Rechazar apertura de caja' : 'Rechazar cierre de caja',
+        ),
         content: Form(
           key: formKey,
           child: SingleChildScrollView(
@@ -15033,7 +16667,7 @@ class AdminApp extends StatelessWidget {
                 'Total declarado',
                 '\$${closure.totalDeclarado.toStringAsFixed(2)}',
               ),
-              
+
               // Notas del cajero
               if (closure.notaCajero != null &&
                   closure.notaCajero!.isNotEmpty) ...[
@@ -15060,9 +16694,9 @@ class AdminApp extends StatelessWidget {
                             'Notas del Cajero',
                             style: Theme.of(context).textTheme.titleSmall
                                 ?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.amber.shade900,
-                            ),
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.amber.shade900,
+                                ),
                           ),
                         ],
                       ),
@@ -15106,9 +16740,9 @@ class AdminApp extends StatelessWidget {
                               'Otros Ingresos',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: Colors.teal.shade900,
-                              ),
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.teal.shade900,
+                                  ),
                             ),
                             SizedBox(height: AppTheme.spacingXS),
                             Text(
@@ -15866,7 +17500,10 @@ class AdminApp extends StatelessWidget {
                   label: const Text('Limpiar todas'),
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.warning,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     minimumSize: const Size(0, 32),
                   ),
                 ),
@@ -15905,12 +17542,14 @@ class AdminApp extends StatelessWidget {
                     children: [
                       ...alertsToShow
                           .take(3)
-                          .map((alert) => _buildKitchenAlertCard(
-                                context,
-                                alert,
-                                controller,
-                                isTablet,
-                              )),
+                          .map(
+                            (alert) => _buildKitchenAlertCard(
+                              context,
+                              alert,
+                              controller,
+                              isTablet,
+                            ),
+                          ),
                       if (alertsToShow.length > 3)
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
@@ -16295,17 +17934,14 @@ class AdminApp extends StatelessWidget {
 
   /// Formatea la columna Productos y el texto de Método de pago para tarjeta, transferencia y pago mixto.
   static ({List<String> products, String paymentMethod})
-      _formatConsumptionPaymentDisplay(
-    payment_models.PaymentModel payment,
-  ) {
+  _formatConsumptionPaymentDisplay(payment_models.PaymentModel payment) {
     final products = <String>[];
     String paymentMethod;
 
     switch (payment.type) {
       case payment_models.PaymentType.card:
-        final tipo = (payment.cardMethod ?? '')
-                .toLowerCase()
-                .contains('credito')
+        final tipo =
+            (payment.cardMethod ?? '').toLowerCase().contains('credito')
             ? 'crédito'
             : 'débito';
         paymentMethod = 'Tarjeta $tipo';
@@ -16350,16 +17986,14 @@ class AdminApp extends StatelessWidget {
         if ((payment.notes ?? '').trim().isNotEmpty) {
           final obs = _sanitizePaymentNotes(payment.notes!.trim());
           products.add(obs.length > 200 ? '${obs.substring(0, 200)}…' : obs);
-        } else if (payment.cashApplied != null &&
-            payment.cashApplied! > 0) {
+        } else if (payment.cashApplied != null && payment.cashApplied! > 0) {
           products.add(
             'Efectivo \$${payment.cashApplied!.toStringAsFixed(0)} + resto',
           );
         }
         break;
       default:
-        paymentMethod =
-            payment_models.PaymentType.getTypeText(payment.type);
+        paymentMethod = payment_models.PaymentType.getTypeText(payment.type);
         if ((payment.notes ?? '').trim().isNotEmpty) {
           products.add(_sanitizePaymentNotes(payment.notes!.trim()));
         } else {
@@ -16395,8 +18029,7 @@ class AdminApp extends StatelessWidget {
               }
               return 'Mesa $n';
             }();
-      final formatted =
-          _formatConsumptionPaymentDisplay(payment);
+      final formatted = _formatConsumptionPaymentDisplay(payment);
 
       return _ConsumptionRecord(
         id: payment.billId,
@@ -16422,7 +18055,7 @@ class AdminApp extends StatelessWidget {
 
     try {
       final deleted = await controller.deleteCustomCategory(category);
-      
+
       if (deleted) {
         message = 'Categoría "$category" eliminada.';
         backgroundColor = AppColors.success;
@@ -16634,7 +18267,9 @@ class _InventoryAlertSnackBarListenerState
       messenger.showSnackBar(
         SnackBar(
           content: Text(mensaje),
-          backgroundColor: (a['esSinStock'] == true) ? Colors.red : Colors.orange,
+          backgroundColor: (a['esSinStock'] == true)
+              ? Colors.red
+              : Colors.orange,
           duration: const Duration(seconds: 5),
         ),
       );
@@ -17061,71 +18696,71 @@ class _IngredientFormWidgetState extends State<_IngredientFormWidget> {
           if (!isCustom)
             Builder(
               builder: (context) {
-              final items = _itemsForSelectedCategory();
-              if (items.isEmpty) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.all(AppTheme.spacingMD),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.1),
+                final items = _itemsForSelectedCategory();
+                if (items.isEmpty) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(AppTheme.spacingMD),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(
                             AppTheme.radiusMD,
                           ),
-                      ),
-                      child: Text(
-                        'No hay ingredientes en esta categoría. Puedes agregar uno personalizado.',
+                        ),
+                        child: Text(
+                          'No hay ingredientes en esta categoría. Puedes agregar uno personalizado.',
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(color: Colors.orange.shade900),
+                        ),
                       ),
+                      SizedBox(height: AppTheme.spacingMD),
+                      TextButton.icon(
+                        onPressed: () => _toggleCustomMode(true),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Agregar ingrediente personalizado'),
+                      ),
+                    ],
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selectedInventoryItemId ?? items.first.id,
+                      decoration: const InputDecoration(
+                        labelText: 'Ingrediente del inventario',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: items
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item.id,
+                              child: Text('${item.name} (${item.unit})'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          selectedInventoryItemId = value;
+                        });
+                        _syncInventorySelection();
+                      },
+                      validator: (value) {
+                        if (isCustom) return null;
+                        if (value == null || value.isEmpty) {
+                          return 'Selecciona un ingrediente';
+                        }
+                        return null;
+                      },
                     ),
                     SizedBox(height: AppTheme.spacingMD),
-                    TextButton.icon(
-                      onPressed: () => _toggleCustomMode(true),
-                      icon: const Icon(Icons.add),
-                      label: const Text('Agregar ingrediente personalizado'),
-                    ),
                   ],
                 );
-              }
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  DropdownButtonFormField<String>(
-                    value: selectedInventoryItemId ?? items.first.id,
-                    decoration: const InputDecoration(
-                      labelText: 'Ingrediente del inventario',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: items
-                        .map(
-                          (item) => DropdownMenuItem(
-                            value: item.id,
-                            child: Text('${item.name} (${item.unit})'),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        selectedInventoryItemId = value;
-                      });
-                      _syncInventorySelection();
-                    },
-                    validator: (value) {
-                      if (isCustom) return null;
-                      if (value == null || value.isEmpty) {
-                        return 'Selecciona un ingrediente';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: AppTheme.spacingMD),
-                ],
-              );
               },
             ),
           if (isCustom) ...[
@@ -17275,12 +18910,12 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
   Future<void> _loadOrdenData() async {
     try {
       final ordenesService = OrdenesService();
-      
+
       // Detectar si es cuenta agrupada
       final isGrouped =
           (widget.ticket.isGrouped == true) ||
-                       widget.ticket.id.startsWith('CUENTA-AGRUPADA-');
-      
+          widget.ticket.id.startsWith('CUENTA-AGRUPADA-');
+
       // Obtener lista de ordenIds
       List<int> ordenIdsToLoad;
       if (isGrouped &&
@@ -17323,7 +18958,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
       double propinaTotal = 0.0;
       double totalTotal = 0.0;
       final List<dynamic> todosLosItems = [];
-      
+
       String? mesaCodigo;
       String? clienteNombre;
       String? clienteTelefono;
@@ -17334,7 +18969,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         final ordenData = await ordenesService.getOrden(ordenId);
         if (ordenData != null) {
           todasLasOrdenes.add(ordenData);
-          
+
           // Acumular totales
           subtotalTotal += (ordenData['subtotal'] as num?)?.toDouble() ?? 0.0;
           descuentoTotal +=
@@ -17344,7 +18979,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           propinaTotal +=
               (ordenData['propinaSugerida'] as num?)?.toDouble() ?? 0.0;
           totalTotal += (ordenData['total'] as num?)?.toDouble() ?? 0.0;
-          
+
           // Combinar items, asegurando que los precios estén correctos
           final items = ordenData['items'] as List<dynamic>? ?? [];
           for (final item in items) {
@@ -17354,10 +18989,10 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                 (item['precioUnitario'] as num?)?.toDouble() ?? 0.0;
             final totalLineaBackend =
                 (item['totalLinea'] as num?)?.toDouble() ?? 0.0;
-            
+
             // Si totalLinea es 0 o incorrecto, recalcular
             double totalLineaCalculado = precioUnitario * cantidad;
-            
+
             // Si hay modificadores, sumar sus precios
             final modificadores = item['modificadores'] as List<dynamic>? ?? [];
             double totalModificadores = 0.0;
@@ -17366,16 +19001,16 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                   (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
               totalModificadores += modPrecio * cantidad;
             }
-            
+
             totalLineaCalculado += totalModificadores;
-            
+
             // Usar el totalLinea del backend si es razonable, de lo contrario usar el calculado
             final totalLineaFinal =
                 (totalLineaBackend <= 0.01 ||
-                                   (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
+                    (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
                 ? totalLineaCalculado
                 : totalLineaBackend;
-            
+
             // Si precioUnitario es 0 pero totalLinea tiene valor, calcular precio unitario
             double precioUnitarioFinal = precioUnitario;
             if (precioUnitarioFinal <= 0.01 &&
@@ -17384,15 +19019,15 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
               precioUnitarioFinal =
                   (totalLineaFinal - totalModificadores) / cantidad;
             }
-            
+
             // Crear una copia del item con los valores corregidos
             final itemCorregido = Map<String, dynamic>.from(item);
             itemCorregido['precioUnitario'] = precioUnitarioFinal;
             itemCorregido['totalLinea'] = totalLineaFinal;
-            
+
             todosLosItems.add(itemCorregido);
           }
-          
+
           // Tomar datos de la primera orden (o la que tenga mesa si es para mesa)
           if (mesaCodigo == null)
             mesaCodigo = ordenData['mesaCodigo'] as String?;
@@ -17402,12 +19037,14 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             clienteTelefono = ordenData['clienteTelefono'] as String?;
           if (waiterName == null)
             waiterName = ordenData['creadoPorNombre'] as String?;
-          
+
           // Fecha más antigua (parsear en zona local CDMX como el resto del proyecto)
           final fechaOrdenStr = ordenData['creadoEn'] as String?;
           if (fechaOrdenStr != null) {
             try {
-              final fechaOrden = date_utils.AppDateUtils.parseToLocal(fechaOrdenStr);
+              final fechaOrden = date_utils.AppDateUtils.parseToLocal(
+                fechaOrdenStr,
+              );
               final fechaComparar = fechaMasAntigua;
               if (fechaComparar == null || fechaOrden.isBefore(fechaComparar)) {
                 fechaMasAntigua = fechaOrden;
@@ -17442,7 +19079,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         'creadoEn':
             fechaMasAntigua?.toIso8601String() ??
             widget.ticket.createdAt.toIso8601String(),
-        'folio': isGrouped 
+        'folio': isGrouped
             ? 'CUENTA AGRUPADA (${ordenIdsToLoad.map((id) => 'ORD-${id.toString().padLeft(6, '0')}').join(', ')})'
             : 'ORD-${ordenIdsToLoad.first.toString().padLeft(6, '0')}',
       };
@@ -17490,29 +19127,29 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
               ],
             ),
             const SizedBox(height: 16),
-            
+
             // Contenido
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
                           Icon(
                             Icons.error_outline,
                             size: 48,
                             color: Colors.red,
                           ),
-                              const SizedBox(height: 16),
-                              Text(_error!, textAlign: TextAlign.center),
-                            ],
-                          ),
-                        )
+                          const SizedBox(height: 16),
+                          Text(_error!, textAlign: TextAlign.center),
+                        ],
+                      ),
+                    )
                   : SingleChildScrollView(child: _buildTicketContent()),
             ),
-            
+
             // Botón cerrar
             const SizedBox(height: 16),
             SizedBox(
@@ -17595,7 +19232,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             decoration: BoxDecoration(
               color: AppColors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+              border: Border.all(
+                color: AppColors.primary.withValues(alpha: 0.35),
+              ),
             ),
             child: Row(
               children: [
@@ -17645,13 +19284,18 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         ],
 
         // ─── Mesa / Cliente ───
-        if (mesaCodigo != null || (clienteNombre != null && splitCount <= 1)) ...[
+        if (mesaCodigo != null ||
+            (clienteNombre != null && splitCount <= 1)) ...[
           if (mesaCodigo != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 2),
               child: Row(
                 children: [
-                  Icon(Icons.table_restaurant, size: 14, color: AppColors.textSecondary),
+                  Icon(
+                    Icons.table_restaurant,
+                    size: 14,
+                    color: AppColors.textSecondary,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     'Mesa: $mesaCodigo',
@@ -17747,7 +19391,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                 final modificadores =
                     item['modificadores'] as List<dynamic>? ?? [];
                 final nota = item['nota'] as String?;
-                
+
                 // Calcular total de modificadores
                 double totalModificadores = 0.0;
                 for (final mod in modificadores) {
@@ -17755,16 +19399,16 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                       (mod['precioUnitario'] as num?)?.toDouble() ?? 0.0;
                   totalModificadores += modPrecio * cantidad;
                 }
-                
+
                 // Calcular totalLinea correctamente
                 double totalLineaCalculado =
                     (precioUnitario * cantidad) + totalModificadores;
                 final totalLinea =
                     (totalLineaBackend <= 0.01 ||
-                                   (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
+                        (totalLineaBackend - totalLineaCalculado).abs() > 0.01)
                     ? totalLineaCalculado
                     : totalLineaBackend;
-                
+
                 // Si precioUnitario es 0 pero tenemos totalLinea, calcular precio unitario
                 double precioUnitarioFinal = precioUnitario;
                 if (precioUnitarioFinal <= 0.01 &&
@@ -18094,7 +19738,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             ],
           ),
         ),
-        
+
         // Método de pago
         if (widget.ticket.paymentMethod != null &&
             widget.ticket.paymentMethod!.isNotEmpty) ...[
@@ -18104,15 +19748,13 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             decoration: BoxDecoration(
               color: AppColors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+              border: Border.all(
+                color: AppColors.primary.withValues(alpha: 0.3),
+              ),
             ),
             child: Row(
               children: [
-                Icon(
-                  Icons.payment,
-                  size: 16,
-                  color: AppColors.primary,
-                ),
+                Icon(Icons.payment, size: 16, color: AppColors.primary),
                 const SizedBox(width: 8),
                 Text(
                   'Método de pago: ${_formatPaymentMethod(widget.ticket.paymentMethod)}',
@@ -18126,7 +19768,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             ),
           ),
         ],
-        
+
         // Propina
         if (widget.ticket.tipAmount != null &&
             widget.ticket.tipAmount! > 0) ...[
@@ -18158,7 +19800,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
             ),
           ),
         ],
-        
+
         // Información de pago (banco, referencia, notas)
         if (widget.ticket.paymentNotes != null &&
             widget.ticket.paymentNotes!.isNotEmpty) ...[
@@ -18188,9 +19830,11 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
   List<Widget> _parsePaymentNotes(String paymentNotes) {
     final List<Widget> widgets = [];
     final notesLower = paymentNotes.toLowerCase();
-    
+
     // Detectar si es un pago mixto
-    if (notesLower.contains('pago mixto') || notesLower.contains('pago 1:') || notesLower.contains('pago 2:')) {
+    if (notesLower.contains('pago mixto') ||
+        notesLower.contains('pago 1:') ||
+        notesLower.contains('pago 2:')) {
       // Es un pago mixto, mostrar el desglose completo
       widgets.add(
         Row(
@@ -18208,12 +19852,12 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           ],
         ),
       );
-      
+
       // Dividir por líneas y mostrar cada pago
       final lineas = paymentNotes.split('\n');
       for (final linea in lineas) {
         if (linea.trim().isEmpty) continue;
-        
+
         // Si es la línea del total, mostrarla destacada
         if (linea.toLowerCase().contains('total:')) {
           widgets.add(const SizedBox(height: 8));
@@ -18263,14 +19907,17 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
                               TextSpan(text: 'Pago $n: '),
                               TextSpan(
                                 text: metodo,
-                                style: const TextStyle(fontWeight: FontWeight.w700),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                               TextSpan(
                                 text: '   $monto',
                                 style: TextStyle(
                                   color: AppColors.primary,
                                   fontWeight: FontWeight.w800,
-                                  fontSize: (widget.isTablet ? 10.0 : 9.0) + 0.5,
+                                  fontSize:
+                                      (widget.isTablet ? 10.0 : 9.0) + 0.5,
                                 ),
                               ),
                             ],
@@ -18325,26 +19972,32 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
           }
         }
       }
-      
+
       return widgets;
     }
-    
+
     // Si no es pago mixto, usar la lógica original para pagos individuales
     String? banco;
     String? referencia;
     String? notas;
-    
+
     // Extraer banco
     if (notesLower.contains('banco:')) {
-      final bancoMatch = RegExp(r'banco:\s*([^|]+)', caseSensitive: false).firstMatch(paymentNotes);
+      final bancoMatch = RegExp(
+        r'banco:\s*([^|]+)',
+        caseSensitive: false,
+      ).firstMatch(paymentNotes);
       if (bancoMatch != null) {
         banco = bancoMatch.group(1)?.trim();
       }
     }
-    
+
     // Extraer referencia: buscar primero "Referencia:" o "Ref:" explícito
     if (notesLower.contains('referencia:') || notesLower.contains('ref:')) {
-      final refMatch = RegExp(r'(?:referencia|ref):\s*([^|]+)', caseSensitive: false).firstMatch(paymentNotes);
+      final refMatch = RegExp(
+        r'(?:referencia|ref):\s*([^|]+)',
+        caseSensitive: false,
+      ).firstMatch(paymentNotes);
       if (refMatch != null) {
         referencia = refMatch.group(1)?.trim();
         // Limpiar cualquier pipe o texto adicional después
@@ -18353,7 +20006,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         }
       }
     }
-    
+
     // Si no se encontró referencia explícita, buscar después de un pipe
     if (referencia == null || referencia.isEmpty) {
       final partes = paymentNotes.split('|');
@@ -18362,12 +20015,18 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         for (int i = 1; i < partes.length; i++) {
           final parte = partes[i].trim();
           // Si la parte no contiene "Banco:" ni "Observaciones:", podría ser la referencia
-          if (!parte.toLowerCase().contains('banco:') && 
+          if (!parte.toLowerCase().contains('banco:') &&
               !parte.toLowerCase().contains('observaciones:') &&
               parte.isNotEmpty) {
             // Remover "Referencia:" o "Ref:" si existe
-            var refTemp = parte.replaceAll(RegExp(r'referencia:\s*', caseSensitive: false), '');
-            refTemp = refTemp.replaceAll(RegExp(r'ref:\s*', caseSensitive: false), '');
+            var refTemp = parte.replaceAll(
+              RegExp(r'referencia:\s*', caseSensitive: false),
+              '',
+            );
+            refTemp = refTemp.replaceAll(
+              RegExp(r'ref:\s*', caseSensitive: false),
+              '',
+            );
             refTemp = refTemp.trim();
             if (refTemp.isNotEmpty) {
               referencia = refTemp;
@@ -18377,7 +20036,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         }
       }
     }
-    
+
     // Si no se encontró banco ni referencia, usar todo como notas
     if (banco == null && referencia == null) {
       notas = paymentNotes;
@@ -18385,18 +20044,34 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
       // Extraer notas (lo que sobra después de banco y referencia)
       var tempNotes = paymentNotes;
       if (banco != null) {
-        tempNotes = tempNotes.replaceAll(RegExp(r'banco:\s*[^|]+', caseSensitive: false), '').trim();
+        tempNotes = tempNotes
+            .replaceAll(RegExp(r'banco:\s*[^|]+', caseSensitive: false), '')
+            .trim();
         if (referencia != null) {
-          tempNotes = tempNotes.replaceAll(RegExp(r'[|]\s*' + referencia.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+          tempNotes = tempNotes
+              .replaceAll(
+                RegExp(
+                  r'[|]\s*' +
+                      referencia.replaceAll(
+                        RegExp(r'[.*+?^${}()|[\]\\]'),
+                        r'\\$&',
+                      ),
+                  caseSensitive: false,
+                ),
+                '',
+              )
+              .trim();
         } else {
           tempNotes = tempNotes.replaceAll('|', '').trim();
         }
       }
-      if (tempNotes.isNotEmpty && tempNotes != banco && tempNotes != referencia) {
+      if (tempNotes.isNotEmpty &&
+          tempNotes != banco &&
+          tempNotes != referencia) {
         notas = tempNotes;
       }
     }
-    
+
     // Construir widgets
     widgets.add(
       Row(
@@ -18414,7 +20089,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         ],
       ),
     );
-    
+
     if (banco != null && banco.isNotEmpty) {
       widgets.add(const SizedBox(height: 6));
       widgets.add(
@@ -18428,7 +20103,7 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         ),
       );
     }
-    
+
     if (referencia != null && referencia.isNotEmpty) {
       widgets.add(const SizedBox(height: 4));
       widgets.add(
@@ -18442,26 +20117,72 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         ),
       );
     }
-    
+
     // Solo mostrar notas si no contienen información ya mostrada (banco o referencia)
     if (notas != null && notas.isNotEmpty) {
       // Limpiar notas de cualquier referencia duplicada
       var notasLimpias = notas;
       if (referencia != null && referencia.isNotEmpty) {
         // Remover cualquier mención de "Referencia: X" o "Ref: X" de las notas
-        notasLimpias = notasLimpias.replaceAll(RegExp(r'(?:referencia|ref):\s*' + referencia.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
-        notasLimpias = notasLimpias.replaceAll(RegExp(r'\|\s*(?:referencia|ref):\s*' + referencia.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+        notasLimpias = notasLimpias
+            .replaceAll(
+              RegExp(
+                r'(?:referencia|ref):\s*' +
+                    referencia.replaceAll(
+                      RegExp(r'[.*+?^${}()|[\]\\]'),
+                      r'\\$&',
+                    ),
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .trim();
+        notasLimpias = notasLimpias
+            .replaceAll(
+              RegExp(
+                r'\|\s*(?:referencia|ref):\s*' +
+                    referencia.replaceAll(
+                      RegExp(r'[.*+?^${}()|[\]\\]'),
+                      r'\\$&',
+                    ),
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .trim();
       }
       if (banco != null && banco.isNotEmpty) {
         // Remover cualquier mención de "Banco: X" de las notas
-        notasLimpias = notasLimpias.replaceAll(RegExp(r'banco:\s*' + banco.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
-        notasLimpias = notasLimpias.replaceAll(RegExp(r'\|\s*banco:\s*' + banco.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'), caseSensitive: false), '').trim();
+        notasLimpias = notasLimpias
+            .replaceAll(
+              RegExp(
+                r'banco:\s*' +
+                    banco.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'),
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .trim();
+        notasLimpias = notasLimpias
+            .replaceAll(
+              RegExp(
+                r'\|\s*banco:\s*' +
+                    banco.replaceAll(RegExp(r'[.*+?^${}()|[\]\\]'), r'\\$&'),
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .trim();
       }
       // Limpiar pipes sobrantes y espacios
-      notasLimpias = notasLimpias.replaceAll(RegExp(r'^\|\s*|\s*\|$'), '').trim();
-      
+      notasLimpias = notasLimpias
+          .replaceAll(RegExp(r'^\|\s*|\s*\|$'), '')
+          .trim();
+
       // Solo mostrar si quedó algo útil después de limpiar
-      if (notasLimpias.isNotEmpty && notasLimpias != banco && notasLimpias != referencia) {
+      if (notasLimpias.isNotEmpty &&
+          notasLimpias != banco &&
+          notasLimpias != referencia) {
         widgets.add(const SizedBox(height: 4));
         widgets.add(
           Text(
@@ -18474,18 +20195,21 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         );
       }
     }
-    
+
     return widgets;
   }
-  
+
   // Parsear detalles adicionales de un pago (banco, referencia, observaciones)
   List<Widget> _parsePaymentDetails(String detalles) {
     final List<Widget> widgets = [];
     final detallesLower = detalles.toLowerCase();
-    
+
     // Buscar banco
     if (detallesLower.contains('banco:')) {
-      final bancoMatch = RegExp(r'banco:\s*([^|]+)', caseSensitive: false).firstMatch(detalles);
+      final bancoMatch = RegExp(
+        r'banco:\s*([^|]+)',
+        caseSensitive: false,
+      ).firstMatch(detalles);
       if (bancoMatch != null) {
         final banco = bancoMatch.group(1)?.trim();
         if (banco != null && banco.isNotEmpty) {
@@ -18505,10 +20229,14 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         }
       }
     }
-    
+
     // Buscar referencia
-    if (detallesLower.contains('referencia:') || detallesLower.contains('ref:')) {
-      final refMatch = RegExp(r'(?:referencia|ref):\s*([^|]+)', caseSensitive: false).firstMatch(detalles);
+    if (detallesLower.contains('referencia:') ||
+        detallesLower.contains('ref:')) {
+      final refMatch = RegExp(
+        r'(?:referencia|ref):\s*([^|]+)',
+        caseSensitive: false,
+      ).firstMatch(detalles);
       if (refMatch != null) {
         final referencia = refMatch.group(1)?.trim();
         if (referencia != null && referencia.isNotEmpty) {
@@ -18528,15 +20256,20 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
         }
       }
     }
-    
+
     // Buscar observaciones (evitar duplicar si solo repite Banco/Referencia)
     if (detallesLower.contains('observaciones:')) {
-      final obsMatch = RegExp(r'observaciones:\s*(.+)', caseSensitive: false).firstMatch(detalles);
+      final obsMatch = RegExp(
+        r'observaciones:\s*(.+)',
+        caseSensitive: false,
+      ).firstMatch(detalles);
       if (obsMatch != null) {
         final observaciones = obsMatch.group(1)?.trim();
         if (observaciones != null && observaciones.isNotEmpty) {
           final o = observaciones.toLowerCase();
-          final soloBancoRef = (o.contains('banco:') && (o.contains('referencia:') || o.contains('ref:')));
+          final soloBancoRef =
+              (o.contains('banco:') &&
+              (o.contains('referencia:') || o.contains('ref:')));
           if (!soloBancoRef) {
             widgets.add(
               Padding(
@@ -18563,9 +20296,9 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
     if (paymentMethod == null || paymentMethod.isEmpty) {
       return 'No especificado';
     }
-    
+
     final method = paymentMethod.trim().toLowerCase();
-    
+
     // Normalizar a español
     if (method.contains('efectivo') || method == 'cash') {
       return 'Efectivo';
@@ -18582,18 +20315,19 @@ class _TicketDetailsModalState extends State<_TicketDetailsModal> {
     if (method.contains('tarjeta') || method == 'card') {
       return 'Tarjeta';
     }
-    if (method.contains('mixto') || method == 'mixed' || method.contains('pago mixto')) {
+    if (method.contains('mixto') ||
+        method == 'mixed' ||
+        method.contains('pago mixto')) {
       return 'Pago Mixto';
     }
-    
+
     // Si ya está en español, capitalizar correctamente
     return paymentMethod
         .split(' ')
         .map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+          if (word.isEmpty) return word;
+          return word[0].toUpperCase() + word.substring(1).toLowerCase();
         })
         .join(' ');
   }
 }
-

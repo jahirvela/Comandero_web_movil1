@@ -70,6 +70,55 @@ export interface CierreCajaItem {
   turnoLabel?: string | null;
 }
 
+function normalizeNotasHuella(s: string | null | undefined): string {
+  if (s == null || !String(s).trim()) return '';
+  return String(s)
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+/** Colapsa el mismo evento insertado varias veces en BD (IDs distintos). No fusiona filas `calc-*`. */
+function huellaListaCierre(item: CierreCajaItem): string {
+  if (item.id.startsWith('calc-')) return `calc:${item.id}`;
+  const fechaMs = Date.parse(item.fecha);
+  const bucket = Number.isFinite(fechaMs) ? Math.floor(fechaMs / 60000) : 0;
+  const evt = (item.eventoTipo ?? '').trim().toLowerCase();
+  const turno = (item.turnoCodigo ?? '').trim().toLowerCase();
+  const usr = (item.cajeroNombre ?? '').trim().toLowerCase();
+  const cents = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100);
+  const note = normalizeNotasHuella(item.notas ?? null);
+  const tipoTag =
+    evt === 'apertura' ? 'A' : evt === 'cierre_dia' ? 'D' : 'C';
+  return `${tipoTag}|${evt}|${turno}|${usr}|${bucket}|${cents(item.totalVentas)}|${cents(
+    item.efectivoInicial ?? 0
+  )}|${cents(item.totalEfectivo)}|${cents(item.totalTarjeta)}|${note}`;
+}
+
+function dedupeListarCierresResult(items: CierreCajaItem[]): CierreCajaItem[] {
+  const groups = new Map<string, CierreCajaItem[]>();
+  for (const it of items) {
+    const k = huellaListaCierre(it);
+    const g = groups.get(k);
+    if (g) g.push(it);
+    else groups.set(k, [it]);
+  }
+  const out: CierreCajaItem[] = [];
+  for (const arr of groups.values()) {
+    if (arr.length === 1) {
+      out.push(arr[0]);
+      continue;
+    }
+    arr.sort((a, b) => {
+      const ida = a.cierreId ?? Number.MAX_SAFE_INTEGER;
+      const idb = b.cierreId ?? Number.MAX_SAFE_INTEGER;
+      return ida - idb;
+    });
+    out.push(arr[0]);
+  }
+  return out;
+}
+
 export const listarCierresCaja = async (
   fechaInicio?: Date,
   fechaFin?: Date,
@@ -412,8 +461,11 @@ export const listarCierresCaja = async (
     return (a.cajeroNombre || '').localeCompare(b.cajeroNombre || '');
   });
   
-  console.log(`✅ CierresRepository: Total de ${resultado.length} cierres - ${rowsManuales.length} manuales + ${cierresCalculadosAgregados} calculados (sin manual)`);
-  return resultado;
+  const deduped = dedupeListarCierresResult(resultado);
+  console.log(
+    `✅ CierresRepository: Total ${deduped.length} cierres (antes dedup ${resultado.length}) — ${rowsManuales.length} manuales + ${cierresCalculadosAgregados} calculados (sin manual)`
+  );
+  return deduped;
 };
 
 export interface CrearCierreCajaInput {
@@ -452,6 +504,48 @@ export const crearCierreCaja = async (
 
   // Registrar cada evento por separado (apertura, cierre de turno, cierre general del día).
   const eventoTipo = input.eventoTipo ?? 'cierre';
+
+  const notasTrim = (notasCompletas ?? '').trim();
+
+  // Evitar doble INSERT por doble toque / reintento del cliente en pocos segundos (mismo usuario y mismos montos).
+  if (usuarioId != null && usuarioId > 0) {
+    const [dupRows] = await pool.execute<RowDataPacket[]>(
+      `
+      SELECT id FROM caja_cierre
+      WHERE creado_por_usuario_id = :usuarioId
+        AND fecha = :fecha
+        AND evento_tipo = :eventoTipo
+        AND ABS(COALESCE(total_efectivo, 0) - :totalEfectivo) < 0.06
+        AND ABS(COALESCE(total_tarjeta, 0) - :totalTarjeta) < 0.06
+        AND ABS(COALESCE(efectivo_inicial, 0) - :efectivoInicial) < 0.06
+        AND TRIM(COALESCE(notas, '')) = :notasTrim
+        AND creado_en >= UTC_TIMESTAMP() - INTERVAL 120 SECOND
+      ORDER BY id ASC
+      LIMIT 1
+      `,
+      {
+        usuarioId,
+        fecha: fechaStr,
+        eventoTipo,
+        totalEfectivo: input.totalEfectivo ?? 0,
+        totalTarjeta: input.totalTarjeta ?? 0,
+        efectivoInicial: input.efectivoInicial ?? 0,
+        notasTrim
+      }
+    );
+    if (Array.isArray(dupRows) && dupRows.length > 0) {
+      const existingId = Number((dupRows[0] as RowDataPacket).id);
+      if (Number.isFinite(existingId) && existingId > 0) {
+        const detalleExistente = await obtenerCierreCajaPorId(existingId);
+        if (detalleExistente) {
+          console.log(
+            `♻️ crearCierreCaja: anti-duplicado — retornando cierre existente id=${existingId}`
+          );
+          return detalleExistente;
+        }
+      }
+    }
+  }
 
   // creado_en siempre en UTC (sesión pool = +00:00), hora real del registro.
   let result: ResultSetHeader;

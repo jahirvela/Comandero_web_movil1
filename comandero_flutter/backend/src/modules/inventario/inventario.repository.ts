@@ -39,12 +39,17 @@ export const listarInsumos = async () => {
   await ensureCodigoBarrasColumnExists();
   await ensureContenidoPorPiezaColumnsExist();
   try {
+    await ensureFormulatedInventorySchema();
     const [rows] = await pool.query<InventarioItemRow[]>(
       `
-      SELECT *
-      FROM inventario_item
-      WHERE activo = 1
-      ORDER BY categoria, nombre
+      SELECT
+        i.*,
+        (
+          SELECT COUNT(*) FROM inventario_formulacion_linea f WHERE f.inventario_item_id = i.id
+        ) AS num_lineas_formulacion
+      FROM inventario_item i
+      WHERE i.activo = 1
+      ORDER BY i.categoria, i.nombre
       `
     );
 
@@ -62,12 +67,25 @@ export const listarInsumos = async () => {
       activo: Boolean(row.activo),
       contenidoPorPieza: (row as InventarioItemRow).contenido_por_pieza == null ? null : Number((row as InventarioItemRow).contenido_por_pieza),
       unidadContenido: (row as InventarioItemRow).unidad_contenido ?? null,
+      esFormulado: Boolean((row as InventarioItemRow & { es_formulado?: number }).es_formulado),
+      numLineasFormulacion: Number((row as unknown as { num_lineas_formulacion?: number }).num_lineas_formulacion ?? 0),
       creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
       actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
     }));
   } catch (error: any) {
-    // Si la columna no existe, intentar sin ordenar por categoria
-    if (error.code === 'ER_BAD_FIELD_ERROR' || error.message?.includes('Unknown column')) {
+    const errMsg = String(error?.message ?? '');
+    const noSuchTable =
+      error?.code === 'ER_NO_SUCH_TABLE' ||
+      errMsg.includes("doesn't exist") ||
+      errMsg.includes('does not exist');
+    // Falta tabla BOM / columna incompatible: lista mínima sin subconsulta BOM
+    if (
+      error.code === 'ER_BAD_FIELD_ERROR' ||
+      error.code === 'ER_NO_SUCH_TABLE' ||
+      error.message?.includes('Unknown column') ||
+      noSuchTable ||
+      error.code === 'ER_CANT_CREATE_TABLE'
+    ) {
       const [rows] = await pool.query<InventarioItemRow[]>(
         `
         SELECT id, nombre, unidad, cantidad_actual, stock_minimo, costo_unitario, activo, creado_en, actualizado_en
@@ -90,6 +108,8 @@ export const listarInsumos = async () => {
         activo: Boolean(row.activo),
         contenidoPorPieza: (row as any).contenido_por_pieza == null ? null : Number((row as any).contenido_por_pieza),
         unidadContenido: (row as any).unidad_contenido ?? null,
+        esFormulado: false,
+        numLineasFormulacion: 0,
         creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
         actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
       }));
@@ -100,6 +120,7 @@ export const listarInsumos = async () => {
 
 export const obtenerInsumoPorId = async (id: number) => {
   await ensureContenidoPorPiezaColumnsExist();
+  await ensureFormulatedInventorySchema();
   const [rows] = await pool.query<InventarioItemRow[]>(
     `
     SELECT *
@@ -110,6 +131,10 @@ export const obtenerInsumoPorId = async (id: number) => {
   );
   const row = rows[0];
   if (!row) return null;
+
+  const esForm = Boolean((row as InventarioItemRow & { es_formulado?: number }).es_formulado);
+  const lineasFormulacion = esForm ? await obtenerLineasFormulacionPorPadre(id) : [];
+
   return {
     id: row.id,
     nombre: row.nombre,
@@ -124,6 +149,9 @@ export const obtenerInsumoPorId = async (id: number) => {
     activo: Boolean(row.activo),
     contenidoPorPieza: (row as InventarioItemRow).contenido_por_pieza == null ? null : Number((row as InventarioItemRow).contenido_por_pieza),
     unidadContenido: (row as InventarioItemRow).unidad_contenido ?? null,
+    esFormulado: esForm,
+    numLineasFormulacion: lineasFormulacion.length,
+    lineasFormulacion,
     creadoEn: utcToMxISO(row.creado_en) ?? (row.creado_en != null ? (row.creado_en as Date).toISOString() : null),
     actualizadoEn: utcToMxISO(row.actualizado_en) ?? (row.actualizado_en != null ? (row.actualizado_en as Date).toISOString() : null)
   };
@@ -323,6 +351,116 @@ const ensureContenidoPorPiezaColumnsExist = async () => {
   }
 };
 
+/** Producto formulado (compuesto): columna en inventario_item + tabla de líneas BOM */
+const ensureEsFormuladoColumnExists = async () => {
+  try {
+    const [columns] = await pool.query(
+      `
+      SELECT COLUMN_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'inventario_item'
+        AND COLUMN_NAME = 'es_formulado'
+      `
+    );
+    if ((columns as Array<{ COLUMN_NAME: string }>).length === 0) {
+      await pool.execute(
+        `
+        ALTER TABLE inventario_item
+        ADD COLUMN es_formulado TINYINT(1) NOT NULL DEFAULT 0
+        COMMENT '1 = producto con receta de insumos (BOM)'
+        AFTER activo
+        `
+      );
+      console.log('✓ Columna es_formulado creada en inventario_item');
+    }
+  } catch (error: any) {
+    console.warn('Advertencia: es_formulado:', (error as Error).message);
+  }
+};
+
+const ensureFormulacionLineaTableExists = async () => {
+  // BIGINT UNSIGNED debe coincidir con inventario_item.id (FK en MySQL 8+).
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS inventario_formulacion_linea (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      inventario_item_id BIGINT UNSIGNED NOT NULL COMMENT 'Producto formulado (padre)',
+      componente_inventario_item_id BIGINT UNSIGNED NOT NULL COMMENT 'Insumo base',
+      cantidad DECIMAL(18,6) NOT NULL,
+      unidad VARCHAR(32) NOT NULL,
+      UNIQUE KEY uk_form_parent_component (inventario_item_id, componente_inventario_item_id),
+      CONSTRAINT fk_form_parent FOREIGN KEY (inventario_item_id) REFERENCES inventario_item(id) ON DELETE CASCADE,
+      CONSTRAINT fk_form_component FOREIGN KEY (componente_inventario_item_id) REFERENCES inventario_item(id) ON DELETE RESTRICT,
+      INDEX idx_form_parent (inventario_item_id),
+      INDEX idx_form_component (componente_inventario_item_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+};
+
+export const ensureFormulatedInventorySchema = async () => {
+  await ensureEsFormuladoColumnExists();
+  await ensureFormulacionLineaTableExists();
+};
+
+export type LineaFormulacionInput = {
+  componenteInventarioItemId: number;
+  cantidad: number;
+  unidad: string;
+};
+
+export const obtenerLineasFormulacionPorPadre = async (padreId: number) => {
+  await ensureFormulatedInventorySchema();
+  const [rows] = await pool.query(
+    `
+    SELECT
+      f.componente_inventario_item_id AS componenteInventarioItemId,
+      f.cantidad,
+      f.unidad,
+      c.nombre AS nombreComponente
+    FROM inventario_formulacion_linea f
+    INNER JOIN inventario_item c ON c.id = f.componente_inventario_item_id
+    WHERE f.inventario_item_id = :id
+    ORDER BY c.nombre
+    `,
+    { id: padreId }
+  );
+  return (rows as Array<{
+    componenteInventarioItemId: number;
+    cantidad: number;
+    unidad: string;
+    nombreComponente: string;
+  }>).map((r) => ({
+    componenteInventarioItemId: r.componenteInventarioItemId,
+    cantidad: Number(r.cantidad),
+    unidad: r.unidad,
+    nombreComponente: r.nombreComponente
+  }));
+};
+
+export const reemplazarLineasFormulacion = async (
+  padreId: number,
+  lineas: LineaFormulacionInput[],
+  conn?: { execute: typeof pool.execute }
+) => {
+  await ensureFormulatedInventorySchema();
+  const q = conn ?? pool;
+  await q.execute(`DELETE FROM inventario_formulacion_linea WHERE inventario_item_id = :id`, { id: padreId });
+  for (const L of lineas) {
+    await q.execute(
+      `
+      INSERT INTO inventario_formulacion_linea (inventario_item_id, componente_inventario_item_id, cantidad, unidad)
+      VALUES (:pid, :cid, :cant, :uni)
+      `,
+      {
+        pid: padreId,
+        cid: L.componenteInventarioItemId,
+        cant: L.cantidad,
+        uni: L.unidad.trim()
+      }
+    );
+  }
+};
+
 export const crearInsumo = async ({
   nombre,
   codigoBarras,
@@ -335,7 +473,9 @@ export const crearInsumo = async ({
   proveedor,
   activo,
   contenidoPorPieza,
-  unidadContenido
+  unidadContenido,
+  esFormulado,
+  lineasFormulacion
 }: {
   nombre: string;
   codigoBarras?: string | null;
@@ -349,6 +489,8 @@ export const crearInsumo = async ({
   activo: boolean;
   contenidoPorPieza?: number | null;
   unidadContenido?: string | null;
+  esFormulado?: boolean;
+  lineasFormulacion?: LineaFormulacionInput[];
 }) => {
   try {
     await ensureCategoriaColumnExists();
@@ -356,7 +498,10 @@ export const crearInsumo = async ({
     await ensureStockMaximoColumnExists();
     await ensureCodigoBarrasColumnExists();
     await ensureContenidoPorPiezaColumnsExist();
-    
+    await ensureFormulatedInventorySchema();
+
+    const flagFormulado = Boolean(esFormulado);
+
     // Usar transacción para eliminar duplicados y crear nuevo registro de forma atómica
     return await withTransaction(async (conn) => {
       // Primero, eliminar cualquier registro existente con el mismo nombre (activo o inactivo)
@@ -414,26 +559,38 @@ export const crearInsumo = async ({
       }
       
       const [result] = await conn.execute<ResultSetHeader>(
-      `
-      INSERT INTO inventario_item (nombre, codigo_barras, categoria, unidad, cantidad_actual, stock_minimo, stock_maximo, costo_unitario, proveedor, activo, contenido_por_pieza, unidad_contenido)
-      VALUES (:nombre, :codigoBarras, :categoria, :unidad, :cantidadActual, :stockMinimo, :stockMaximo, :costoUnitario, :proveedor, :activo, :contenidoPorPieza, :unidadContenido)
+        `
+      INSERT INTO inventario_item (
+        nombre, codigo_barras, categoria, unidad, cantidad_actual, stock_minimo, stock_maximo,
+        costo_unitario, proveedor, activo, contenido_por_pieza, unidad_contenido, es_formulado
+      )
+      VALUES (
+        :nombre, :codigoBarras, :categoria, :unidad, :cantidadActual, :stockMinimo, :stockMaximo,
+        :costoUnitario, :proveedor, :activo, :contenidoPorPieza, :unidadContenido, :esFormulado
+      )
       `,
-      {
-        nombre,
-        codigoBarras: codigoBarras?.trim() || null,
-        categoria,
-        unidad,
-        cantidadActual,
-        stockMinimo,
-        stockMaximo: stockMaximo ?? null,
-        costoUnitario: costoUnitario ?? null,
-        proveedor: proveedor ?? null,
-        activo: activo ? 1 : 0,
-        contenidoPorPieza: contenidoPorPieza ?? null,
-        unidadContenido: unidadContenido?.trim() || null
-      }
+        {
+          nombre,
+          codigoBarras: codigoBarras?.trim() || null,
+          categoria,
+          unidad,
+          cantidadActual,
+          stockMinimo,
+          stockMaximo: stockMaximo ?? null,
+          costoUnitario: costoUnitario ?? null,
+          proveedor: proveedor ?? null,
+          activo: activo ? 1 : 0,
+          contenidoPorPieza: contenidoPorPieza ?? null,
+          unidadContenido: unidadContenido?.trim() || null,
+          esFormulado: flagFormulado ? 1 : 0
+        }
       );
       const insertId = result.insertId;
+
+      if (insertId > 0 && flagFormulado && lineasFormulacion && lineasFormulacion.length > 0) {
+        await reemplazarLineasFormulacion(insertId, lineasFormulacion, conn);
+      }
+
       // Kárdex: registrar entrada inicial sin volver a sumar stock (ya quedó en INSERT).
       if (insertId > 0 && cantidadActual > 0) {
         await conn.execute(
@@ -492,7 +649,9 @@ export const actualizarInsumo = async (
     proveedor,
     activo,
     contenidoPorPieza,
-    unidadContenido
+    unidadContenido,
+    esFormulado,
+    lineasFormulacion
   }: {
     nombre?: string;
     codigoBarras?: string | null;
@@ -506,6 +665,9 @@ export const actualizarInsumo = async (
     activo?: boolean;
     contenidoPorPieza?: number | null;
     unidadContenido?: string | null;
+    esFormulado?: boolean;
+    /** Si viene, reemplaza todas las líneas BOM del padre (`[]` borra todas). */
+    lineasFormulacion?: LineaFormulacionInput[] | null;
   }
 ) => {
   if (categoria !== undefined) await ensureCategoriaColumnExists();
@@ -513,6 +675,8 @@ export const actualizarInsumo = async (
   if (stockMaximo !== undefined) await ensureStockMaximoColumnExists();
   if (codigoBarras !== undefined) await ensureCodigoBarrasColumnExists();
   if (contenidoPorPieza !== undefined || unidadContenido !== undefined) await ensureContenidoPorPiezaColumnsExist();
+  if (esFormulado !== undefined || lineasFormulacion !== undefined) await ensureFormulatedInventorySchema();
+
   const fields: string[] = [];
   const params: Record<string, unknown> = { id };
 
@@ -564,17 +728,29 @@ export const actualizarInsumo = async (
     fields.push('unidad_contenido = :unidadContenido');
     params.unidadContenido = unidadContenido?.trim() || null;
   }
+  if (esFormulado !== undefined) {
+    fields.push('es_formulado = :esFormulado');
+    params.esFormulado = esFormulado ? 1 : 0;
+  }
 
-  if (fields.length === 0) return;
+  if (fields.length > 0) {
+    await pool.execute(
+      `
+      UPDATE inventario_item
+      SET ${fields.join(', ')}, actualizado_en = NOW()
+      WHERE id = :id
+      `,
+      params
+    );
+  }
 
-  await pool.execute(
-    `
-    UPDATE inventario_item
-    SET ${fields.join(', ')}, actualizado_en = NOW()
-    WHERE id = :id
-    `,
-    params
-  );
+  if (lineasFormulacion !== undefined && lineasFormulacion !== null) {
+    if (lineasFormulacion.length === 0) {
+      await pool.execute(`DELETE FROM inventario_formulacion_linea WHERE inventario_item_id = :id`, { id });
+    } else {
+      await reemplazarLineasFormulacion(id, lineasFormulacion);
+    }
+  }
 };
 
 export const desactivarInsumo = async (id: number) => {

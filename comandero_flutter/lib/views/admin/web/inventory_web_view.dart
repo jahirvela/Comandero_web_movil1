@@ -2491,32 +2491,11 @@ class _InventoryWebViewState extends State<InventoryWebView> {
 
                 try {
                   final quantity = double.parse(quantityController.text);
-                  final stockBase =
-                      item.currentStock < 0 ? 0.0 : item.currentStock;
-                  final newStock = isDecrease
-                      ? (stockBase - quantity).clamp(0.0, double.infinity)
-                      : stockBase + quantity;
-
-                  String status;
-                  if (newStock <= 0) {
-                    status = InventoryStatus.outOfStock;
-                  } else if (newStock < item.minStock) {
-                    status = InventoryStatus.lowStock;
-                  } else {
-                    status = InventoryStatus.available;
-                  }
-
-                  final updatedItem = item.copyWith(
-                    currentStock: newStock,
-                    price: newStock * item.unitPrice,
-                    lastRestock: date_utils.AppDateUtils.nowCdmx(),
-                    status: status,
-                  );
 
                   if (!isDecrease) {
                     await controller.restockInventoryItem(item.id, quantity);
                   } else {
-                    await controller.updateInventoryItem(updatedItem);
+                    await controller.reduceInventoryStock(item.id, quantity);
                   }
 
                   if (!mounted) return;

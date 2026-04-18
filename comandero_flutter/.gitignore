@@ -49,6 +49,8 @@ backend/node_modules/
 backend/.env
 backend/.env.local
 backend/.env.remote
+backend/.env.qa
+backend/.env.cafecito
 backend/.env.local.*
 backend/.env.remote.*
 # Credenciales BD en archivo local (ej. remot_bd en Documentos); ignorar si se copia al repo

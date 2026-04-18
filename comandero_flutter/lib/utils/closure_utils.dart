@@ -14,28 +14,49 @@ bool cashCloseEsApertura(CashCloseModel c) {
 String cashCloseTipoEtiqueta(CashCloseModel c) =>
     cashCloseEsApertura(c) ? 'Apertura' : 'Cierre';
 
-String _cashCloseDedupeKey(CashCloseModel c) {
-  if (c.cierreId != null) return 'id:${c.cierreId}';
+/// Huella estable: colapsa varias filas en BD (mismo evento, IDs distintos por doble envío).
+/// Los `calc-*` no se fusionan entre sí.
+String cashCloseLogicalFingerprint(CashCloseModel c) {
   if (c.id.startsWith('calc-')) return 'calc:${c.id}';
-  final t = cashCloseEsApertura(c) ? 'apertura' : 'cierre';
-  final note = deduplicateNoteParts(c.notaCajero);
+  final evt = (c.eventoTipo ?? '').trim().toLowerCase();
+  final turno = (c.turnoCodigo ?? '').trim().toLowerCase();
+  final u = c.usuario.trim().toLowerCase();
   final bucket = c.fecha.millisecondsSinceEpoch ~/ 60000;
-  return 'fp:$t|${c.usuario}|$bucket|${c.totalNeto.toStringAsFixed(2)}|'
-      '${c.efectivoInicial.toStringAsFixed(2)}|${c.efectivo.toStringAsFixed(2)}|'
-      '${c.tarjeta.toStringAsFixed(2)}|$note';
+  final note = deduplicateNoteParts(c.notaCajero)
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'\s+'), ' ');
+  String cents(double x) => (x * 100).round().toString();
+  final tipoTag = evt == 'apertura'
+      ? 'A'
+      : evt == 'cierre_dia'
+          ? 'D'
+          : 'C';
+  return '$tipoTag|$evt|$turno|$u|$bucket|${cents(c.totalNeto)}|'
+      '${cents(c.efectivoInicial)}|${cents(c.efectivo)}|${cents(c.tarjeta)}|$note';
 }
 
-/// Evita filas duplicadas (mismo [cierreId], mismo `calc-*`, o mismo evento duplicado en BD).
+/// Una fila por evento lógico; si hubo INSERTs duplicados en BD, queda el de **menor** [cierreId].
 List<CashCloseModel> dedupeCashClosuresForDisplay(List<CashCloseModel> list) {
   if (list.length <= 1) return list;
-  final sorted = [...list]..sort((a, b) => b.fecha.compareTo(a.fecha));
-  final seen = <String>{};
+  final groups = <String, List<CashCloseModel>>{};
+  for (final c in list) {
+    final k = cashCloseLogicalFingerprint(c);
+    groups.putIfAbsent(k, () => []).add(c);
+  }
   final out = <CashCloseModel>[];
-  for (final c in sorted) {
-    final key = _cashCloseDedupeKey(c);
-    if (seen.contains(key)) continue;
-    seen.add(key);
-    out.add(c);
+  for (final group in groups.values) {
+    if (group.length == 1) {
+      out.add(group.first);
+      continue;
+    }
+    group.sort((a, b) {
+      final ida = a.cierreId ?? 2147483647;
+      final idb = b.cierreId ?? 2147483647;
+      if (ida != idb) return ida.compareTo(idb);
+      return b.fecha.compareTo(a.fecha);
+    });
+    out.add(group.first);
   }
   out.sort((a, b) => b.fecha.compareTo(a.fecha));
   return out;

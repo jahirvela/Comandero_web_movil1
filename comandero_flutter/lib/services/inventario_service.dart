@@ -5,18 +5,14 @@ import 'api_service.dart';
 class InventarioService {
   final ApiService _api = ApiService();
 
-  /// Obtener todos los items de inventario
+  /// Obtener todos los items de inventario.
+  /// En error de red o HTTP, relanza: el controlador no debe reemplazar el cache con [].
   Future<List<dynamic>> getItems() async {
-    try {
-      final response = await _api.get('/inventario/items');
-      if (response.statusCode == 200) {
-        return response.data['data'] ?? [];
-      }
-      return [];
-    } catch (e) {
-      print('Error al obtener items de inventario: $e');
-      return [];
+    final response = await _api.get('/inventario/items');
+    if (response.statusCode == 200) {
+      return response.data['data'] ?? [];
     }
+    throw Exception('inventario items: HTTP ${response.statusCode}');
   }
 
   /// Obtener un item por ID

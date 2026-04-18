@@ -88,6 +88,7 @@ class AdminUser {
 class InventoryItem {
   final String id;
   final String name;
+
   /// Código de barras único por línea de producto (ej. Café 5kg). Opcional.
   final String? codigoBarras;
   final String category;
@@ -105,10 +106,18 @@ class InventoryItem {
   final String status; // 'available', 'low_stock', 'out_of_stock', 'expired'
   final String? notes;
   final String? description;
+
   /// Cuando la unidad es pieza: cuánto pesa o contiene cada pieza (ej. 5 para envase 5 kg). Opcional.
   final double? contenidoPorPieza;
+
   /// Unidad del contenido por pieza (ej. "kg", "L", "Piezas"). Solo tiene sentido con contenidoPorPieza.
   final String? unidadContenido;
+
+  /// Producto compuesto con receta (BOM) persistida en el servidor.
+  final bool isFormulated;
+
+  /// Cantidad de líneas de formulación (resumen del listado; detalle en GET por id).
+  final int numLineasFormulacion;
 
   InventoryItem({
     required this.id,
@@ -131,16 +140,23 @@ class InventoryItem {
     this.description,
     this.contenidoPorPieza,
     this.unidadContenido,
+    this.isFormulated = false,
+    this.numLineasFormulacion = 0,
   });
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
-    final stockValue = (json['currentStock'] ?? json['cantidadActual'])?.toDouble() ?? 0.0;
+    final stockValue =
+        (json['currentStock'] ?? json['cantidadActual'])?.toDouble() ?? 0.0;
     final currentStock = stockValue < 0 ? 0.0 : stockValue;
-    final minStock = (json['minStock'] ?? json['stockMinimo'])?.toDouble() ?? 0.0;
-    final maxStock = (json['maxStock'] ?? json['stockMaximo'])?.toDouble() ?? minStock * 2;
+    final minStock =
+        (json['minStock'] ?? json['stockMinimo'])?.toDouble() ?? 0.0;
+    final maxStock =
+        (json['maxStock'] ?? json['stockMaximo'])?.toDouble() ?? minStock * 2;
     final cost = (json['cost'] ?? json['costoUnitario'])?.toDouble() ?? 0.0;
     final unit = (json['unit'] ?? json['unidad'] ?? '').toString();
-    final contenidoPorPieza = json['contenidoPorPieza'] != null ? (json['contenidoPorPieza'] as num).toDouble() : null;
+    final contenidoPorPieza = json['contenidoPorPieza'] != null
+        ? (json['contenidoPorPieza'] as num).toDouble()
+        : null;
     final unidadContenido = json['unidadContenido'] as String?;
     return InventoryItem(
       id: json['id'].toString(),
@@ -157,16 +173,28 @@ class InventoryItem {
       unitPrice: cost,
       supplier: json['supplier'] ?? json['proveedor'] as String?,
       lastRestock: (json['lastRestock'] ?? json['actualizadoEn']) != null
-          ? date_utils.AppDateUtils.parseToLocal((json['lastRestock'] ?? json['actualizadoEn']).toString())
+          ? date_utils.AppDateUtils.parseToLocal(
+              (json['lastRestock'] ?? json['actualizadoEn']).toString(),
+            )
           : null,
       expiryDate: json['expiryDate'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['expiryDate'])
           : null,
-      status: (json['status'] as String?) ?? (currentStock <= 0 ? InventoryStatus.outOfStock : (currentStock <= minStock ? InventoryStatus.lowStock : InventoryStatus.available)),
+      status:
+          (json['status'] as String?) ??
+          (currentStock <= 0
+              ? InventoryStatus.outOfStock
+              : (currentStock <= minStock
+                    ? InventoryStatus.lowStock
+                    : InventoryStatus.available)),
       notes: json['notes'],
       description: json['description'],
       contenidoPorPieza: contenidoPorPieza,
       unidadContenido: unidadContenido,
+      isFormulated:
+          json['isFormulated'] == true || json['esFormulado'] == true,
+      numLineasFormulacion:
+          (json['numLineasFormulacion'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -192,6 +220,8 @@ class InventoryItem {
       'description': description,
       if (contenidoPorPieza != null) 'contenidoPorPieza': contenidoPorPieza,
       if (unidadContenido != null) 'unidadContenido': unidadContenido,
+      'isFormulated': isFormulated,
+      'numLineasFormulacion': numLineasFormulacion,
     };
   }
 
@@ -218,6 +248,8 @@ class InventoryItem {
     String? description,
     Object? contenidoPorPieza = _unsetContenido,
     Object? unidadContenido = _unsetContenido,
+    bool? isFormulated,
+    int? numLineasFormulacion,
   }) {
     return InventoryItem(
       id: id ?? this.id,
@@ -244,7 +276,75 @@ class InventoryItem {
       unidadContenido: identical(unidadContenido, _unsetContenido)
           ? this.unidadContenido
           : unidadContenido as String?,
+      isFormulated: isFormulated ?? this.isFormulated,
+      numLineasFormulacion:
+          numLineasFormulacion ?? this.numLineasFormulacion,
     );
+  }
+}
+
+/// Componente de un producto formulado (cantidad por 1 unidad del producto terminado).
+class InventoryFormulationLine {
+  InventoryFormulationLine({
+    required this.id,
+    required this.componentInventoryItemId,
+    required this.name,
+    required this.unit,
+    required this.quantity,
+  });
+
+  final String id;
+  final String componentInventoryItemId;
+  final String name;
+  final String unit;
+  final double quantity;
+
+  factory InventoryFormulationLine.fromJson(Map<String, dynamic> json) {
+    double q(dynamic v) {
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v) ?? 0;
+      return 0;
+    }
+
+    return InventoryFormulationLine(
+      id: (json['id'] ?? '').toString(),
+      componentInventoryItemId:
+          (json['componentInventoryItemId'] ?? json['inventarioItemId'] ?? '')
+              .toString(),
+      name: (json['name'] ?? json['nombre'] ?? '').toString(),
+      unit: (json['unit'] ?? json['unidad'] ?? '').toString(),
+      quantity: q(json['quantity'] ?? json['cantidad']),
+    );
+  }
+
+  /// Línea tal como viene en GET `/inventario/items/:id` (`lineasFormulacion`).
+  factory InventoryFormulationLine.fromBackendBomLine(Map<String, dynamic> json) {
+    double q(dynamic v) {
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v) ?? 0;
+      return 0;
+    }
+
+    final cid =
+        json['componenteInventarioItemId'] ?? json['componentInventoryItemId'];
+    final cidStr = cid?.toString() ?? '';
+    return InventoryFormulationLine(
+      id: cidStr,
+      componentInventoryItemId: cidStr,
+      name: (json['nombreComponente'] ?? json['name'] ?? '').toString(),
+      unit: (json['unidad'] ?? json['unit'] ?? '').toString(),
+      quantity: q(json['cantidad'] ?? json['quantity']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'componentInventoryItemId': componentInventoryItemId,
+      'name': name,
+      'unit': unit,
+      'quantity': quantity,
+    };
   }
 }
 
@@ -424,12 +524,14 @@ class MenuItem {
   final DateTime? updatedAt;
   // Nuevos campos para tamaños y configuraciones
   final bool hasSizes;
-  final List<MenuSize>? sizes; // Lista de tamaños (chico, mediano, grande) con precios
+  final List<MenuSize>?
+  sizes; // Lista de tamaños (chico, mediano, grande) con precios
   final bool serveHot;
   final bool isSpicy;
   final bool allowSauces;
   final bool allowExtraIngredients;
-  final List<RecipeIngredient>? recipeIngredients; // Ingredientes para receta/descuento automático
+  final List<RecipeIngredient>?
+  recipeIngredients; // Ingredientes para receta/descuento automático
   final double descuentoPorcentaje;
   final bool descuentoActivo;
   final DateTime? descuentoInicio;
@@ -465,8 +567,7 @@ class MenuItem {
   });
 
   factory MenuItem.fromJson(Map<String, dynamic> json) {
-    final ingredientesData =
-        json['recipeIngredients'] ?? json['ingredientes'];
+    final ingredientesData = json['recipeIngredients'] ?? json['ingredientes'];
     return MenuItem(
       id: json['id'],
       name: json['name'],
@@ -475,11 +576,17 @@ class MenuItem {
       price: json['price']?.toDouble(),
       isAvailable: json['isAvailable'] ?? true,
       image: json['image'],
-      ingredients: json['ingredients'] != null ? List<String>.from(json['ingredients']) : [],
-      allergens: json['allergens'] != null ? List<String>.from(json['allergens']) : [],
+      ingredients: json['ingredients'] != null
+          ? List<String>.from(json['ingredients'])
+          : [],
+      allergens: json['allergens'] != null
+          ? List<String>.from(json['allergens'])
+          : [],
       preparationTime: json['preparationTime'] ?? 0,
       notes: json['notes'],
-      createdAt: json['createdAt'] != null ? date_utils.AppDateUtils.parseToLocal(json['createdAt']) : date_utils.AppDateUtils.nowCdmx(),
+      createdAt: json['createdAt'] != null
+          ? date_utils.AppDateUtils.parseToLocal(json['createdAt'])
+          : date_utils.AppDateUtils.nowCdmx(),
       updatedAt: json['updatedAt'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['updatedAt'])
           : null,
@@ -493,10 +600,13 @@ class MenuItem {
       allowExtraIngredients: json['allowExtraIngredients'] ?? false,
       recipeIngredients: ingredientesData != null
           ? (ingredientesData as List)
-              .map((r) => RecipeIngredient.fromJson(r as Map<String, dynamic>))
-              .toList()
+                .map(
+                  (r) => RecipeIngredient.fromJson(r as Map<String, dynamic>),
+                )
+                .toList()
           : null,
-      descuentoPorcentaje: (json['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
+      descuentoPorcentaje:
+          (json['descuentoPorcentaje'] as num?)?.toDouble() ?? 0.0,
       descuentoActivo: json['descuentoActivo'] as bool? ?? false,
       descuentoInicio: json['descuentoInicio'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['descuentoInicio'])
@@ -584,7 +694,8 @@ class MenuItem {
       serveHot: serveHot ?? this.serveHot,
       isSpicy: isSpicy ?? this.isSpicy,
       allowSauces: allowSauces ?? this.allowSauces,
-      allowExtraIngredients: allowExtraIngredients ?? this.allowExtraIngredients,
+      allowExtraIngredients:
+          allowExtraIngredients ?? this.allowExtraIngredients,
       recipeIngredients: recipeIngredients ?? this.recipeIngredients,
       descuentoPorcentaje: descuentoPorcentaje ?? this.descuentoPorcentaje,
       descuentoActivo: descuentoActivo ?? this.descuentoActivo,
@@ -601,26 +712,19 @@ class MenuSize {
   final String name;
   final double price;
 
-  MenuSize({
-    this.id,
-    required this.name,
-    required this.price,
-  });
+  MenuSize({this.id, required this.name, required this.price});
 
   factory MenuSize.fromJson(Map<String, dynamic> json) {
     return MenuSize(
       id: (json['id'] as num?)?.toInt(),
-      name: (json['name'] ?? json['nombre'] ?? json['etiqueta'] ?? '').toString(),
+      name: (json['name'] ?? json['nombre'] ?? json['etiqueta'] ?? '')
+          .toString(),
       price: (json['price'] ?? json['precio'] ?? 0).toDouble(),
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'price': price,
-    };
+    return {'id': id, 'name': name, 'price': price};
   }
 }
 
@@ -632,7 +736,8 @@ class RecipeIngredient {
   final double quantityPerPortion;
   final bool autoDeduct; // Descontar automáticamente del inventario
   final bool isCustom; // Si es ingrediente personalizado o sugerido
-  final bool isOptional; // Si el ingrediente es opcional (ej: cilantro, cebolla)
+  final bool
+  isOptional; // Si el ingrediente es opcional (ej: cilantro, cebolla)
   final String? category;
   final String? inventoryItemId;
   final int? sizeId; // Tamaño específico del producto (si aplica)
@@ -644,7 +749,8 @@ class RecipeIngredient {
     required this.quantityPerPortion,
     this.autoDeduct = true,
     this.isCustom = false,
-    this.isOptional = false, // Por defecto, todos los ingredientes son obligatorios
+    this.isOptional =
+        false, // Por defecto, todos los ingredientes son obligatorios
     this.category,
     this.inventoryItemId,
     this.sizeId,
@@ -695,10 +801,11 @@ class RecipeIngredient {
         json['isOptional'] ?? json['esOpcional'] ?? json['es_opcional'],
       ),
       category: (json['category'] ?? json['categoria'])?.toString(),
-      inventoryItemId: (json['inventoryItemId'] ??
-              json['inventarioItemId'] ??
-              json['inventario_item_id'])
-          ?.toString(),
+      inventoryItemId:
+          (json['inventoryItemId'] ??
+                  json['inventarioItemId'] ??
+                  json['inventario_item_id'])
+              ?.toString(),
       sizeId: _parseInt(
         json['sizeId'] ??
             json['tamanoId'] ??
@@ -752,9 +859,11 @@ class RecipeIngredient {
 
 class TableModel {
   final int id;
+
   /// Código o nombre de la mesa (ej: "1", "Terraza", "VIP 1"). Se usa en tickets, cocina, cuentas por cobrar.
   final String codigo;
-  final int number; // Compatibilidad/orden: int.parse(codigo) si es numérico, si no 0
+  final int
+  number; // Compatibilidad/orden: int.parse(codigo) si es numérico, si no 0
   final String status;
   final int seats;
   final int? customers;
@@ -787,7 +896,8 @@ class TableModel {
   }
 
   factory TableModel.fromJson(Map<String, dynamic> json) {
-    final codigo = json['codigo'] as String? ?? json['number']?.toString() ?? '0';
+    final codigo =
+        json['codigo'] as String? ?? json['number']?.toString() ?? '0';
     final number = json['number'] is int
         ? json['number'] as int
         : (int.tryParse(codigo) ?? 0);
@@ -930,13 +1040,13 @@ class UserRole {
   static const String gerente = 'gerente';
 
   static List<String> get allRoles => [
-        mesero,
-        cocinero,
-        capitan,
-        cajero,
-        admin,
-        gerente,
-      ];
+    mesero,
+    cocinero,
+    capitan,
+    cajero,
+    admin,
+    gerente,
+  ];
 
   static String getRoleText(String role) {
     switch (role) {
@@ -983,11 +1093,7 @@ class Permiso {
   final String nombre;
   final String? descripcion;
 
-  Permiso({
-    required this.id,
-    required this.nombre,
-    this.descripcion,
-  });
+  Permiso({required this.id, required this.nombre, this.descripcion});
 
   factory Permiso.fromJson(Map<String, dynamic> json) {
     return Permiso(
@@ -998,18 +1104,10 @@ class Permiso {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'nombre': nombre,
-      'descripcion': descripcion,
-    };
+    return {'id': id, 'nombre': nombre, 'descripcion': descripcion};
   }
 
-  Permiso copyWith({
-    int? id,
-    String? nombre,
-    String? descripcion,
-  }) {
+  Permiso copyWith({int? id, String? nombre, String? descripcion}) {
     return Permiso(
       id: id ?? this.id,
       nombre: nombre ?? this.nombre,
@@ -1041,22 +1139,21 @@ class Role {
       id: json['id'] as int,
       nombre: json['nombre'] as String,
       descripcion: json['descripcion'] as String?,
-      permisos: (json['permisos'] as List<dynamic>?)
-              ?.map((p) {
-                if (p is Map<String, dynamic>) {
-                  return Permiso.fromJson(p);
-                } else if (p is Map) {
-                  return Permiso.fromJson(Map<String, dynamic>.from(p));
-                } else {
-                  // Si viene como objeto simple con id y nombre
-                  return Permiso(
-                    id: p['id'] as int? ?? 0,
-                    nombre: p['nombre'] as String? ?? '',
-                    descripcion: p['descripcion'] as String?,
-                  );
-                }
-              })
-              .toList() ??
+      permisos:
+          (json['permisos'] as List<dynamic>?)?.map((p) {
+            if (p is Map<String, dynamic>) {
+              return Permiso.fromJson(p);
+            } else if (p is Map) {
+              return Permiso.fromJson(Map<String, dynamic>.from(p));
+            } else {
+              // Si viene como objeto simple con id y nombre
+              return Permiso(
+                id: p['id'] as int? ?? 0,
+                nombre: p['nombre'] as String? ?? '',
+                descripcion: p['descripcion'] as String?,
+              );
+            }
+          }).toList() ??
           [],
       creadoEn: json['creadoEn'] != null
           ? date_utils.AppDateUtils.parseToLocal(json['creadoEn'])
@@ -1238,8 +1335,10 @@ class CashCloseModel {
   final String? otrosIngresosTexto;
   final String? notaCajero;
   final List<AuditLogEntry> auditLog;
-  final int? cierreId; // ID real del cierre en la BD (opcional, solo para manuales)
-  final String? comentarioRevision; // Comentario del administrador al revisar (para aclaraciones/rechazos)
+  final int?
+  cierreId; // ID real del cierre en la BD (opcional, solo para manuales)
+  final String?
+  comentarioRevision; // Comentario del administrador al revisar (para aclaraciones/rechazos)
   final double efectivoInicial; // Efectivo inicial de la apertura de caja
   /// `apertura` | `cierre` desde backend; null = legado (se infiere por montos).
   final String? eventoTipo;
@@ -1300,9 +1399,11 @@ class CashCloseModel {
       totalDeclarado: json['totalDeclarado'].toDouble(),
       otrosIngresosTexto: json['otrosIngresosTexto'] as String?,
       notaCajero: json['notaCajero'] as String?,
-      auditLog: (json['auditLog'] as List?)
-          ?.map((entry) => AuditLogEntry.fromJson(entry))
-          .toList() ?? [],
+      auditLog:
+          (json['auditLog'] as List?)
+              ?.map((entry) => AuditLogEntry.fromJson(entry))
+              .toList() ??
+          [],
       cierreId: json['cierreId'] as int?,
       comentarioRevision: json['comentarioRevision'] as String?,
       efectivoInicial: (json['efectivoInicial'] as num?)?.toDouble() ?? 0.0,

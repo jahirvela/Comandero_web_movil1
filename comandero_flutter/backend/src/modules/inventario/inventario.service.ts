@@ -19,7 +19,35 @@ import type {
   CrearInsumoInput,
   CrearMovimientoInput
 } from './inventario.schemas.js';
+import type { LineaFormulacionInput } from './inventario.repository.js';
 import { notFound, forbidden, conflict, badRequest } from '../../utils/http-error.js';
+
+/** Valida componentes BOM: existencia, no formulados, sin duplicados ni auto-referencia. */
+const validarLineasFormulacion = async (
+  padreId: number | null,
+  lineas: LineaFormulacionInput[]
+): Promise<void> => {
+  const seen = new Set<number>();
+  for (const L of lineas) {
+    const cid = L.componenteInventarioItemId;
+    if (padreId !== null && cid === padreId) {
+      throw badRequest('Un producto formulado no puede incluirse a sí mismo como componente.');
+    }
+    if (seen.has(cid)) {
+      throw badRequest('Hay componentes duplicados en la formulación.');
+    }
+    seen.add(cid);
+    const comp = await obtenerInsumoPorId(cid);
+    if (!comp) {
+      throw badRequest(`Componente de inventario no encontrado (id ${cid}).`);
+    }
+    if (comp.esFormulado) {
+      throw badRequest(
+        `«${comp.nombre}» es un producto formulado y no puede usarse como componente.`
+      );
+    }
+  }
+};
 import { logger } from '../../config/logger.js';
 
 export const obtenerInsumos = () => listarInsumos();
@@ -37,6 +65,11 @@ export const obtenerInsumoPorCodigoBarrasService = (codigo: string) =>
   obtenerInsumoPorCodigoBarras(codigo);
 
 export const crearNuevoInsumo = async (input: CrearInsumoInput) => {
+  const esFormulado = input.esFormulado ?? false;
+  const lineasFormulacion = input.lineasFormulacion ?? [];
+  if (esFormulado) {
+    await validarLineasFormulacion(null, lineasFormulacion);
+  }
   const id = await crearInsumo({
     nombre: input.nombre,
     codigoBarras: input.codigoBarras ?? null,
@@ -49,7 +82,9 @@ export const crearNuevoInsumo = async (input: CrearInsumoInput) => {
     proveedor: input.proveedor ?? null,
     activo: input.activo ?? true,
     contenidoPorPieza: input.contenidoPorPieza ?? null,
-    unidadContenido: input.unidadContenido ?? null
+    unidadContenido: input.unidadContenido ?? null,
+    esFormulado,
+    lineasFormulacion: esFormulado ? lineasFormulacion : undefined
   });
   return obtenerInsumo(id);
 };
@@ -59,6 +94,47 @@ export const actualizarInsumoExistente = async (id: number, input: ActualizarIns
   if (!existe) {
     throw notFound('Insumo no encontrado');
   }
+
+  let esFormuladoPatch = input.esFormulado;
+  let lineasPatch = input.lineasFormulacion;
+
+  if (input.esFormulado === false) {
+    esFormuladoPatch = false;
+    lineasPatch = [];
+  }
+
+  if (input.lineasFormulacion !== undefined && input.lineasFormulacion.length === 0) {
+    esFormuladoPatch = false;
+    lineasPatch = [];
+  } else if (
+    input.lineasFormulacion !== undefined &&
+    input.lineasFormulacion.length > 0 &&
+    input.esFormulado === undefined
+  ) {
+    esFormuladoPatch = true;
+  }
+
+  const mergedEsFormulado =
+    esFormuladoPatch !== undefined ? esFormuladoPatch : existe.esFormulado;
+
+  const lineasParaValidar: LineaFormulacionInput[] =
+    lineasPatch !== undefined
+      ? lineasPatch
+      : mergedEsFormulado
+        ? existe.lineasFormulacion.map((l) => ({
+            componenteInventarioItemId: l.componenteInventarioItemId,
+            cantidad: l.cantidad,
+            unidad: l.unidad
+          }))
+        : [];
+
+  if (mergedEsFormulado) {
+    if (lineasParaValidar.length === 0) {
+      throw badRequest('Un producto formulado debe tener al menos una línea de formulación.');
+    }
+    await validarLineasFormulacion(id, lineasParaValidar);
+  }
+
   await actualizarInsumo(id, {
     nombre: input.nombre,
     codigoBarras: input.codigoBarras,
@@ -71,7 +147,9 @@ export const actualizarInsumoExistente = async (id: number, input: ActualizarIns
     proveedor: input.proveedor ?? null,
     activo: input.activo,
     contenidoPorPieza: input.contenidoPorPieza,
-    unidadContenido: input.unidadContenido
+    unidadContenido: input.unidadContenido,
+    ...(esFormuladoPatch !== undefined ? { esFormulado: esFormuladoPatch } : {}),
+    ...(lineasPatch !== undefined ? { lineasFormulacion: lineasPatch } : {})
   });
   return obtenerInsumo(id);
 };
@@ -306,6 +384,101 @@ const tamanoIdCoincide = (
   return Number(ingrTamanoId) === Number(itemTamanoId);
 };
 
+type AporteReceta = { cantidad: number; unidad: string; nombre: string };
+
+/**
+ * Formulados con BOM: expande a componentes y además deja un aporte del ítem padre
+ * (cantidad ya en unidad de inventario del padre) para que también descuente la existencia
+ * del producto formulado junto con las materias primas.
+ */
+const expandirAportesFormuladosABom = async (
+  aportesPorIngrediente: Map<number, AporteReceta[]>
+): Promise<Map<number, AporteReceta[]>> => {
+  const out = new Map<number, AporteReceta[]>();
+
+  const mergeInto = (id: number, nuevos: AporteReceta[]) => {
+    const prev = out.get(id) ?? [];
+    out.set(id, [...prev, ...nuevos]);
+  };
+
+  for (const [invId, aportes] of aportesPorIngrediente.entries()) {
+    const item = await obtenerInsumoPorId(invId);
+    if (!item?.esFormulado || !item.lineasFormulacion?.length) {
+      mergeInto(invId, aportes);
+      continue;
+    }
+
+    let cantidadPadre = 0;
+    for (const a of aportes) {
+      const c = cantidadEnUnidadInventario(a.cantidad, a.unidad, item);
+      if (c != null && c > 0) cantidadPadre += c;
+    }
+    cantidadPadre = redondearCantidad(cantidadPadre);
+    if (cantidadPadre <= 0) continue;
+
+    mergeInto(invId, [
+      {
+        cantidad: cantidadPadre,
+        unidad: item.unidad.trim(),
+        nombre: item.nombre
+      }
+    ]);
+
+    for (const line of item.lineasFormulacion) {
+      const comp = await obtenerInsumoPorId(line.componenteInventarioItemId);
+      if (!comp) continue;
+      const qtyEnUnidadLineaBom = cantidadPadre * line.cantidad;
+      const convertida = cantidadEnUnidadInventario(
+        qtyEnUnidadLineaBom,
+        line.unidad.trim(),
+        comp
+      );
+      if (convertida == null || convertida <= 0) continue;
+      mergeInto(comp.id, [
+        {
+          cantidad: redondearCantidad(convertida),
+          unidad: comp.unidad.trim(),
+          nombre: line.nombreComponente || comp.nombre
+        }
+      ]);
+    }
+  }
+
+  return out;
+};
+
+const notificarInventarioTrasSalidaPorOrden = async (
+  inventarioItemId: number,
+  itemAntes: { cantidadActual: number; stockMinimo: number },
+  usuarioId?: number
+) => {
+  const itemActualizado = await obtenerInsumoPorId(inventarioItemId);
+  if (!itemActualizado) return undefined;
+  const { emitInventoryUpdated } = await import('../../realtime/events.js');
+  emitInventoryUpdated(itemActualizado);
+  const cruzoMinimo =
+    itemAntes.cantidadActual > itemAntes.stockMinimo &&
+    itemActualizado.cantidadActual <= itemActualizado.stockMinimo;
+  const cruzoSinStock =
+    itemAntes.cantidadActual > 0 && itemActualizado.cantidadActual <= 0;
+  if (cruzoMinimo || cruzoSinStock) {
+    const { emitirAlertaInventario } = await import('../alertas/alertas.service.js');
+    emitirAlertaInventario(
+      {
+        id: itemActualizado.id,
+        nombre: itemActualizado.nombre,
+        cantidadActual: itemActualizado.cantidadActual,
+        stockMinimo: itemActualizado.stockMinimo,
+        unidad: itemActualizado.unidad
+      },
+      usuarioId ?? undefined
+    ).catch((err) =>
+      logger.warn({ err, inventarioItemId }, 'No se pudo emitir alerta de inventario')
+    );
+  }
+  return itemActualizado;
+};
+
 export type FaltanteInventario = {
   nombre: string;
   requerido: number;
@@ -335,7 +508,6 @@ export const verificarStockDisponibleParaOrden = async (
     const productoIds = [...new Set(items.map((item: any) => item.productoId))];
     const ingredientesMap = await obtenerIngredientesPorProductoIds(productoIds);
 
-    type AporteReceta = { cantidad: number; unidad: string; nombre: string };
     const aportesPorIngrediente = new Map<number, AporteReceta[]>();
 
     for (const item of items) {
@@ -364,7 +536,9 @@ export const verificarStockDisponibleParaOrden = async (
       return { ok: true, faltantes: [] };
     }
 
-    for (const [inventarioItemId, aportes] of aportesPorIngrediente.entries()) {
+    const aportesExpandidos = await expandirAportesFormuladosABom(aportesPorIngrediente);
+
+    for (const [inventarioItemId, aportes] of aportesExpandidos.entries()) {
       const itemInventario = await obtenerInsumoPorId(inventarioItemId);
       if (!itemInventario) {
         continue;
@@ -439,7 +613,6 @@ export const descontarInventarioPorReceta = async (
     const ingredientesMap = await obtenerIngredientesPorProductoIds(productoIds);
     
     // Acumular aportes por ingrediente: cada uno con su cantidad y unidad (receta puede usar g, inventario Kg, etc.)
-    type AporteReceta = { cantidad: number; unidad: string; nombre: string };
     const aportesPorIngrediente = new Map<number, AporteReceta[]>();
     const detallesDescuento: Array<{
       ingredienteNombre: string;
@@ -481,8 +654,10 @@ export const descontarInventarioPorReceta = async (
       return;
     }
 
+    const aportesExpandidos = await expandirAportesFormuladosABom(aportesPorIngrediente);
+
     // Descontar: convertir cada aporte a la unidad del inventario y sumar
-    for (const [inventarioItemId, aportes] of aportesPorIngrediente.entries()) {
+    for (const [inventarioItemId, aportes] of aportesExpandidos.entries()) {
       try {
         const itemInventario = await obtenerInsumoPorId(inventarioItemId);
         if (!itemInventario) {
@@ -541,42 +716,21 @@ export const descontarInventarioPorReceta = async (
           referenciaOrdenId: ordenId,
           usuarioId: usuarioId ?? null
         });
-        
-        // Obtener el item actualizado después del descuento
-        const itemActualizado = await obtenerInsumoPorId(inventarioItemId);
-        if (itemActualizado) {
-          // Emitir evento de socket para actualizar inventario en tiempo real
-          const { emitInventoryUpdated } = await import('../../realtime/events.js');
-          emitInventoryUpdated(itemActualizado);
-          // Alerta de inventario si cruzó umbral (stock mínimo o sin stock)
-          const cruzoMinimo =
-            itemInventario.cantidadActual > itemInventario.stockMinimo &&
-            itemActualizado.cantidadActual <= itemActualizado.stockMinimo;
-          const cruzoSinStock =
-            itemInventario.cantidadActual > 0 && itemActualizado.cantidadActual <= 0;
-          if (cruzoMinimo || cruzoSinStock) {
-            const { emitirAlertaInventario } = await import('../alertas/alertas.service.js');
-            emitirAlertaInventario(
-              {
-                id: itemActualizado.id,
-                nombre: itemActualizado.nombre,
-                cantidadActual: itemActualizado.cantidadActual,
-                stockMinimo: itemActualizado.stockMinimo,
-                unidad: itemActualizado.unidad
-              },
-              usuarioId ?? undefined
-            ).catch((err) =>
-              logger.warn({ err, inventarioItemId }, 'No se pudo emitir alerta de inventario')
-            );
-          }
-        }
-        
+
+        const itemActualizado = await notificarInventarioTrasSalidaPorOrden(
+          inventarioItemId,
+          itemInventario,
+          usuarioId
+        );
+
         logger.info({
           inventarioItemId,
           ordenId,
           cantidad: cantidadADescontar,
           unidad: itemInventario.unidad,
-          nuevoStock: itemActualizado?.cantidadActual ?? Math.max(0, itemInventario.cantidadActual - cantidadADescontar)
+          nuevoStock:
+            itemActualizado?.cantidadActual ??
+            Math.max(0, itemInventario.cantidadActual - cantidadADescontar)
         }, `✅ Inventario descontado automáticamente: ${cantidadADescontar} ${itemInventario.unidad} de "${itemInventario.nombre}"`);
       } catch (error: any) {
         logger.error({
