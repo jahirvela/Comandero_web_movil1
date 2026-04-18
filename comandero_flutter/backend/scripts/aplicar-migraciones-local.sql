@@ -388,6 +388,32 @@ UPDATE caja_cierre
 SET evento_tipo = 'cierre'
 WHERE evento_tipo IS NULL OR evento_tipo = '';
 
+-- -----------------------------------------------------------------------------
+-- Producto formulado (BOM): columna es_formulado + tabla inventario_formulacion_linea
+-- (misma definición que ensureFormulatedInventorySchema en inventario.repository.ts)
+-- -----------------------------------------------------------------------------
+SET @sf = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'inventario_item' AND COLUMN_NAME = 'es_formulado');
+SET @sql_sf = IF(@sf = 0,
+  'ALTER TABLE inventario_item ADD COLUMN es_formulado TINYINT(1) NOT NULL DEFAULT 0 COMMENT ''1 = producto con receta de insumos (BOM)'' AFTER activo',
+  'SELECT 1');
+PREPARE stmt_sf FROM @sql_sf;
+EXECUTE stmt_sf;
+DEALLOCATE PREPARE stmt_sf;
+
+CREATE TABLE IF NOT EXISTS inventario_formulacion_linea (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  inventario_item_id BIGINT UNSIGNED NOT NULL COMMENT 'Producto formulado (padre)',
+  componente_inventario_item_id BIGINT UNSIGNED NOT NULL COMMENT 'Insumo base',
+  cantidad DECIMAL(18,6) NOT NULL,
+  unidad VARCHAR(32) NOT NULL,
+  UNIQUE KEY uk_form_parent_component (inventario_item_id, componente_inventario_item_id),
+  CONSTRAINT fk_form_parent FOREIGN KEY (inventario_item_id) REFERENCES inventario_item(id) ON DELETE CASCADE,
+  CONSTRAINT fk_form_component FOREIGN KEY (componente_inventario_item_id) REFERENCES inventario_item(id) ON DELETE RESTRICT,
+  INDEX idx_form_parent (inventario_item_id),
+  INDEX idx_form_component (componente_inventario_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- =============================================================================
 -- Fin de migraciones. Reinicia el backend y prueba en local.
 -- =============================================================================
